@@ -16,5 +16,4 @@
 
 ## 悬着
 
-- `~/.local/share/saddle/versions/` 下旧目录已无会话在用，删不删由用户定。
 - `crates/corral/tests/protocol.rs` 第一次并行跑时有一项卡住过，之后未复现。
