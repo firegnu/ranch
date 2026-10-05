@@ -1,0 +1,15 @@
+[package]
+name = "saddle-dispatch-plugin"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+
+[dependencies]
+saddle-core-plugin = { path = "../core-plugin" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2 = "0.10"
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
+
+[dev-dependencies]
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }

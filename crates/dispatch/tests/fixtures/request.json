@@ -1,0 +1,41 @@
+{
+  "state": {
+    "task_summary": "合成任务"
+  },
+  "model": "jev-1.13.0",
+  "questions": {
+    "tier": {
+      "type": "score",
+      "instructions": "How much reasoning capacity does a coding agent need to do the task in `task_summary` well?",
+      "criteria": [
+        "Light: looking things up, mechanical edits, editing text or data by an explicit checklist, or running commands and reporting results. Little design judgment.",
+        "Regular: implementing a feature or fixing an ordinary bug by following a clear task description. Normal design judgment within one module.",
+        "Heavy: designing a data model, concurrency or transactions, cross-module design, hard-to-find bugs, or careful review of someone else's code. Mistakes are costly or subtle."
+      ]
+    },
+    "cross_data_model": {
+      "type": "noul",
+      "instructions": "Does the task in `task_summary` create or change database table structure, such as adding or altering tables, columns, constraints or migrations? Only reading or writing rows does not count."
+    },
+    "cross_concurrency": {
+      "type": "noul",
+      "instructions": "Does the task in `task_summary` involve concurrency, background workers, locking, retries, or database transactions?"
+    },
+    "cross_security_privacy": {
+      "type": "noul",
+      "instructions": "Does the task in `task_summary` handle security or private data, such as permissions, file system isolation, logging of personal content, or exposing data to others?"
+    },
+    "cross_core_rules": {
+      "type": "noul",
+      "instructions": "Does the task in `task_summary` implement or change the product's core business rules, the central decision logic the product depends on?"
+    },
+    "visible": {
+      "type": "noul",
+      "instructions": "Is the task in `task_summary` limited to presentation (visual layout, colors, text, documentation) or read-only research, with no new features, no input handling changes and no logic changes?"
+    },
+    "doc_only": {
+      "type": "noul",
+      "instructions": "Does the task in `task_summary` only produce a written proposal, research notes or a design document, without changing any program code?"
+    }
+  }
+}
