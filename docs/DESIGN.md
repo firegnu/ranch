@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | corral（agent 运行时，命令 `corral`） | Saddle `crates/corral-core`，提交 `a31dea2` | 第 1 步 |
 | dispatch（路由命令 `ranch dispatch route`、`corral-dispatch` 技能，不带遥测） | Saddle `plugins/dispatch` | 第 2 步 |
-| 遥测、Drover、插件协议 | Saddle | 不迁（用户 10-05：“我现在都不想要遥测和drover了”） |
+| 遥测、Drover、插件系统 | Saddle | 不迁；用户 10-05 定砍掉，Saddle 删除代码，数据留在磁盘上 |
 
 ## 2. 与前端的关系
 
@@ -29,5 +29,5 @@
 
 ## 5. 待定
 
-- （已定，用户 10-05）只再拆 dispatch（不带遥测），之后转回 paddock 开发；遥测、Drover、插件 SDK、插件协议都留在 Saddle。
+- （已定，用户 10-05）只再拆 dispatch（不带遥测），之后转回 paddock 开发；遥测、Drover、整个插件系统砍掉（Saddle 删代码），两个前端只靠 ranch 的 corral 和 dispatch。
 - 插件协议的共享方式。
