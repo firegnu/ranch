@@ -1,0 +1,11 @@
+[package]
+name = "ranch"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "The `ranch` command: shared tools for the Saddle and paddock front ends"
+publish = false
+
+[dependencies]
+ranch-dispatch = { path = "../dispatch" }
+serde_json = "1"

@@ -1,6 +1,6 @@
 //! Build an immutable ranch version directory. Never installs, switches links or installs
 //! skills: those are separate deployment steps. Follows Saddle's `scripts/package.sh` at
-//! `a31dea2`, limited to corral.
+//! `a31dea2`, limited to corral and the `ranch` command.
 //!
 //! Usage: `cargo run -p ranch-package [-- NEW_OUTPUT_DIRECTORY]`
 //! Default output: `~/.local/share/ranch/versions/<short commit>/`.
@@ -9,6 +9,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, exit},
 };
+
+/// Programs placed in `bin/`.
+const PROGRAMS: &[&str] = &["corral", "ranch"];
 
 /// Files shipped beside the program, from the repository root.
 const SHARED: &[&str] = &[
@@ -61,6 +64,10 @@ fn run() -> Result<(), String> {
             "corral-core",
             "--bin",
             "corral",
+            "-p",
+            "ranch",
+            "--bin",
+            "ranch",
             "--release",
             "--locked",
         ])
@@ -79,10 +86,12 @@ fn run() -> Result<(), String> {
     for dir in ["bin", "share/corral"] {
         fs::create_dir_all(staging.0.join(dir)).map_err(|e| e.to_string())?;
     }
-    copy(
-        &target_dir.join(&host).join("release/corral"),
-        &staging.0.join("bin/corral"),
-    )?;
+    for program in PROGRAMS {
+        copy(
+            &target_dir.join(&host).join("release").join(program),
+            &staging.0.join("bin").join(program),
+        )?;
+    }
     for file in SHARED {
         let from = root.join(file);
         let name = from.file_name().ok_or("bad shared path")?;
@@ -97,7 +106,11 @@ fn run() -> Result<(), String> {
         &["symbolic-ref", "--quiet", "--short", "HEAD"],
     )
     .unwrap_or_default();
-    let digest = output_of(&staging.0, "shasum", &["-a", "256", "bin/corral"])?;
+    let digest = output_of(
+        &staging.0,
+        "shasum",
+        &["-a", "256", "bin/corral", "bin/ranch"],
+    )?;
     let build = format!(
         "revision: {revision}\ntarget: {host}\nworking-tree: {}\nsource: {}\nbranch: {branch}\n{digest}\n",
         if dirty { "modified" } else { "clean" },

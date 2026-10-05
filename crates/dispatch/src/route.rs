@@ -1,5 +1,6 @@
+// From Saddle `plugins/dispatch/src/route.rs` at commit `c21674a`, telemetry capture removed.
 use super::{json::Json, rules};
-use saddle_core_plugin::{Begin, Call, Captured, Completion, End, Missing, RouteBegin, RouteEnd};
+use std::io::Read;
 
 pub(super) struct Response {
     pub status: u16,
@@ -8,35 +9,32 @@ pub(super) struct Response {
 pub(super) struct Failure {
     pub message: &'static str,
     pub retry: bool,
-    pub missing: Missing,
+}
+/// What the route command prints and exits with. Business codes are 0 and 1.
+pub struct Completion {
+    pub exit_code: u8,
+    pub stdout: Vec<u8>,
 }
 
 pub(super) const MAX_RESPONSE: usize = 16 * 1024 * 1024;
 
 pub(super) fn run(
-    call: Call<'_>,
+    stdin: &mut dyn Read,
     key: Option<&str>,
     mut post: impl FnMut(&[u8], &str, bool) -> Result<Response, Failure>,
     mut sleep: impl FnMut(std::time::Duration),
 ) -> Completion {
     let Some(key) = key.filter(|v| !v.is_empty()) else {
-        return failure("TYPESAFE_API_KEY is not set", None);
+        return failure("TYPESAFE_API_KEY is not set");
     };
     let mut input = String::new();
-    if call.stdin.read_to_string(&mut input).is_err() {
-        return failure("stdin must be readable UTF-8", None);
+    if stdin.read_to_string(&mut input).is_err() {
+        return failure("stdin must be readable UTF-8");
     }
     // Python str.isspace includes these four controls in addition to Unicode whitespace.
     let summary =
         input.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
     let request = rules::request(summary);
-    call.recorder.begin(Begin::Route(RouteBegin {
-        router_model: rules::MODEL.into(),
-        router_version: Some(rules::VERSION.into()),
-        rules_version: Some(rules::fingerprint()),
-        summary: summary.as_bytes().to_vec(),
-        request: request.clone(),
-    }));
     let mut attempt = 0;
     let body = loop {
         let first = attempt == 0;
@@ -47,66 +45,44 @@ pub(super) fn run(
             }
             Ok(reply) if !(200..300).contains(&reply.status) => {
                 let prefix = &reply.body[..reply.body.len().min(300)];
-                return failure(
-                    &format!("HTTP {}: {}", reply.status, String::from_utf8_lossy(prefix)),
-                    Some(Captured::Missing(Missing::NotAvailable)),
-                );
+                return failure(&format!(
+                    "HTTP {}: {}",
+                    reply.status,
+                    String::from_utf8_lossy(prefix)
+                ));
             }
             Ok(reply) => break reply.body,
             Err(error) if first && error.retry => (),
-            Err(error) => return failure(error.message, Some(Captured::Missing(error.missing))),
+            Err(error) => return failure(error.message),
         }
     };
     if body.len() > MAX_RESPONSE {
-        return failure(
-            "response exceeds 16 MiB",
-            Some(Captured::Missing(Missing::TooLarge)),
-        );
+        return failure("response exceeds 16 MiB");
     }
     let parsed: Json = match serde_json::from_slice(&body) {
         Ok(value) => value,
-        Err(_) => {
-            return failure(
-                "invalid response JSON",
-                Some(Captured::Missing(Missing::Unrecognized)),
-            );
-        }
+        Err(_) => return failure("invalid response JSON"),
     };
-    let response = serde_json::to_vec(&parsed).expect("parsed JSON");
-    if response.len() > MAX_RESPONSE {
-        return failure(
-            "parsed response exceeds 16 MiB",
-            Some(Captured::Missing(Missing::TooLarge)),
-        );
+    // Kept from the capturing version so the same responses still fail the same way.
+    if serde_json::to_vec(&parsed).expect("parsed JSON").len() > MAX_RESPONSE {
+        return failure("parsed response exceeds 16 MiB");
     }
-    let captured = Captured::Bytes(response);
     match shape(&parsed) {
-        Ok(value) => complete(0, value, Some(captured)),
-        Err(error) => failure(&format!("invalid response: {error}"), Some(captured)),
+        Ok(value) => complete(0, value),
+        Err(error) => failure(&format!("invalid response: {error}")),
     }
 }
 
-fn failure(error: &str, response: Option<Captured>) -> Completion {
+fn failure(error: &str) -> Completion {
     complete(
         1,
         Json::object([("ok", Json::Bool(false)), ("error", error.into())]),
-        response,
     )
 }
-fn complete(exit_code: u8, value: Json, response: Option<Captured>) -> Completion {
+fn complete(exit_code: u8, value: Json) -> Completion {
     let mut stdout = serde_json::to_vec(&value).expect("business JSON");
     stdout.push(b'\n');
-    let end = response.map(|response| {
-        End::Route(RouteEnd {
-            response,
-            suggestion: Captured::Bytes(stdout.clone()),
-        })
-    });
-    Completion {
-        exit_code,
-        stdout,
-        end,
-    }
+    Completion { exit_code, stdout }
 }
 // Decimal formatting rounds the binary float, ties to even, before converting back.
 fn rounded(value: f64) -> f64 {

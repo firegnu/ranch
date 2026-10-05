@@ -288,6 +288,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "ranch"
+version = "0.1.0"
+dependencies = [
+ "ranch-dispatch",
+ "serde_json",
+]
+
+[[package]]
+name = "ranch-dispatch"
+version = "0.1.0"
+dependencies = [
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
 name = "ranch-package"
 version = "0.1.0"
 
@@ -387,22 +407,6 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "saddle-core-plugin"
-version = "0.1.0"
-
-[[package]]
-name = "saddle-dispatch-plugin"
-version = "0.1.0"
-dependencies = [
- "rustls",
- "saddle-core-plugin",
- "serde",
- "serde_json",
- "sha2",
- "ureq",
-]
 
 [[package]]
 name = "serde"

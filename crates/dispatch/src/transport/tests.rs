@@ -1,3 +1,4 @@
+// From Saddle `plugins/dispatch/src/transport/tests.rs` at commit `c21674a`, telemetry capture removed.
 use super::*;
 
 mod tls;
@@ -15,16 +16,8 @@ fn connect_and_timeout_errors_retry_but_receive_reset_does_not() {
 }
 
 use super::super::route;
-use saddle_core_plugin::{Begin, Call, Captured, End, Recorder};
 use std::{io::Write, net::TcpListener, thread, time::Instant};
 
-#[derive(Default)]
-struct Recording(Vec<Begin>);
-impl Recorder for Recording {
-    fn begin(&mut self, b: Begin) {
-        self.0.push(b);
-    }
-}
 const VALID: &str = r#"{"answers":{"tier":{"probabilities":{"0":1},"score":0,"confidence":1},"cross_data_model":{"noul":0},"visible":{"noul":0},"doc_only":{"noul":0}}}"#;
 fn reply(status: u16, body: &[u8]) -> Vec<u8> {
     let mut bytes=format!("HTTP/1.1 {status} Synthetic\r\nContent-Length: {}\r\nConnection: close\r\nLocation: http://127.0.0.1:1/must-not-follow\r\n\r\n",body.len()).into_bytes();
@@ -37,8 +30,8 @@ fn local(
     replies: Vec<(Vec<u8>, Duration)>,
     timeout: Duration,
 ) -> (
-    saddle_core_plugin::Completion,
-    Recording,
+    route::Completion,
+    Vec<u8>,
     Vec<Vec<u8>>,
     usize,
     Vec<Duration>,
@@ -99,46 +92,34 @@ fn local(
         }
         requests
     });
-    let mut rec = Recording::default();
+    let mut sent = vec![];
     let mut attempts = 0;
     let mut sleeps = vec![];
     let result = route::run(
-        Call {
-            command: "route",
-            stdin: &mut &b"synthetic summary"[..],
-            recorder: &mut rec,
-        },
+        &mut &b"synthetic summary"[..],
         Some("synthetic-key-03c"),
         |body, key, first| {
             attempts += 1;
+            sent = body.to_vec();
             send(&url, body, key, first, config(timeout))
         },
         |d| sleeps.push(d),
     );
     let requests = server.join().unwrap();
-    (result, rec, requests, attempts, sleeps)
+    (result, sent, requests, attempts, sleeps)
 }
-fn gap(result: saddle_core_plugin::Completion, expected: &str) {
+/// A failed route: exit code 1 and an error that starts with `expected`.
+fn failed(result: route::Completion, expected: &str) {
     assert_eq!(result.exit_code, 1);
-    let Some(End::Route(end)) = result.end else {
-        panic!("end")
-    };
-    let actual = match end.response {
-        Captured::Missing(Missing::NotAvailable) => "not_available",
-        Captured::Missing(Missing::TooLarge) => "too_large",
-        Captured::Missing(Missing::Unrecognized) => "unrecognized",
-        _ => "unexpected body",
-    };
-    assert_eq!(actual, expected);
-    let Captured::Bytes(suggestion) = end.suggestion else {
-        panic!("suggestion")
-    };
-    assert_eq!(suggestion, result.stdout);
+    let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    let error = value["error"].as_str().unwrap();
+    assert!(error.starts_with(expected), "{error}");
 }
 #[test]
 fn loopback_observes_actual_request_retry_redirect_and_response_gaps() {
     for status in [429, 529] {
-        let (result, rec, requests, attempts, sleeps) = local(
+        let (result, sent, requests, attempts, sleeps) = local(
             vec![
                 (reply(status, b"ignored"), Duration::ZERO),
                 (reply(200, VALID.as_bytes()), Duration::ZERO),
@@ -148,18 +129,14 @@ fn loopback_observes_actual_request_retry_redirect_and_response_gaps() {
         assert_eq!(result.exit_code, 0);
         assert_eq!(attempts, 2);
         assert_eq!(requests.len(), 2);
-        assert_eq!(rec.0.len(), 1);
         assert_eq!(sleeps, vec![Duration::from_secs(1)]);
-        let Begin::Route(begin) = &rec.0[0] else {
-            panic!("begin")
-        };
         for request in requests {
             let end = request.windows(4).position(|b| b == b"\r\n\r\n").unwrap() + 4;
             let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
             assert!(headers.starts_with("post /v1/systemone http/1.1\r\n"));
             assert!(headers.contains("authorization: bearer synthetic-key-03c\r\n"));
             assert!(headers.contains("content-type: application/json\r\n"));
-            assert_eq!(&request[end..], begin.request);
+            assert_eq!(&request[end..], sent);
         }
     }
     for status in [302, 400, 503] {
@@ -178,22 +155,25 @@ fn loopback_observes_actual_request_retry_redirect_and_response_gaps() {
             value["error"],
             format!("HTTP {status}: {}�", "x".repeat(299))
         );
-        gap(result, "not_available");
+        failed(result, "HTTP ");
     }
     for (wire, expected) in [
-        (reply(200, b"{not json}"), "unrecognized"),
+        (reply(200, b"{not json}"), "invalid response JSON"),
         (
             b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n{}".to_vec(),
-            "not_available",
+            "network: ",
         ),
-        (vec![], "not_available"), // close after fully reading request, before headers
-        (reply(200, &vec![b' '; MAX_RESPONSE + 1]), "too_large"),
+        (vec![], "network: "), // close after fully reading request, before headers
+        (
+            reply(200, &vec![b' '; MAX_RESPONSE + 1]),
+            "response exceeds 16 MiB",
+        ),
     ] {
         let (result, _, requests, attempts, _) =
             local(vec![(wire, Duration::ZERO)], Duration::from_secs(1));
         assert_eq!(attempts, 1);
         assert_eq!(requests.len(), 1);
-        gap(result, expected);
+        failed(result, expected);
     }
 }
 #[test]
@@ -206,12 +186,11 @@ fn loopback_timeouts_retry_once_and_keep_response_unavailable() {
             (prefix.clone(), Duration::from_millis(120)),
             (prefix, Duration::from_millis(120)),
         ];
-        let (result, rec, requests, attempts, sleeps) = local(replies, Duration::from_millis(40));
+        let (result, _, requests, attempts, sleeps) = local(replies, Duration::from_millis(40));
         assert_eq!(attempts, 2);
-        assert_eq!(rec.0.len(), 1);
         assert_eq!(requests.len(), 2);
         assert!(sleeps.is_empty());
-        gap(result, "not_available");
+        failed(result, "network: timeout");
     }
 }
 #[test]

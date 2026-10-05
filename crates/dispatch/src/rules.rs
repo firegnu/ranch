@@ -1,8 +1,7 @@
+// From Saddle `plugins/dispatch/src/rules.rs` at commit `c21674a`, telemetry capture removed.
 //! Request constants ported verbatim from Corral 6923da1 route.py (see README).
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 pub(super) const MODEL: &str = "jev-1.13.0";
-pub(super) const VERSION: &str = "route-v1";
 pub(super) const TIERS: [&str; 3] = ["轻", "常规", "重"];
 pub(super) const CONFIDENT: f64 = 0.8;
 pub(super) const CROSS_YES: f64 = 0.8;
@@ -87,13 +86,15 @@ pub(super) fn request(summary: &str) -> Vec<u8> {
     })
     .expect("request constants")
 }
+#[cfg(test)]
 pub(super) fn fingerprint() -> String {
+    use sha2::Digest;
     // Canonical compact UTF-8 JSON, object keys recursively sorted by serde_json's
     // default BTreeMap; arrays retain order. No preserve_order feature in this build.
     let rules = serde_json::json!({"model":MODEL,"tiers":TIERS,"questions":questions(),
         "thresholds":{"confident":CONFIDENT,"cross_yes":CROSS_YES,"cross_no":CROSS_NO,"visible_yes":VISIBLE_YES,"visible_no":VISIBLE_NO}});
     format!(
         "sha256:{:x}",
-        Sha256::digest(serde_json::to_vec(&rules).expect("rule constants"))
+        sha2::Sha256::digest(serde_json::to_vec(&rules).expect("rule constants"))
     )
 }

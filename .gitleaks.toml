@@ -1,0 +1,8 @@
+# Default rules, plus one path: ureq 3.4.2's public test key (byte-identical to
+# ureq-3.4.2/src/unversioned/transport/testdata/key.pem), used only by in-memory TLS tests.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "ureq 3.4.2 public test fixture"
+paths = ['''^crates/dispatch/tests/fixtures/tls-key\.pem$''']

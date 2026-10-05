@@ -1,3 +1,4 @@
+// From Saddle `plugins/dispatch/src/json.rs` at commit `c21674a`, unchanged.
 //! Local ordered JSON; never enable serde_json's binary-wide preserve_order feature.
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeMap};
 use std::{collections::HashMap, fmt};

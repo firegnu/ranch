@@ -1,3 +1,4 @@
+// From Saddle `plugins/dispatch/src/transport/tests/tls.rs` at commit `c21674a`, telemetry capture removed.
 use super::*;
 use rustls::{ServerConfig, ServerConnection};
 use std::io::ErrorKind;
@@ -126,14 +127,9 @@ fn tls_failure(body_error: Option<ErrorKind>, message: &str) {
             )
             .unwrap(),
     );
-    let mut rec = Recording::default();
     let mut evidence = vec![];
     let result = route::run(
-        Call {
-            command: "route",
-            stdin: &mut &b"synthetic TLS send failure"[..],
-            recorder: &mut rec,
-        },
+        &mut &b"synthetic TLS send failure"[..],
         Some("synthetic-tls-key"),
         |body, key, _| {
             let stats = Arc::new(Stats::default());
@@ -184,12 +180,10 @@ fn tls_failure(body_error: Option<ErrorKind>, message: &str) {
         },
         |_| panic!("network failure must not use status backoff"),
     );
-    assert_eq!(rec.0.len(), 1);
     assert_eq!(result.exit_code, 1);
     assert!(!String::from_utf8_lossy(&result.stdout).contains("synthetic-tls-key"));
     let stdout: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(stdout["error"], message);
-    gap(result, "not_available");
     assert_eq!(
         evidence.len(),
         if fail_body { 2 } else { 1 },

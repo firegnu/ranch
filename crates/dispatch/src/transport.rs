@@ -1,7 +1,7 @@
+// From Saddle `plugins/dispatch/src/transport.rs` at commit `c21674a`, telemetry capture removed.
 //! ureq 3.4.2's unversioned adapter is confined here. Track successful wire writes,
 //! not a drained body Reader or NextTimeout.reason (which need not name the phase).
 use super::route::{Failure, MAX_RESPONSE, Response};
-use saddle_core_plugin::Missing;
 use std::{
     io::Read,
     sync::{
@@ -96,7 +96,6 @@ fn send(
         return Err(Failure {
             message: "response exceeds 16 MiB",
             retry: false,
-            missing: Missing::TooLarge,
         });
     }
     Ok(Response {
@@ -125,7 +124,6 @@ fn classify(error: ureq::Error, sent: bool) -> Failure {
     Failure {
         message,
         retry: !sent || timeout,
-        missing: Missing::NotAvailable,
     }
 }
 

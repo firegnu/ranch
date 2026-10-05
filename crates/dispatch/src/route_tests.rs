@@ -1,18 +1,10 @@
+// From Saddle `plugins/dispatch/src/route_tests.rs` at commit `c21674a`, telemetry capture removed.
 use super::{route::*, rules};
-use saddle_core_plugin::{Begin, Call, Captured, Completion, End, Missing};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use saddle_core_plugin::{Begin, Captured, End, Recorder};
     use serde_json::{Value, json};
-    #[derive(Default)]
-    struct Recording(Vec<Begin>);
-    impl Recorder for Recording {
-        fn begin(&mut self, value: Begin) {
-            self.0.push(value);
-        }
-    }
 
     const RESPONSE: &str = r#"{ "extra": {"z":1,"a":2,"z":3}, "answers": {
         "tier":{"probabilities":{"2":0.7996,"0":0.8004,"2":0.8001,"1":0.0625},"confidence":0.7999,"score":0.1875},
@@ -23,14 +15,9 @@ mod tests {
 
     #[test]
     fn request_constants_and_python_order_rounding_are_preserved() {
-        let mut recorder = Recording::default();
         let mut sent = vec![];
         let result = run(
-            Call {
-                command: "route",
-                stdin: &mut "\u{1c}\u{85}\u{2003}合成任务\u{1f}\r\n".as_bytes(),
-                recorder: &mut recorder,
-            },
+            &mut "\u{1c}\u{85}\u{2003}合成任务\u{1f}\r\n".as_bytes(),
             Some("synthetic-key-03c"),
             |body, key, _| {
                 assert_eq!(key, "synthetic-key-03c");
@@ -59,15 +46,6 @@ mod tests {
             request.find("cross_data_model").unwrap()
                 < request.find("cross_security_privacy").unwrap()
         );
-        assert_eq!(recorder.0.len(), 1);
-        let Begin::Route(begin) = &recorder.0[0] else {
-            panic!("route begin")
-        };
-        assert_eq!(begin.summary, "合成任务".as_bytes());
-        assert_eq!(begin.request, sent[0]);
-        assert_eq!(begin.router_model, "jev-1.13.0");
-        assert_eq!(begin.router_version.as_deref(), Some("route-v1"));
-        assert!(begin.rules_version.as_ref().unwrap().starts_with("sha256:"));
         let value: Value = serde_json::from_slice(&result.stdout).unwrap();
         assert_eq!(
             value,
@@ -75,56 +53,20 @@ mod tests {
         );
         let stdout = String::from_utf8(result.stdout.clone()).unwrap();
         assert!(stdout.find("security_privacy").unwrap() < stdout.find("data_model").unwrap());
-        let Some(End::Route(end)) = result.end else {
-            panic!("route end")
-        };
-        let Captured::Bytes(response) = end.response else {
-            panic!("full response")
-        };
-        assert!(
-            String::from_utf8(response.clone())
-                .unwrap()
-                .starts_with("{\"extra\":{\"z\":3,\"a\":2},\"answers\":")
-        );
-        assert_eq!(
-            serde_json::from_slice::<Value>(&response).unwrap()["usage"]["tokens"],
-            18446744073709551615u64
-        );
-        let Captured::Bytes(suggestion) = end.suggestion else {
-            panic!("suggestion")
-        };
-        assert_eq!(suggestion, result.stdout);
-        assert!(
-            !String::from_utf8(response)
-                .unwrap()
-                .contains("synthetic-key-03c")
-        );
+        assert!(!stdout.contains("synthetic-key-03c"));
     }
 }
 
 #[cfg(test)]
 mod retry_tests {
     use super::*;
-    use saddle_core_plugin::Recorder;
-    #[derive(Default)]
-    struct Recording(usize);
-    impl Recorder for Recording {
-        fn begin(&mut self, _: Begin) {
-            self.0 += 1;
-        }
-    }
     #[test]
-    fn retryable_attempts_share_one_begin_and_only_final_response_is_captured() {
+    fn retryable_statuses_retry_once_and_use_only_the_final_response() {
         for status in [429, 529] {
             let mut n = 0;
             let mut sleeps = vec![];
-            let mut rec = Recording::default();
             let result = run(
-                Call {
-                    command: "route",
-                    stdin: &mut &b"test"[..],
-                    recorder: &mut rec,
-                },
+                &mut &b"test"[..],
                 Some("synthetic"),
                 |_, _, _| {
                     n += 1;
@@ -140,16 +82,16 @@ mod retry_tests {
                 |d| sleeps.push(d),
             );
             assert_eq!(n, 2, "retry status {status}");
-            assert_eq!(rec.0, 1);
             assert_eq!(sleeps, vec![std::time::Duration::from_secs(1)]);
-            assert_eq!(result.exit_code, 1); // shape fails, parsed final response still retained
-            let Some(End::Route(end)) = result.end else {
-                panic!("end")
-            };
-            let Captured::Bytes(body) = end.response else {
-                panic!("parsed response")
-            };
-            assert_eq!(body, b"{\"extra\":3}");
+            // The final body is valid JSON with the wrong shape; the first one is not JSON at all.
+            assert_eq!(result.exit_code, 1);
+            let value: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert!(
+                value["error"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("invalid response: ")
+            );
         }
     }
 }
@@ -157,21 +99,10 @@ mod retry_tests {
 #[cfg(test)]
 mod boundaries {
     use super::*;
-    use saddle_core_plugin::Recorder;
     use serde_json::{Value, json};
-    struct Count(usize);
-    impl Recorder for Count {
-        fn begin(&mut self, _: Begin) {
-            self.0 += 1;
-        }
-    }
     fn call(body: &[u8]) -> Completion {
         run(
-            Call {
-                command: "route",
-                stdin: &mut &b"synthetic"[..],
-                recorder: &mut Count(0),
-            },
+            &mut &b"synthetic"[..],
             Some("synthetic"),
             |_, _, _| {
                 Ok(Response {
@@ -262,7 +193,7 @@ mod boundaries {
         }
     }
     #[test]
-    fn invalid_shapes_retain_full_parsed_response() {
+    fn invalid_shapes_fail_with_the_shape_error() {
         for body in [
             b"null".as_slice(),
             b"{\"unused\":3}",
@@ -271,66 +202,49 @@ mod boundaries {
         ] {
             let result = call(body);
             assert_eq!(result.exit_code, 1);
-            let Some(End::Route(end)) = result.end else {
-                panic!("end")
-            };
-            let Captured::Bytes(actual) = end.response else {
-                panic!("parsed response")
-            };
-            assert_eq!(actual, body);
-            let Captured::Bytes(suggestion) = end.suggestion else {
-                panic!("suggestion")
-            };
-            assert_eq!(suggestion, result.stdout);
+            let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert_eq!(value["ok"], false);
+            assert!(
+                value["error"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("invalid response: ")
+            );
         }
     }
     #[test]
-    fn missing_empty_key_and_invalid_utf8_never_begin_or_request() {
+    fn missing_empty_key_and_invalid_utf8_never_request() {
         for (key, bytes) in [
             (None, b"synthetic".as_slice()),
             (Some(""), b"synthetic"),
             (Some("synthetic"), b"\xff"),
         ] {
-            let mut recorder = Count(0);
             let result = run(
-                Call {
-                    command: "route",
-                    stdin: &mut &bytes[..],
-                    recorder: &mut recorder,
-                },
+                &mut &bytes[..],
                 key,
                 |_, _, _| panic!("no request"),
                 |_| panic!("no sleep"),
             );
             assert_eq!(result.exit_code, 1);
-            assert_eq!(recorder.0, 0);
-            assert!(result.end.is_none());
         }
     }
     #[test]
     fn network_retries_stop_after_two_attempts_without_sleeping() {
         for retry in [true, false] {
             let mut n = 0;
-            let mut recorder = Count(0);
             let result = run(
-                Call {
-                    command: "route",
-                    stdin: &mut &b""[..],
-                    recorder: &mut recorder,
-                },
+                &mut &b""[..],
                 Some("synthetic"),
                 |_, _, _| {
                     n += 1;
                     Err(Failure {
                         message: "network: synthetic",
                         retry,
-                        missing: Missing::NotAvailable,
                     })
                 },
                 |_| panic!("no delay for transport errors"),
             );
             assert_eq!(n, if retry { 2 } else { 1 });
-            assert_eq!(recorder.0, 1);
             assert_eq!(result.exit_code, 1);
         }
     }
