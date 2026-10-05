@@ -31,5 +31,5 @@
 
 ## 5. 待定
 
-- 第 2、3 步什么时候做（第 1 步完成后转回 paddock 开发，用户到时定）。
+- （已定，用户 10-05）第 2、3 步接着做：遥测、插件协议、dispatch 都剥离到 ranch，Saddle 运行和现在一样之后，才转回 paddock 开发。插件 SDK（带 ratatui，只服务 Saddle）和 Drover 这一轮不迁，留在 Saddle。
 - 插件协议的共享方式。
