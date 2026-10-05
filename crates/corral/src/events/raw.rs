@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/events/raw.rs` at commit `a31dea2`, unchanged.
 //! Version 2 collectors report facts. All turn judgement lives in this reader.
 use super::*;
 use regex::Regex;

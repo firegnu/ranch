@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/pen/upgrade.rs` at commit `a31dea2`, unchanged.
 //! The snapshot owns no descriptors until validation and the active boundary.
 //! In particular, failed deserialization must not close the only PTY or name lock.
 use super::*;

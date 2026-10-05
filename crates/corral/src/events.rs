@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/events.rs` at commit `a31dea2`, unchanged.
 use crate::{Error, Result, state};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};

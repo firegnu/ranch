@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/upgrade.rs` at commit `a31dea2`, unchanged.
 //! Public orchestration uses exactly the same pen protocol as any other client.
 use crate::{Result, now, state};
 use serde_json::{Value, json};

@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/hooks.rs` at commit `a31dea2`, unchanged.
 use serde_json::{Value, json};
 use std::{
     fs::OpenOptions,

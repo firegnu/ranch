@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/lib.rs` at commit `a31dea2`, unchanged.
 mod after;
 mod attach;
 mod cli;

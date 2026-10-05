@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/after.rs` at commit `a31dea2`, unchanged.
 //! A record is mutated only while holding its permanent flock inode. Handover
 //! requests are separate files; they never transfer authority by PID or signal.
 use crate::{Error, Result, cli, now, state};

@@ -14,7 +14,7 @@
 ## 2. 与前端的关系
 
 - 前端只调用 ranch 装好的命令，读 JSON 输出，不在 Cargo 里引用 ranch 的包，不读内部状态目录。各自的依赖、锁文件、工具链互不进入。
-- 全局位置归 ranch：`~/.corral`、`~/.local/bin/corral`、corral 技能（`~/.claude/skills/corral`、`~/.codex/skills/corral`），以后还有遥测数据库和 dispatch 技能目录。Saddle、paddock 不再打包、安装这些。
+- 全局位置归 ranch：`~/.corral`、`~/.local/bin/corral`、corral 技能（`~/.claude/skills/corral`、`~/.agents/skills/corral`），以后还有遥测数据库和 dispatch 技能目录。Saddle、paddock 不再打包、安装这些。
 - Saddle 是保底版（用户 10-05）：不再加新功能，只保证和运行时对得上。改 ranch 时按 AGENTS.md 的规矩写明对两个前端的影响。
 - 单独分发 paddock 时，打包带上 ranch 的某个版本（paddock DESIGN §7）。
 

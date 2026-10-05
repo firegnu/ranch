@@ -1,0 +1,7 @@
+[package]
+name = "ranch-package"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Build an immutable ranch version directory; never installs or switches links"
+publish = false

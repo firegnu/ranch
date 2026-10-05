@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/skills.rs` at commit `a31dea2`, unchanged.
 use crate::{Error, Result};
 use serde_json::{Value, json};
 use std::{

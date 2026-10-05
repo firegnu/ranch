@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/attach.rs` at commit `a31dea2`, unchanged.
 use crate::{Error, Result, state, terminal::Terminal};
 use serde_json::{Value, json};
 use std::{

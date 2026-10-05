@@ -1,12 +1,13 @@
 # Corral core
 
-Rust agent runtime shipped with Saddle. This package builds independently and has no
-Saddle, plugin, task, routing or telemetry dependencies. It does not execute the old
+Rust agent runtime shipped with ranch and used by the Saddle and paddock front ends.
+This package builds independently and has no front-end, plugin, task, routing or
+telemetry dependencies. It does not execute the old
 Corral CLI or require a Python interpreter. Its public executable remains `corral`.
 
 ```sh
-cargo build --manifest-path crates/corral-core/Cargo.toml --bin corral
-cargo test --manifest-path crates/corral-core/Cargo.toml --all-targets
+cargo build -p corral-core --bin corral
+cargo test -p corral-core --all-targets
 ```
 
 The CLI and pen protocol v1 retain the original Corral baseline `6923da1`.
@@ -17,9 +18,9 @@ stable helper entry; pi/omp load fact collectors whose interpretation lives in R
 Pens outlive clients and TUI instances. Use `corral attach NAME` independently;
 Ctrl-] detaches, while explicit `corral stop NAME` stops the agent. New binaries
 must live in immutable version directories: do not overwrite or remove a binary
-still referenced by a running pen or hook. `scripts/package.sh NEW_DIRECTORY`
-builds the host, runtime and official process plugins together without installing
-anything. Changing global links/configuration is a separate deployment operation.
+still referenced by a running pen or hook. `cargo run -p ranch-package` builds
+an immutable version directory (`~/.local/share/ranch/versions/<commit>/` by default)
+without installing anything. Changing global links/configuration is a separate deployment operation.
 
 `corral upgrade --all` upgrades capable pens and persistent reminders through public
 interfaces; `corral recover NAME` retries a Hold in the same epoch. Read every result,
@@ -32,10 +33,19 @@ coding agent or user state is required. Optional ignored interoperability tests
 accept `CORRAL_COMPAT_BIN` pointing to an unchanged external v1 baseline; this is
 only a comparison tool, never a build or runtime dependency.
 
-`node crates/corral-core/tests/collectors.mjs` exercises both shipped TypeScript
+`node crates/corral/tests/collectors.mjs` exercises both shipped TypeScript
 collectors with a synthetic extension API (Node with native type stripping).
 
 `install-skills` retains consent and ownership checks. Existing symlinked skills
 are reported as foreign and left untouched, so a source-repository link cannot
 make installation write into that repository. Deployment must handle these links
 explicitly. The command never installs skills on ordinary startup.
+
+## Source
+
+Moved from Saddle `crates/corral-core` at commit `a31dea2` (unchanged since `9648ff0`).
+Each Rust file names its original path. `resources/` and `tests/collectors.mjs` are
+byte-for-byte copies without a header, because the resources are compiled into the
+program or installed into user directories. Saddle's `tests/product.rs` was not moved:
+it tests the Saddle terminal host together with corral. The two design documents in
+the repository's `docs/` come from Saddle `docs/` at the same commit.

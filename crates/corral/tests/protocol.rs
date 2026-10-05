@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/tests/protocol.rs` at commit `a31dea2`, unchanged.
 //! Public CLI and v1 pen transport, using only isolated synthetic agents.
 use serde_json::{Value, json};
 use std::{

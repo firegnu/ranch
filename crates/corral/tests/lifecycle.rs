@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/tests/lifecycle.rs` at commit `a31dea2`, unchanged.
 use serde_json::Value;
 use std::process::{Command, Output};
 struct Lab {

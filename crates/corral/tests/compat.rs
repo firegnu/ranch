@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/tests/compat.rs` at commit `a31dea2`, unchanged.
 //! Explicit, external baseline comparison. Not needed to build or run the Rust product.
 use serde_json::Value;
 use std::{

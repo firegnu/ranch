@@ -1,3 +1,4 @@
+// From Saddle `crates/corral-core/src/terminal.rs` at commit `a31dea2`, unchanged.
 use regex::bytes::{Captures, Regex};
 use std::{collections::BTreeMap, sync::LazyLock};
 fn re(s: &str) -> Regex {
