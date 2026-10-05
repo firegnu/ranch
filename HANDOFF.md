@@ -8,7 +8,7 @@
 
 ## 下一步
 
-1. 第 2 步遥测（paddock 的 M3，先写任务文件给用户看），再第 3 步插件协议与 dispatch。都做完、Saddle 运行和现在一样之后，才转回 paddock 开发（用户 10-05）。插件 SDK 和 Drover 这一轮不迁。
+1. 第 2 步 dispatch（不带遥测；任务文件在 paddock 的 `docs/任务/M3-dispatch进ranch.md`，待用户看过）。做完后转回 paddock 开发。遥测、Drover、插件 SDK、插件协议不迁（用户 10-05）。
 
 ## 悬着
 
