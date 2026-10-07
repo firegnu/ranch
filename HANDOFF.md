@@ -15,8 +15,9 @@
 ## 下一步
 
 1. paddock 开工 P5-33（界面接 pause／resume）。
-2. Saddle 要不要跟暂停（兼容新增，满足部署条件后不跟也能用），交用户定。
+2. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
 
 ## 悬着
 
 - `crates/corral/tests/protocol.rs` 第一次并行跑时有一项卡住过，之后未复现。
+- Saddle 基本不用了（用户 10-07），但 AGENTS.md／DESIGN §2 的“Saddle 保底”规矩（改 ranch 写明对 Saddle 的影响、保证它和运行时对得上）要不要放松，已问用户、未答；答之前照原规矩办。
