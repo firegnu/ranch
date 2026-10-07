@@ -22,8 +22,9 @@ still referenced by a running pen or hook. `cargo run -p ranch-package` builds
 an immutable version directory (`~/.local/share/ranch/versions/<commit>/` by default)
 without installing anything. Changing global links/configuration is a separate deployment operation.
 
-`corral pause NAME` stops the agent and every descendant with SIGSTOP (descendants that left
-its process group included); `corral resume NAME` continues them with SIGCONT. `status` and `ls`
+`corral pause NAME` stops the agent with SIGSTOP, together with every descendant and every process
+in a session one of them is in (so children adopted by init after their parent exited are included;
+only a daemon that detaches into a new session at that very moment can escape); `corral resume NAME` continues them with SIGCONT. `status` and `ls`
 report `paused`; while paused, send and keys are refused (exit 10) and attached typing is dropped.
 Older corral binaries do not read `paused`: their `wait` and `send --after` misjudge a paused
 agent. Switch the public link and run `corral upgrade --all` (pens and reminders together) before
