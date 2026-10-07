@@ -27,8 +27,9 @@ in a session one of them is in (so children adopted by init after their parent e
 only a daemon that detaches into a new session at that very moment can escape); `corral resume NAME` continues them with SIGCONT. `status` and `ls`
 report `paused`; while paused, send and keys are refused (exit 10) and attached typing is dropped.
 Older corral binaries do not read `paused`: their `wait` and `send --after` misjudge a paused
-agent. Switch the public link and run `corral upgrade --all` (pens and reminders together) before
-pausing anything; see `docs/DESIGN.md` §6 of the repository.
+agent. Switch the public link, run `corral upgrade --all` (pens and recorded reminders together),
+and let any old `corral wait` or unrecorded reminder still running from an old version finish
+before pausing anything; see `docs/DESIGN.md` §6 of the repository.
 
 `corral upgrade --all` upgrades capable pens and persistent reminders through public
 interfaces; `corral recover NAME` retries a Hold in the same epoch. Read every result,
