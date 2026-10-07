@@ -94,6 +94,6 @@
 - **R3 Hold 里 agent 被杀**：Hold 循环在 agent 已退出（含未回收的僵尸）且处于暂停时，解冻记下的进程并保存快照。
 - **R4 unknown 先于 paused**：`wait` 和 `send --after` 改为先看暂停，再看 unknown；没有 hooks 的程序暂停时也一直等。
 - **R5 已收下的消息因暂停确认不到**：普通 send 到期时若 agent 暂停中或在这段时间里恢复过，返回 `ok`、`confirmed:false`、`paused:true`（不重送，不报 3）；`send --after` 的确认窗口在暂停期间顺延，恢复后再给 15 秒。
-- **R6 旧客户端混用**：旧版命令行和旧提醒进程不读 `paused`，新版这边改不了它们。写进 `docs/DESIGN.md` §6 和 README：只有换成新 pen 的 agent 才能暂停，部署时先切链接、再 `corral upgrade --all`（pen 和持久提醒一起交给新版），全部 complete 后才用暂停；Saddle 默认按 PATH 找 corral，切链接后即是新版。这条交用户确认。
+- **R6 旧客户端混用**：旧版命令行和旧提醒进程不读 `paused`，新版这边改不了它们。写进 `docs/DESIGN.md` §6 和 README：只有换成新 pen 的 agent 才能暂停，部署时先切链接、再 `corral upgrade --all`（pen 和持久提醒一起交给新版），全部 complete 后才用暂停；Saddle 默认按 PATH 找 corral，切链接后即是新版。用户 10-07：“R6 我同意”。
 - **R7 技能**：`SKILL.md` 补上 pause／resume 的用法和 `paused` 字段，保留“由用户决定”的边界。
 - 新增回归测试 4 个（暂停前父进程已退出的孤儿进程被冻住、无 hooks 程序暂停时 wait／after 不提前、收下后暂停不报丢、Hold 里 agent 被杀后解冻），先在审查时的代码上确认 4 个都失败，再在修改后通过；`tests/pause.rs` 共 11 个，连跑 3 遍都过。R2 的同轮竞态没有写确定性的测试（要靠调度屏障），靠“升级进行中拒绝”的构造保证。全套 test、clippy、fmt 都过。改完后用真的 claude 再实测一次冻结、恢复。

@@ -40,4 +40,4 @@
 - `status`／`ls` 多 `paused`、`paused_at`，原有 `state` 不变（兼容新增）。暂停中 `send`／`keys` 报 `paused`，attach 输入丢掉；`wait`、`--after` 不把暂停当作做完或安静；`stop` 先解冻再停；原地升级后保持暂停。
 - 旧版 pen 不认 pause，报 `unsupported`，要先 `corral upgrade`；不在命令行这边直接发信号。
 - 对前端：Saddle 不跟也能用（暂停的 agent 显示原来的状态，send 收到 `paused`），跟不跟由用户定；paddock 在 P5-33 接界面。
-- 兼容边界（交叉审查 R6 指出）：旧版 corral 的命令行和后台提醒进程不读 `paused`，对暂停中的 agent 会误判：旧 `wait` 报 idle 或 stopped-quiet，旧 `send --after` 提前送或把等待记成 unknown（旧 send 被拒、旧 stop 正常）。新版无法替旧客户端纠正，所以靠部署次序保证不混用：只有换成新 pen 的 agent 才能暂停；先切 `~/.local/bin/corral`，再 `corral upgrade --all`（同一条命令把 pen 和持久提醒都交给新版），逐项 complete 之后才开始用暂停。Saddle 默认按 PATH 找 `corral`，切链接后即是新版；配置里固定了旧版本路径的不在保护之内。
+- 兼容边界（交叉审查 R6 指出）：旧版 corral 的命令行和后台提醒进程不读 `paused`，对暂停中的 agent 会误判：旧 `wait` 报 idle 或 stopped-quiet，旧 `send --after` 提前送或把等待记成 unknown（旧 send 被拒、旧 stop 正常）。新版无法替旧客户端纠正，所以靠部署次序保证不混用：只有换成新 pen 的 agent 才能暂停；先切 `~/.local/bin/corral`，再 `corral upgrade --all`（同一条命令把 pen 和持久提醒都交给新版），逐项 complete 之后才开始用暂停。Saddle 默认按 PATH 找 `corral`，切链接后即是新版；配置里固定了旧版本路径的不在保护之内。用户 10-07 同意这样处理（“R6 我同意”）。
