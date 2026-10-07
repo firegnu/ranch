@@ -102,3 +102,9 @@
 - 复核确认 R2、R3、R4、R5、R7 修好；R1、R6 未闭环。
 - R1：冻结那一刻另开新会话、父进程又同时退出的进程会漏掉，按会话找也堵不死（macOS 没有系统级冻结一组进程的手段）。照任务“做不到冻全进程树时停下来报告”交用户，用户 10-07 选“接受”。写进 DESIGN §6 和 README。
 - R6：部署条件补上“确认没有旧版 corral 的 wait、无记录提醒还在跑”（切链接前就起的旧 wait 不会被 `upgrade --all` 换掉），用户 10-07 同意。DESIGN §6、README 已改，“Saddle 不跟也能用”改成以这些部署条件为前提。
+
+## 主控审查
+
+- 主控自己实现，交叉审查交 Codex（ranch/review-pause-1，gpt-6-astra / xhigh），共三轮：第一轮 7 条必须改都认可并改了；复核时 R2、R3、R4、R5、R7 确认修好，R1（冻结瞬间另开新会话的守护进程会漏）和 R6（部署时还要确认旧版 wait／无记录提醒已退场）交用户，用户 10-07 接受 R1 的范围、同意 R6 的部署条件；第二轮复核“可以合并”。意见原文在 `docs/任务/R1-审查.md`。
+- 合并后在 main 上重跑 `cargo test --all-targets`（corral 单元 6、lifecycle 8、pause 11、protocol 12、upgrade 17，dispatch 21，3 个外部基线兼容测试照旧跳过）、clippy、fmt，都过。真机实测两次（改前改后各一次）都正常。
+- 待办：部署（打包、切 `~/.local/bin/corral`、关掉审查员后 `corral upgrade --all`、查旧版 wait／提醒进程、装技能）要用户在场；之后 paddock 的 P5-33 才能开工。
