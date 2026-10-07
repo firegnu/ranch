@@ -31,3 +31,12 @@
 
 - （已定，用户 10-05）只再拆 dispatch（不带遥测），之后转回 paddock 开发；遥测、Drover、整个插件系统砍掉（Saddle 删代码），两个前端只靠 ranch 的 corral 和 dispatch。
 - 插件协议的共享方式。
+
+## 6. corral 暂停（冻结）（用户 10-07）
+
+用户在 paddock 提出：“agent能否有一个pause的功能。pause就是暂停而不是停止……不让其对外有连接或者之类的行为”，选“冻结”；用法是下班或网络不好时，活都做完后一键把全部 agent 冻住，第二天继续，不用一个个关掉重开（来历和原话见 `../paddock/docs/DESIGN.md` §13「agent 暂停（冻结）」）。任务 `docs/任务/R1-corral暂停与继续.md`。
+
+- `corral pause NAME`／`corral resume NAME`：pen 对 agent 的进程组和另开进程组的子孙进程发 `SIGSTOP`，继续时发 `SIGCONT`。不改 agent 程序、配置和文件，对 claude、codex、pi、omp 和任何程序都一样。
+- `status`／`ls` 多 `paused`、`paused_at`，原有 `state` 不变（兼容新增）。暂停中 `send`／`keys` 报 `paused`，attach 输入丢掉；`wait`、`--after` 不把暂停当作做完或安静；`stop` 先解冻再停；原地升级后保持暂停。
+- 旧版 pen 不认 pause，报 `unsupported`，要先 `corral upgrade`；不在命令行这边直接发信号。
+- 对前端：Saddle 不跟也能用（暂停的 agent 显示原来的状态，send 收到 `paused`），跟不跟由用户定；paddock 在 P5-33 接界面。
