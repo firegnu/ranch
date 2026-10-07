@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/pen.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/pen.rs` at commit `a31dea2`; ranch has changed it since.
 use crate::{Error, Result, now, state};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
@@ -193,6 +193,13 @@ struct Pen {
     human: Option<f64>,
     recent: Vec<Value>,
     stop_steps: VecDeque<Value>,
+    // Pens before pausing existed leave these out of their snapshots.
+    #[serde(default)]
+    paused: Option<f64>,
+    #[serde(default)]
+    frozen: Vec<i32>,
+    #[serde(default)]
+    resumed_at: Option<f64>,
 }
 impl Drop for Pen {
     fn drop(&mut self) {
@@ -200,6 +207,8 @@ impl Drop for Pen {
             return;
         }
         if self.exit.is_none() && self.custody == Custody::Owner {
+            // SIGKILL ends the stopped group; descendants that left it must not stay frozen.
+            self.resume();
             unsafe {
                 libc::kill(-(self.agent as i32), libc::SIGKILL);
                 libc::waitpid(self.agent as i32, std::ptr::null_mut(), 0);
@@ -209,6 +218,13 @@ impl Drop for Pen {
     }
 }
 impl Pen {
+    fn resume(&mut self) {
+        if self.paused.take().is_some() {
+            crate::freeze::thaw(self.agent as i32, &self.frozen);
+            self.frozen.clear();
+            self.resumed_at = Some(now());
+        }
+    }
     fn stop_step(&mut self) {
         if let Some(step) = self.stop_steps.pop_front() {
             if let Some(keys) = step["keys"].as_str() {
@@ -243,10 +259,11 @@ impl Pen {
         }
     }
     fn status(&self) -> Value {
-        let mut status = json!({"ok":true,"proto":1,"instance":self.instance,"agent_pid":self.agent,"pen_pid":std::process::id(),"started":self.started,"attached":self.clients.values().filter(|c|c.mode==Mode::Attached).count(),"writer_attached":self.writer.is_some(),"last_output":self.last_output,"title":self.term.title,"last_human_input":self.human,"size":[self.size.0,self.size.1],"bracketed_paste":self.term.paste(),"recent_sends":self.recent});
+        let mut status = json!({"ok":true,"proto":1,"instance":self.instance,"agent_pid":self.agent,"pen_pid":std::process::id(),"started":self.started,"attached":self.clients.values().filter(|c|c.mode==Mode::Attached).count(),"writer_attached":self.writer.is_some(),"last_output":self.last_output,"title":self.term.title,"last_human_input":self.human,"size":[self.size.0,self.size.1],"bracketed_paste":self.term.paste(),"recent_sends":self.recent,"paused":self.paused.is_some(),"paused_at":self.paused,"resumed_at":self.resumed_at});
         status["exe"] = json!(crate::executable().ok());
         status["custody"] = json!(self.custody);
-        status["capabilities"] = json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA});
+        status["capabilities"] =
+            json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1});
         status["upgrade"] = self.upgrade.public();
         status
     }
@@ -303,6 +320,10 @@ impl Pen {
             let bytes = c.input[5..5 + n].to_vec();
             c.input.drain(..5 + n);
             if self.writer != Some(fd) {
+                continue;
+            }
+            if typ == b'i' && self.paused.is_some() {
+                // Typing into a paused agent would pile up in the terminal until it continues.
                 continue;
             }
             if typ == b'i' {
@@ -362,6 +383,36 @@ impl Pen {
                 let n = req["bytes"].as_u64().unwrap_or(16000) as usize;
                 json!({"ok":true,"data":B64.encode(self.ring.iter().skip(self.ring.len().saturating_sub(n)).copied().collect::<Vec<_>>())})
             }
+            // The snapshot an upgrade hands over must not change under it, nor reach a pen that
+            // cannot keep the agent paused: one at a time.
+            Some("pause" | "resume") if self.pending_upgrade.is_some() || self.upgrade.busy() => {
+                json!({"ok":false,"error":"upgrade_busy","message":"an upgrade is in progress; try again when it is done","upgrade":self.upgrade.public()})
+            }
+            Some("pause") if self.exit.is_some() || self.stopping => {
+                json!({"ok":false,"error":"stopping","message":"the agent is stopping"})
+            }
+            Some("pause") => {
+                if self.paused.is_none() {
+                    match crate::freeze::freeze(self.agent as i32) {
+                        Ok(frozen) => {
+                            self.frozen = frozen;
+                            self.paused = Some(now());
+                        }
+                        Err(running) => {
+                            self.clients.get_mut(&fd).unwrap().reply(json!({"ok":false,"error":"freeze_failed","message":"some processes did not stop; nothing is left paused","running":running}));
+                            return;
+                        }
+                    }
+                }
+                json!({"ok":true,"instance":self.instance,"paused":true,"paused_at":self.paused})
+            }
+            Some("resume") => {
+                self.resume();
+                json!({"ok":true,"instance":self.instance,"paused":false,"paused_at":null})
+            }
+            Some("send" | "keys") if self.paused.is_some() => {
+                json!({"ok":false,"error":"paused","message":"the agent is paused; resume it first"})
+            }
             Some("send" | "keys") => {
                 if req["op"] == "send"
                     && req["force"] != true
@@ -417,6 +468,8 @@ impl Pen {
                         );
                         return;
                     }
+                    // A stopped process acts on HUP or TERM only once it continues.
+                    self.resume();
                     self.stopping = true;
                     self.stop_steps = steps.into();
                     self.stop_steps.push_back(json!({"signal":"KILL","wait":0}));
@@ -641,6 +694,8 @@ impl Pen {
                 }
             }
         }
+        // The agent is gone; nothing it froze may stay frozen.
+        self.resume();
         // Match v1 shutdown: bounded flushing lets attached readers receive the last PTY bytes.
         for client in self.clients.values_mut() {
             let _ = client.sock.set_nonblocking(false);
@@ -806,6 +861,9 @@ pub fn worker() -> i32 {
             human: None,
             recent: Vec::new(),
             stop_steps: VecDeque::new(),
+            paused: None,
+            frozen: Vec::new(),
+            resumed_at: None,
         };
         if let Some(prompt) = cfg["prompt"].as_str() {
             pen.recent

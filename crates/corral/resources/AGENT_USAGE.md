@@ -62,6 +62,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 | 7 `not_idle` | agent 还在忙或还没启动好 | 先 `wait` 再 `send` |
 | 8 `human_active` | 人刚在接入窗口里操作过 | 过一会儿再试；确定要打断人才加 `--force` |
 | 3 `not_delivered` | 送了但 agent 没收到（屏幕上可能是菜单或对话框） | 不要盲目重试回车；`corral status` 看状态，必要时让人接入去看 |
+| 10 `paused` | agent 被人暂停了 | 不要自己 `resume`，告诉人；人恢复它之后再送 |
 
 送成功时如果 `merged_with_draft` 是 `true`，说明输入框里原来有人留下没提交的文字，你的话接在它后面一起提交了；agent 收到了，**不要重送**，在意的话让人接入去看。
 
@@ -79,10 +80,13 @@ corral keys <名字> esc
 corral ls
 corral where <名字>
 corral attach --wait <名字>
+corral pause <名字>
+corral resume <名字>
 ```
 
 - `keys` 送原始按键（`enter` `esc` `up` `down` `ctrl-c`，或 `text:<文字>`），不看状态，后果自负；`esc` 可以打断正在干活的 agent。按完键 agent 要过一会儿才反应，紧接着 `send` 可能因为状态还没变被退回 7，先 `status` 或 `wait` 再送。`keys` 不算人在打字，不会触发 8。
 - `read` 给的是**累积的输出**（最近若干字节的滚动缓冲），不是当前画面：启动横幅、早已过去的提示都还在里面，拿整段做子串匹配会被历史内容骗到。要判断「现在屏幕上是什么」只看尾部（最后几百字符），并且只作排查，不要靠它做决定。
+- `pause` 把 agent 连同它的子孙进程一起冻住（`SIGSTOP`），不占 CPU、不联网；`resume` 从原地接着跑（`SIGCONT`）。`status`、`ls` 里 `paused` 为 `true` 表示暂停中，原来的 `state` 不变。暂停中 `send`、`keys` 退回 10，接入窗口里打的字被丢掉，`wait` 和 `send --after` 一直等到它恢复（或超时），`stop` 先恢复再停。暂停和恢复由人决定：别人的 agent 不要替人 `pause` 或 `resume`。运行中的旧版 corral 管着的 agent 返回 9 `unsupported`，要先 `corral upgrade`。
 - 退出码 2：不存在或已退出；6：你在 Codex 沙箱里，corral 用不了，需要调用方不带沙箱启动；9：版本不兼容，报告给用户，不自行重启。
 
 ## 通用升级

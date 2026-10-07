@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/pen/upgrade.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/pen/upgrade.rs` at commit `a31dea2`; ranch has changed it since.
 //! The snapshot owns no descriptors until validation and the active boundary.
 //! In particular, failed deserialization must not close the only PTY or name lock.
 use super::*;
@@ -85,6 +85,10 @@ pub(super) struct Upgrade {
     alive: Option<Handle<File>>,
 }
 impl Upgrade {
+    /// An upgrade has started and not yet finished or failed.
+    pub(super) fn busy(&self) -> bool {
+        !self.state.is_empty()
+    }
     pub(super) fn public(&self) -> Value {
         json!({"state":if self.state.is_empty(){"none"}else{&self.state},"epoch":self.epoch,"attempt":self.attempt,"target":self.target,"result":self.result,"last_error":self.last_error,"protected":self.alive.is_some(),"backup_pid":self.backup_pid})
     }
@@ -192,8 +196,15 @@ fn pipe() -> Result<(Handle<File>, Handle<File>)> {
 fn failure(e: impl ToString) -> Error {
     Error::new(1, "upgrade_failed", e)
 }
+fn unpausable() -> Value {
+    json!({"ok":false,"error":"paused","message":"the target corral cannot keep this agent paused; resume it first"})
+}
 
 pub(crate) fn probe_target(path: &Path) -> Result<PathBuf> {
+    probe(path).map(|(path, _)| path)
+}
+/// The target image and whether it can keep a paused agent paused.
+fn probe(path: &Path) -> Result<(PathBuf, bool)> {
     if !path.is_absolute() {
         return Err(failure("target must be an absolute executable path"));
     }
@@ -225,7 +236,7 @@ pub(crate) fn probe_target(path: &Path) -> Result<PathBuf> {
     if reply["schema"] != SCHEMA || !status.is_some_and(|s| s.success()) {
         return Err(failure("target does not support this snapshot schema"));
     }
-    Ok(path)
+    Ok((path, reply["pause"] == 1))
 }
 
 impl Pen {
@@ -307,8 +318,9 @@ impl Pen {
             return json!({"ok":false,"error":"upgrade_busy","upgrade":self.upgrade.public()});
         }
         let path = Path::new(req["exe"].as_str().unwrap_or(""));
-        let target = match probe_target(path) {
-            Ok(p) => p,
+        let target = match probe(path) {
+            Ok((_, false)) if self.paused.is_some() => return unpausable(),
+            Ok((p, _)) => p,
             Err(e) => return e.value,
         };
         if crate::executable().ok().as_ref() == Some(&target) {
@@ -671,6 +683,11 @@ fn hold(mut snap: Snapshot, path: PathBuf) -> ! {
                 }
             }
         }
+        // Hold does not watch the agent. Once it is gone, nothing it froze may stay frozen.
+        if snap.pen.paused.is_some() && crate::freeze::exited(snap.pen.agent as i32) {
+            snap.pen.resume();
+            let _ = snap.save(&path);
+        }
         let pen = &mut snap.pen;
         pen.upgrade.state = if pen.upgrade.alive.is_some() {
             "hold"
@@ -701,8 +718,9 @@ fn hold(mut snap: Snapshot, path: PathBuf) -> ! {
                             && (req["attempt"].is_null()
                                 || req["attempt"] == pen.upgrade.attempt + 1) =>
                     {
-                        match probe_target(Path::new(req["exe"].as_str().unwrap_or(""))) {
-                            Ok(exe) => {
+                        match probe(Path::new(req["exe"].as_str().unwrap_or(""))) {
+                            Ok((_, false)) if pen.paused.is_some() => unpausable(),
+                            Ok((exe, _)) => {
                                 pen.upgrade.attempt += 1;
                                 pen.upgrade.target = Some(exe.clone());
                                 pen.upgrade.result = Some("accepted".into());

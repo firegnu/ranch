@@ -22,6 +22,15 @@ still referenced by a running pen or hook. `cargo run -p ranch-package` builds
 an immutable version directory (`~/.local/share/ranch/versions/<commit>/` by default)
 without installing anything. Changing global links/configuration is a separate deployment operation.
 
+`corral pause NAME` stops the agent with SIGSTOP, together with every descendant and every process
+in a session one of them is in (so children adopted by init after their parent exited are included;
+only a daemon that detaches into a new session at that very moment can escape); `corral resume NAME` continues them with SIGCONT. `status` and `ls`
+report `paused`; while paused, send and keys are refused (exit 10) and attached typing is dropped.
+Older corral binaries do not read `paused`: their `wait` and `send --after` misjudge a paused
+agent. Switch the public link, run `corral upgrade --all` (pens and recorded reminders together),
+and let any old `corral wait` or unrecorded reminder still running from an old version finish
+before pausing anything; see `docs/DESIGN.md` §6 of the repository.
+
 `corral upgrade --all` upgrades capable pens and persistent reminders through public
 interfaces; `corral recover NAME` retries a Hold in the same epoch. Read every result,
 including pending, unknown and needs_restart. `corral after NAME --request-id ID`
@@ -44,8 +53,9 @@ explicitly. The command never installs skills on ordinary startup.
 ## Source
 
 Moved from Saddle `crates/corral-core` at commit `a31dea2` (unchanged since `9648ff0`).
-Each Rust file names its original path. `resources/` and `tests/collectors.mjs` are
+Each Rust file names its original path. `resources/` and `tests/collectors.mjs` were
 byte-for-byte copies without a header, because the resources are compiled into the
-program or installed into user directories. Saddle's `tests/product.rs` was not moved:
+program or installed into user directories. Files that ranch has changed since say so in
+their header; `resources/AGENT_USAGE.md` and `resources/SKILL.md` gained pause and resume. Saddle's `tests/product.rs` was not moved:
 it tests the Saddle terminal host together with corral. The two design documents in
 the repository's `docs/` come from Saddle `docs/` at the same commit.

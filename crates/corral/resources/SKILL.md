@@ -61,11 +61,13 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 | 6 | `sandbox` | 你在 Codex 沙箱里，corral 用不了。告诉用户不带沙箱重启你（例如 `codex --yolo`） |
 | 7 | `not_idle` | 对方还在忙，先 wait 再 send |
 | 8 | `human_active` | 用户刚在对方的窗口里操作过，过一会儿再试，不要加 `--force` |
+| 10 | `paused` | 对方被用户暂停了。不要 `corral resume`，告诉用户；用户恢复后再送 |
 
 ## 规矩
 
 - 不替对方回答对话框（不要用 `corral keys` 去点确认），交给用户。
 - 只给你自己 start 的 agent 送话，不碰 `corral ls` 里别人开的。
+- 暂停：`corral pause <名字>` 把对方连同它开的进程一起冻住（不占 CPU、不联网），`corral resume <名字>` 从原地接着跑；`status`、`ls` 里 `paused` 为 `true` 表示暂停中，原来的 `state` 不变。暂停和恢复由用户决定：不要替用户 pause 或 resume；送话碰到退出码 10 就告诉用户。
 - **一个 agent 只走一条通道**：用 corral 开的 agent，送话、等待、停止都只用 corral，不要再用别的渠道（会话之间的消息、子 agent 工具）给同一个 agent 送话；否则 corral 看到的状态和输入来源会失真，wait 和 reply 会对不上。
 - 名字由你起：用有意义的前缀加 `--unique`。
 - 不要读 corral 状态目录里的文件，只看命令输出的 JSON。

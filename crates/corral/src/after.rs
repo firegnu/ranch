@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/after.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/after.rs` at commit `a31dea2`; ranch has changed it since.
 //! A record is mutated only while holding its permanent flock inode. Handover
 //! requests are separate files; they never transfer authority by PID or signal.
 use crate::{Error, Result, cli, now, state};
@@ -169,6 +169,10 @@ fn wait_step(r: &mut Value) -> Result<()> {
             let key = json!([st["state"], st["last_event"], st["last_event_at"]]);
             if st["instance"] != r["after_instance"] {
                 Some(json!({"result":"restarted"}))
+            } else if st["paused"] == true {
+                // Paused is not finished, whatever its kind: wait for it to continue.
+                r["wait_stable"] = Value::Null;
+                None
             } else if state == "unknown" {
                 Some(json!({"result":"unknown"}))
             } else if matches!(state, "idle" | "blocked") {
@@ -217,13 +221,17 @@ fn step(path: &Path, r: &mut Value) -> Result<()> {
                 && st.pen["last_human_input"]
                     .as_f64()
                     .is_some_and(|t| now() - t < 30.0);
-            if st.snapshot.is_some() && st.public["state"] != "idle" || protected {
+            let paused = st.public["paused"] == true;
+            if paused || st.snapshot.is_some() && st.public["state"] != "idle" || protected {
                 if now() >= r["delivery_deadline"].as_f64().unwrap() {
-                    finish(
-                        r,
-                        "expired",
-                        json!({"error":if protected {"human_active"} else {"not_idle"}}),
-                    );
+                    let error = if paused {
+                        "paused"
+                    } else if protected {
+                        "human_active"
+                    } else {
+                        "not_idle"
+                    };
+                    finish(r, "expired", json!({"error":error}));
                 }
                 return Ok(());
             }
@@ -241,7 +249,7 @@ fn step(path: &Path, r: &mut Value) -> Result<()> {
                         finish(r, "sent", json!({"ok":true,"confirmed":false}));
                     }
                 }
-                Err(e) if matches!(e.code, 7 | 8) => {
+                Err(e) if matches!(e.code, 7 | 8 | 10) => {
                     // A definite pre-acceptance refusal is safe to wait on.
                     if now() < r["delivery_deadline"].as_f64().unwrap() {
                         r["phase"] = json!("waiting");
@@ -297,11 +305,20 @@ fn step(path: &Path, r: &mut Value) -> Result<()> {
             {
                 finish(r, "confirmed", result);
             } else if now() >= r["confirm_deadline"].as_f64().unwrap() {
-                finish(
-                    r,
-                    "not_delivered",
-                    json!({"error":"not_delivered","message":"no matching input event; not resending"}),
-                );
+                // A paused agent cannot read its input: the window waits for it, then reopens.
+                let pen = state::require(&name, json!({"op":"status"}))?;
+                let resumed = pen["resumed_at"].as_f64().unwrap_or(0.0);
+                if pen["instance"] == instance && pen["paused"] == true {
+                    r["confirm_deadline"] = json!(now() + 15.0);
+                } else if pen["instance"] == instance && resumed + 15.0 > now() {
+                    r["confirm_deadline"] = json!(resumed + 15.0);
+                } else {
+                    finish(
+                        r,
+                        "not_delivered",
+                        json!({"error":"not_delivered","message":"no matching input event; not resending"}),
+                    );
+                }
             }
         }
         _ => return Err(Error::new(9, "incompatible", "unsupported after phase")),

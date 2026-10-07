@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/state.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/state.rs` at commit `a31dea2`; ranch has changed it since.
 use crate::{Error, Result};
 use serde_json::{Value, json};
 use std::{
@@ -227,7 +227,7 @@ pub fn require(name: &str, req: Value) -> Result<Value> {
     let v = request(name, req)?;
     if v["ok"] != true {
         return Err(Error::new(
-            1,
+            if v["error"] == "paused" { 10 } else { 1 },
             v["error"].as_str().unwrap_or("pen_error"),
             v["message"].as_str().unwrap_or("pen error"),
         )
@@ -267,7 +267,7 @@ pub fn list() -> Result<Vec<Value>> {
                 } else {
                     json!({})
                 };
-                agents.push(json!({"name":name,"instance":st["instance"],"kind":m["kind"],"cwd":m["cwd"],"started":st["started"],"labels":labels}));
+                agents.push(json!({"name":name,"instance":st["instance"],"kind":m["kind"],"cwd":m["cwd"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"]}));
             }
             Err(e) if e.code == 9 => {
                 agents.push(json!({"name":name,"incompatible":true,"proto":e.value["proto"]}))

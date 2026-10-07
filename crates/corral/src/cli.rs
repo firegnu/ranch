@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/cli.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/cli.rs` at commit `a31dea2`; ranch has changed it since.
 use crate::{Error, Result, events, hooks, now, pen, state};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde_json::{Value, json};
@@ -115,7 +115,7 @@ pub(crate) fn status(name: &str) -> Result<Status> {
     } else {
         json!({})
     };
-    let mut public = json!({"ok":true,"name":name,"instance":st["instance"],"kind":m["kind"],"proto":st["proto"],"state":"unknown","state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_at":null,"last_input_at":null,"last_input_source":null,"title":st["title"],"last_output":st["last_output"],"idle_for":st["last_output"].as_f64().map(|t|((now()-t)*1000.0).round()/1000.0),"attached":st["attached"],"last_human_input":st["last_human_input"],"started":st["started"],"labels":labels});
+    let mut public = json!({"ok":true,"name":name,"instance":st["instance"],"kind":m["kind"],"proto":st["proto"],"state":"unknown","state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_at":null,"last_input_at":null,"last_input_source":null,"title":st["title"],"last_output":st["last_output"],"idle_for":st["last_output"].as_f64().map(|t|((now()-t)*1000.0).round()/1000.0),"attached":st["attached"],"last_human_input":st["last_human_input"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"]});
     for key in [
         "exe",
         "custody",
@@ -205,6 +205,15 @@ fn deliver(
             return Ok(result);
         }
         if now() >= deadline {
+            // Accepted, but a paused agent cannot read it: that is not a failed delivery.
+            let pen = state::require(name, json!({"op":"status"}))?;
+            if pen["instance"] == st.public["instance"]
+                && (pen["paused"] == true || pen["resumed_at"].as_f64().is_some_and(|t| t >= t0))
+            {
+                return Ok(
+                    json!({"ok":true,"name":name,"instance":pen["instance"],"request_id":request_id,"confirmed":false,"paused":true,"message":"accepted; the agent was paused before it read the input; not resending"}),
+                );
+            }
             return Err(
                 Error::new(3, "not_delivered", "no matching input event; not resending")
                     .with("name", name)
@@ -222,6 +231,14 @@ pub(crate) fn send_once(
     st: &Status,
     request_id: &str,
 ) -> Result<Value> {
+    if st.public["paused"] == true {
+        return Err(Error::new(
+            10,
+            "paused",
+            format!("{name} is paused; corral resume {name} first"),
+        )
+        .with("name", name));
+    }
     let known = st.snapshot.is_some();
     if known && st.public["state"] != "idle" {
         return Err(Error::new(7, "not_idle", format!("{name} is not idle"))
@@ -241,6 +258,8 @@ pub(crate) fn send_once(
         return Err(Error::new(
             if reply["error"] == "human_active" {
                 8
+            } else if reply["error"] == "paused" {
+                10
             } else {
                 1
             },
@@ -286,11 +305,17 @@ fn turn_end(name: &str, timeout: f64, quiet: Option<f64>, instance: Option<&str>
     let deadline = now() + timeout;
     let mut stable: Option<(Value, f64)> = None;
     loop {
-        let st = status(name)?.public;
+        let full = status(name)?;
+        let st = full.public;
+        let paused = st["paused"] == true;
         let state = st["state"].as_str().unwrap_or("unknown");
         let key = json!([st["state"], st["last_event"], st["last_event_at"]]);
         let result = if instance.is_some_and(|i| st["instance"] != i) {
             Some("restarted")
+        } else if paused {
+            // A paused agent has neither finished nor gone quiet, whatever its kind.
+            stable = None;
+            None
         } else if state == "unknown" {
             Some("unknown")
         } else if matches!(state, "idle" | "blocked") {
@@ -314,6 +339,7 @@ fn turn_end(name: &str, timeout: f64, quiet: Option<f64>, instance: Option<&str>
                             .as_f64()
                             .unwrap_or(0.0)
                             .max(st["last_event_at"].as_f64().unwrap_or(0.0))
+                            .max(full.pen["resumed_at"].as_f64().unwrap_or(0.0))
                         >= q
                 })
             {
@@ -329,6 +355,7 @@ fn turn_end(name: &str, timeout: f64, quiet: Option<f64>, instance: Option<&str>
             return Ok(st);
         }
         if now() >= deadline {
+            let state = if paused { "paused" } else { state };
             let mut e = Error::new(4, "timeout", format!("{name} still {state}"));
             for (k, v) in st.as_object().unwrap() {
                 if k != "ok" {
@@ -349,7 +376,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
     let op = args.first().map(String::as_str).unwrap_or("");
     if matches!(op, "--help" | "-h") {
         println!(
-            "corral start|send|keys|status|wait|reply|where|ls|read|attach|stop|upgrade|recover|after|guide|install-skills"
+            "corral start|send|keys|status|wait|reply|where|ls|read|attach|stop|pause|resume|upgrade|recover|after|guide|install-skills"
         );
         return Ok(None);
     }
@@ -359,7 +386,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         ),
         "send" => Some("NAME TEXT [--force] [--timeout SECONDS] [--after NAME] [--request-id ID]"),
         "keys" => Some("NAME KEY [KEY ...]"),
-        "status" | "reply" | "where" => Some("NAME"),
+        "status" | "reply" | "where" | "pause" | "resume" => Some("NAME"),
         "wait" => Some("NAME [--timeout SECONDS] [--quiet SECONDS]"),
         "read" => Some("NAME [--bytes COUNT]"),
         "attach" => Some("NAME [--wait]"),
@@ -443,7 +470,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "stop" => (&[], &["--timeout"]),
         "read" => (&[], &["--bytes"]),
         "attach" => (&["--wait"], &[]),
-        "status" | "reply" | "where" | "ls" | "keys" => (&[], &[]),
+        "status" | "reply" | "where" | "ls" | "keys" | "pause" | "resume" => (&[], &[]),
         _ => return Err(usage("unknown or missing command")),
     };
     let sep = if op == "start" {
@@ -494,6 +521,28 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             )?
         }
         "status" => status(name)?.public,
+        "pause" | "resume" => {
+            let reply = state::request(name, json!({"op":op}))?;
+            if reply["error"] == "bad_op" {
+                return Err(Error::new(
+                    9,
+                    "unsupported",
+                    format!(
+                        "{name} runs under a corral without pause; corral upgrade {name} first"
+                    ),
+                )
+                .with("name", name.as_str()));
+            }
+            if reply["ok"] != true {
+                return Err(Error::new(
+                    1,
+                    reply["error"].as_str().unwrap_or("pen_error"),
+                    reply["message"].as_str().unwrap_or("pen error"),
+                )
+                .with("name", name.as_str()));
+            }
+            json!({"ok":true,"name":name,"instance":reply["instance"],"paused":reply["paused"],"paused_at":reply["paused_at"]})
+        }
         "send" => {
             if let Some(after) = parsed.get("--after") {
                 if !parsed.has("--timeout") {
