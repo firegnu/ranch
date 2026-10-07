@@ -383,16 +383,28 @@ impl Pen {
                 let n = req["bytes"].as_u64().unwrap_or(16000) as usize;
                 json!({"ok":true,"data":B64.encode(self.ring.iter().skip(self.ring.len().saturating_sub(n)).copied().collect::<Vec<_>>())})
             }
+            // The snapshot an upgrade hands over must not change under it, nor reach a pen that
+            // cannot keep the agent paused: one at a time.
+            Some("pause" | "resume") if self.pending_upgrade.is_some() || self.upgrade.busy() => {
+                json!({"ok":false,"error":"upgrade_busy","message":"an upgrade is in progress; try again when it is done","upgrade":self.upgrade.public()})
+            }
+            Some("pause") if self.exit.is_some() || self.stopping => {
+                json!({"ok":false,"error":"stopping","message":"the agent is stopping"})
+            }
             Some("pause") => {
-                if self.exit.is_some() || self.stopping {
-                    json!({"ok":false,"error":"stopping","message":"the agent is stopping"})
-                } else {
-                    if self.paused.is_none() {
-                        self.frozen = crate::freeze::freeze(self.agent as i32);
-                        self.paused = Some(now());
+                if self.paused.is_none() {
+                    match crate::freeze::freeze(self.agent as i32) {
+                        Ok(frozen) => {
+                            self.frozen = frozen;
+                            self.paused = Some(now());
+                        }
+                        Err(running) => {
+                            self.clients.get_mut(&fd).unwrap().reply(json!({"ok":false,"error":"freeze_failed","message":"some processes did not stop; nothing is left paused","running":running}));
+                            return;
+                        }
                     }
-                    json!({"ok":true,"instance":self.instance,"paused":true,"paused_at":self.paused})
                 }
+                json!({"ok":true,"instance":self.instance,"paused":true,"paused_at":self.paused})
             }
             Some("resume") => {
                 self.resume();

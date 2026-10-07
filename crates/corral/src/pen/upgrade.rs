@@ -85,6 +85,10 @@ pub(super) struct Upgrade {
     alive: Option<Handle<File>>,
 }
 impl Upgrade {
+    /// An upgrade has started and not yet finished or failed.
+    pub(super) fn busy(&self) -> bool {
+        !self.state.is_empty()
+    }
     pub(super) fn public(&self) -> Value {
         json!({"state":if self.state.is_empty(){"none"}else{&self.state},"epoch":self.epoch,"attempt":self.attempt,"target":self.target,"result":self.result,"last_error":self.last_error,"protected":self.alive.is_some(),"backup_pid":self.backup_pid})
     }
@@ -678,6 +682,11 @@ fn hold(mut snap: Snapshot, path: PathBuf) -> ! {
                     snap.remove_backup();
                 }
             }
+        }
+        // Hold does not watch the agent. Once it is gone, nothing it froze may stay frozen.
+        if snap.pen.paused.is_some() && crate::freeze::exited(snap.pen.agent as i32) {
+            snap.pen.resume();
+            let _ = snap.save(&path);
         }
         let pen = &mut snap.pen;
         pen.upgrade.state = if pen.upgrade.alive.is_some() {

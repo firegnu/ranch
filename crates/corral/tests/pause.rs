@@ -344,3 +344,147 @@ fn paused_agent_is_not_handed_to_a_pen_that_cannot_keep_it_paused() {
     assert_eq!(status["paused"], true);
     assert_eq!(status["exe"], json!(fs::canonicalize(&lab.core).unwrap()));
 }
+
+#[test]
+fn pause_reaches_a_process_whose_parent_already_exited() {
+    // A child in its own group forks a grandchild and exits: init adopts the grandchild,
+    // which is no longer below the agent but is still in its session.
+    let lab = Lab::new();
+    let agent = lab.script(
+        "agent",
+        "/usr/bin/perl -e 'setpgrp(0,0); if (fork() == 0) { $|=1; print \"orphan:$$:\\n\"; sleep 60; exit } exit' &\nexec /bin/cat",
+    );
+    lab.start("test/a", &agent);
+    let mut orphan = None;
+    eventually(|| {
+        orphan = lab
+            .read("test/a")
+            .split("orphan:")
+            .nth(1)
+            .and_then(|s| s.split(':').next()?.parse::<i32>().ok());
+        orphan.is_some()
+    });
+    let orphan = orphan.unwrap();
+    lab.strays.borrow_mut().push(orphan);
+    let parent = Command::new("ps")
+        .args(["-o", "ppid=", "-p", &orphan.to_string()])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&parent.stdout).trim(), "1");
+    lab.json(&["pause", "test/a"]);
+    eventually(|| stopped(orphan));
+    lab.json(&["resume", "test/a"]);
+    eventually(|| !stopped(orphan));
+}
+
+#[test]
+fn a_paused_agent_without_hooks_is_not_finished_either() {
+    let lab = Lab::new();
+    lab.start("test/a", "/bin/cat");
+    lab.start("test/b", "/bin/cat");
+    lab.json(&["pause", "test/a"]);
+    let wait = lab.out(&["wait", "test/a", "--timeout", "1"]);
+    assert_eq!(
+        wait.status.code(),
+        Some(4),
+        "{}",
+        String::from_utf8_lossy(&wait.stdout)
+    );
+    lab.json(&[
+        "send",
+        "test/b",
+        "raw-note",
+        "--after",
+        "test/a",
+        "--timeout",
+        "10",
+    ]);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(!lab.read("test/b").contains("raw-note"));
+    lab.json(&["resume", "test/a"]);
+    assert_eq!(
+        lab.json(&["wait", "test/a", "--timeout", "1"])["result"],
+        "unknown"
+    );
+    eventually(|| lab.read("test/b").contains("raw-note"));
+}
+
+#[test]
+fn a_message_accepted_before_a_pause_is_not_reported_lost() {
+    let lab = Lab::new();
+    lab.known("test/a");
+    let name = "test/a".to_owned();
+    let core = lab.core.clone();
+    let root = lab.root.path().to_owned();
+    // The synthetic agent never confirms input, so without a pause this send ends in 3.
+    let pauser = std::thread::spawn(move || {
+        let run = |op: &str| {
+            Command::new(&core)
+                .args([op, &name])
+                .env("HOME", &root)
+                .env("CORRAL_HOME", root.join("pens"))
+                .env_remove("CODEX_SANDBOX")
+                .output()
+                .unwrap()
+        };
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(run("pause").status.success());
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(run("resume").status.success());
+    });
+    let sent = lab.json(&["send", "test/a", "held-up", "--timeout", "2"]);
+    pauser.join().unwrap();
+    assert_eq!(sent["confirmed"], false, "{sent}");
+    assert_eq!(sent["paused"], true, "{sent}");
+}
+
+#[test]
+fn hold_continues_what_it_froze_once_the_agent_is_gone() {
+    let lab = Lab::new();
+    let (agent, stray) = lab.with_stray("test/a");
+    lab.json(&["pause", "test/a"]);
+    // A metadata mismatch makes the new image refuse the snapshot, and the pen falls to Hold.
+    let meta = lab.root.path().join("pens/test/a/meta.json");
+    let mut m: Value = serde_json::from_slice(&fs::read(&meta).unwrap()).unwrap();
+    m["instance"] = json!("mismatched");
+    fs::write(&meta, m.to_string()).unwrap();
+    let new = lab.root.path().join("v2/corral");
+    fs::create_dir_all(new.parent().unwrap()).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_corral"), &new).unwrap();
+    // The upgrade command itself takes a while to give up on Hold; it is not waited for.
+    let mut upgrade = Command::new(&lab.core)
+        .args(["upgrade", "test/a", "--exe", new.to_str().unwrap()])
+        .env("HOME", lab.root.path())
+        .env("CORRAL_HOME", lab.root.path().join("pens"))
+        .env_remove("CODEX_SANDBOX")
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    eventually(|| {
+        let st = lab.out(&["status", "test/a"]);
+        let st: Value = serde_json::from_slice(&st.stdout).unwrap_or_default();
+        matches!(
+            st["upgrade"]["state"].as_str(),
+            Some("hold" | "hold_unprotected")
+        )
+    });
+    assert!(stopped(stray));
+    unsafe {
+        libc::kill(agent, libc::SIGKILL);
+    }
+    eventually(|| !stopped(stray));
+    // Hold keeps the pen, and its standby child keeps the socket: end both by PID.
+    let st: Value = serde_json::from_slice(&lab.out(&["status", "test/a"]).stdout).unwrap();
+    let pen = st["pen_pid"].as_i64().unwrap().to_string();
+    let children = Command::new("pgrep").args(["-P", &pen]).output().unwrap();
+    for pid in String::from_utf8_lossy(&children.stdout)
+        .split_whitespace()
+        .chain([pen.as_str()])
+    {
+        unsafe {
+            libc::kill(pid.parse().unwrap(), libc::SIGKILL);
+        }
+    }
+    let _ = upgrade.kill();
+    let _ = upgrade.wait();
+}

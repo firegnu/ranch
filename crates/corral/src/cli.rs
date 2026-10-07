@@ -205,6 +205,15 @@ fn deliver(
             return Ok(result);
         }
         if now() >= deadline {
+            // Accepted, but a paused agent cannot read it: that is not a failed delivery.
+            let pen = state::require(name, json!({"op":"status"}))?;
+            if pen["instance"] == st.public["instance"]
+                && (pen["paused"] == true || pen["resumed_at"].as_f64().is_some_and(|t| t >= t0))
+            {
+                return Ok(
+                    json!({"ok":true,"name":name,"instance":pen["instance"],"request_id":request_id,"confirmed":false,"paused":true,"message":"accepted; the agent was paused before it read the input; not resending"}),
+                );
+            }
             return Err(
                 Error::new(3, "not_delivered", "no matching input event; not resending")
                     .with("name", name)
@@ -303,12 +312,12 @@ fn turn_end(name: &str, timeout: f64, quiet: Option<f64>, instance: Option<&str>
         let key = json!([st["state"], st["last_event"], st["last_event_at"]]);
         let result = if instance.is_some_and(|i| st["instance"] != i) {
             Some("restarted")
-        } else if state == "unknown" {
-            Some("unknown")
         } else if paused {
-            // A paused agent has neither finished nor gone quiet.
+            // A paused agent has neither finished nor gone quiet, whatever its kind.
             stable = None;
             None
+        } else if state == "unknown" {
+            Some("unknown")
         } else if matches!(state, "idle" | "blocked") {
             if stable
                 .as_ref()

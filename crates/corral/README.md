@@ -25,6 +25,9 @@ without installing anything. Changing global links/configuration is a separate d
 `corral pause NAME` stops the agent and every descendant with SIGSTOP (descendants that left
 its process group included); `corral resume NAME` continues them with SIGCONT. `status` and `ls`
 report `paused`; while paused, send and keys are refused (exit 10) and attached typing is dropped.
+Older corral binaries do not read `paused`: their `wait` and `send --after` misjudge a paused
+agent. Switch the public link and run `corral upgrade --all` (pens and reminders together) before
+pausing anything; see `docs/DESIGN.md` §6 of the repository.
 
 `corral upgrade --all` upgrades capable pens and persistent reminders through public
 interfaces; `corral recover NAME` retries a Hold in the same epoch. Read every result,

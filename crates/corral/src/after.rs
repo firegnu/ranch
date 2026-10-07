@@ -169,12 +169,12 @@ fn wait_step(r: &mut Value) -> Result<()> {
             let key = json!([st["state"], st["last_event"], st["last_event_at"]]);
             if st["instance"] != r["after_instance"] {
                 Some(json!({"result":"restarted"}))
-            } else if state == "unknown" {
-                Some(json!({"result":"unknown"}))
             } else if st["paused"] == true {
-                // Paused is not finished: wait for it to continue and end its turn.
+                // Paused is not finished, whatever its kind: wait for it to continue.
                 r["wait_stable"] = Value::Null;
                 None
+            } else if state == "unknown" {
+                Some(json!({"result":"unknown"}))
             } else if matches!(state, "idle" | "blocked") {
                 if r["wait_stable"]["key"] == key
                     && now() - r["wait_stable"]["t"].as_f64().unwrap_or(now()) >= 0.5
@@ -305,11 +305,20 @@ fn step(path: &Path, r: &mut Value) -> Result<()> {
             {
                 finish(r, "confirmed", result);
             } else if now() >= r["confirm_deadline"].as_f64().unwrap() {
-                finish(
-                    r,
-                    "not_delivered",
-                    json!({"error":"not_delivered","message":"no matching input event; not resending"}),
-                );
+                // A paused agent cannot read its input: the window waits for it, then reopens.
+                let pen = state::require(&name, json!({"op":"status"}))?;
+                let resumed = pen["resumed_at"].as_f64().unwrap_or(0.0);
+                if pen["instance"] == instance && pen["paused"] == true {
+                    r["confirm_deadline"] = json!(now() + 15.0);
+                } else if pen["instance"] == instance && resumed + 15.0 > now() {
+                    r["confirm_deadline"] = json!(resumed + 15.0);
+                } else {
+                    finish(
+                        r,
+                        "not_delivered",
+                        json!({"error":"not_delivered","message":"no matching input event; not resending"}),
+                    );
+                }
             }
         }
         _ => return Err(Error::new(9, "incompatible", "unsupported after phase")),
