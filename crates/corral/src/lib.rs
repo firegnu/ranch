@@ -1,9 +1,10 @@
-// From Saddle `crates/corral-core/src/lib.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/lib.rs` at commit `a31dea2`; ranch has changed it since.
 mod after;
 mod attach;
 mod cli;
 mod environment;
 mod events;
+mod freeze;
 mod hooks;
 mod pen;
 mod skills;
@@ -54,7 +55,10 @@ fn now() -> f64 {
 pub fn run() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|s| s == "__pen-probe") {
-        println!("{}", json!({"ok":true,"schema":pen::upgrade::SCHEMA}));
+        println!(
+            "{}",
+            json!({"ok":true,"schema":pen::upgrade::SCHEMA,"pause":1})
+        );
         return 0;
     }
     if args.first().is_some_and(|s| s == "__pen-resume") {

@@ -22,6 +22,10 @@ still referenced by a running pen or hook. `cargo run -p ranch-package` builds
 an immutable version directory (`~/.local/share/ranch/versions/<commit>/` by default)
 without installing anything. Changing global links/configuration is a separate deployment operation.
 
+`corral pause NAME` stops the agent and every descendant with SIGSTOP (descendants that left
+its process group included); `corral resume NAME` continues them with SIGCONT. `status` and `ls`
+report `paused`; while paused, send and keys are refused (exit 10) and attached typing is dropped.
+
 `corral upgrade --all` upgrades capable pens and persistent reminders through public
 interfaces; `corral recover NAME` retries a Hold in the same epoch. Read every result,
 including pending, unknown and needs_restart. `corral after NAME --request-id ID`
@@ -44,8 +48,9 @@ explicitly. The command never installs skills on ordinary startup.
 ## Source
 
 Moved from Saddle `crates/corral-core` at commit `a31dea2` (unchanged since `9648ff0`).
-Each Rust file names its original path. `resources/` and `tests/collectors.mjs` are
+Each Rust file names its original path. `resources/` and `tests/collectors.mjs` were
 byte-for-byte copies without a header, because the resources are compiled into the
-program or installed into user directories. Saddle's `tests/product.rs` was not moved:
+program or installed into user directories. Files that ranch has changed since say so in
+their header; `resources/AGENT_USAGE.md` and `resources/SKILL.md` gained pause and resume. Saddle's `tests/product.rs` was not moved:
 it tests the Saddle terminal host together with corral. The two design documents in
 the repository's `docs/` come from Saddle `docs/` at the same commit.

@@ -61,6 +61,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 | 6 | `sandbox` | 你在 Codex 沙箱里，corral 用不了。告诉用户不带沙箱重启你（例如 `codex --yolo`） |
 | 7 | `not_idle` | 对方还在忙，先 wait 再 send |
 | 8 | `human_active` | 用户刚在对方的窗口里操作过，过一会儿再试，不要加 `--force` |
+| 10 | `paused` | 对方被用户暂停了。不要 `corral resume`，告诉用户；用户恢复后再送 |
 
 ## 规矩
 
