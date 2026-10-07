@@ -14,7 +14,7 @@
 
 - 前端只调用 ranch 装好的命令，读 JSON 输出，不在 Cargo 里引用 ranch 的包，不读内部状态目录。各自的依赖、锁文件、工具链互不进入。
 - 全局位置归 ranch：`~/.corral`、`~/.local/bin/corral`、corral 技能（`~/.claude/skills/corral`、`~/.agents/skills/corral`），以后还有 `~/.local/bin/ranch` 和 `corral-dispatch` 技能目录。Saddle、paddock 不再打包、安装这些。
-- Saddle 是保底版（用户 10-05）：不再加新功能，只保证和运行时对得上。改 ranch 时按 AGENTS.md 的规矩写明对两个前端的影响。
+- Saddle 是保底版（用户 10-05）：不再加新功能。用户 10-07 基本不用 Saddle 了，定“保底规矩放松吧，Saddle 不用再写影响了”：改 ranch 时只按 AGENTS.md 的规矩写明对 paddock 的影响，不再写对 Saddle 的影响，也不再问 Saddle 跟不跟。
 - 单独分发 paddock 时，打包带上 ranch 的某个版本（paddock DESIGN §7）。
 
 ## 3. 安装
@@ -40,5 +40,5 @@
 - `status`／`ls` 多 `paused`、`paused_at`，原有 `state` 不变（兼容新增）。暂停中 `send`／`keys` 报 `paused`，attach 输入丢掉；`wait`、`--after` 不把暂停当作做完或安静；`stop` 先解冻再停；原地升级后保持暂停。
 - 旧版 pen 不认 pause，报 `unsupported`，要先 `corral upgrade`；不在命令行这边直接发信号。
 - 冻结范围（交叉审查 R1，用户 10-07 接受）：冻 agent 的子孙和它们所在会话里的所有进程，冻完逐个确认停住；冻结那一刻正好另开新会话、父进程又同时退出的进程（守护进程两次 fork）会漏掉。macOS 没有系统级冻结一组进程的手段（Linux 有 cgroup freezer），轮询进程表堵不死这个空隙；用户只在活都做完后暂停，这种情况一般不会发生。
-- 对前端：满足下面的部署条件后，Saddle 不跟也能用（暂停的 agent 显示原来的状态，send 收到 `paused`），跟不跟由用户定；paddock 在 P5-33 接界面。
+- 对前端：满足下面的部署条件后，Saddle 不跟也能用（暂停的 agent 显示原来的状态，send 收到 `paused`），用户 10-07 定不跟；paddock 在 P5-33 接界面。
 - 兼容边界（交叉审查 R6 指出）：旧版 corral 的命令行和后台提醒进程不读 `paused`，对暂停中的 agent 会误判：旧 `wait` 报 idle 或 stopped-quiet，旧 `send --after` 提前送或把等待记成 unknown（旧 send 被拒、旧 stop 正常）。新版无法替旧客户端纠正，所以靠部署次序保证不混用：只有换成新 pen 的 agent 才能暂停；先切 `~/.local/bin/corral`，再 `corral upgrade --all`（同一条命令把 pen 和持久提醒都交给新版），逐项 complete；还要确认没有旧版 corral 的进程还在跑（`ps` 查旧版本目录下 `corral` 的 `wait`、`__after` 等进程：切链接前就起的 `wait` 不会被换掉，无记录的旧提醒也不在 `upgrade --all` 能发现的范围内），有就等它们结束或让发起者用新入口重开。这些都满足之后才开始用暂停。Saddle 默认按 PATH 找 `corral`，切链接后即是新版；配置里固定了旧版本路径的不在保护之内。用户 10-07 同意先切链接、再 upgrade 的处理（“R6 我同意”），复核补上“确认没有旧版进程还在跑”后再次同意。

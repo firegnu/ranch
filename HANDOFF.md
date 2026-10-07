@@ -20,4 +20,4 @@
 ## 悬着
 
 - `crates/corral/tests/protocol.rs` 第一次并行跑时有一项卡住过，之后未复现。
-- Saddle 基本不用了（用户 10-07），但 AGENTS.md／DESIGN §2 的“Saddle 保底”规矩（改 ranch 写明对 Saddle 的影响、保证它和运行时对得上）要不要放松，已问用户、未答；答之前照原规矩办。
+- paddock 的 `docs/DESIGN.md` §3“Saddle 保底”和决策表还写着“只保证 Saddle 和运行时对得上、不兼容时写需求给 Saddle 适配”；ranch 这边已按用户 10-07“保底规矩放松吧，Saddle 不用再写影响了”改了 AGENTS.md 和 DESIGN §2，paddock 那边要不要跟着改，在 paddock 自己的任务里做。
