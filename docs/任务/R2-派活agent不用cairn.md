@@ -34,3 +34,10 @@
 - 用户原话：“我理解你的建议是要修改dispatch的skill？”“但是如果用户没有安装cairn呢？”“开始吧”“同意，并进 R2 开始做吧”。
 - `git diff --check`；`cargo test --all-targets`（含技能编进程序、装技能的测试）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 都过。
 - 部署（用户在场，照 AGENTS.md「安装」）：主控打包到 `~/.local/share/ranch/versions/<提交>/`，用户在终端里切 `~/.local/bin/ranch`、`~/.local/bin/corral`，跑 `ranch dispatch install-skills`、`corral install-skills`（只换程序和技能，不 `corral upgrade --all`）；主控核对装上的技能与仓库一致。正在跑的主控（如 `owlet/main`）重开后才读到新技能。
+
+## 完成记录
+
+- 做了什么：`corral-dispatch/SKILL.md` 第 4 节示例加 `--env CAIRN_DISABLE=1`，并加一条“本技能开的 agent（干活的、交叉审查的）一律带它”及理由、“没装 cairn 时不起作用，照写，不要删”。corral 技能 `SKILL.md` 两处示例、`AGENT_USAGE.md`（`corral guide`）两处示例同样加上，各配一句说明：临时委派的 agent 开在同一目录，会把停点存到调用方的工作线上；要开以后自己长期对话的 agent，直接 `corral start … -- claude`，不带这个变量。
+- 验证了什么：`git diff --check`；`cargo test --workspace --all-targets` 全过（含 lifecycle 里装技能的测试）；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 过。另用本分支 debug 版在临时 HOME 里跑 `ranch dispatch install-skills --target claude --yes`、`corral install-skills --yes`，装出的两份技能都带新内容；`corral guide` 输出里有 3 处 `CAIRN_DISABLE`（两处示例、一句说明）。临时目录已删。
+- 拿主意的地方：说明句放在示例下面第一条（dispatch）／`start` 那一步（corral 技能）；交叉审查的 agent 也算在内（它也是本技能开的一次性 agent）。没改 `项目AGENTS模板.md` 和 corral 技能自检里开主控的那句。
+- 没做的事：部署（切 `~/.local/bin/ranch`、`~/.local/bin/corral`，跑两条 `install-skills`）要用户在场、在普通终端里跑；cairn 本身的安装和 owlet 的 `adopt` 不在本任务。

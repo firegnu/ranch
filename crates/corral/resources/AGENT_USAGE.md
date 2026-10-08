@@ -9,7 +9,7 @@ corral 让你开启别的交互式编程 agent（Claude Code、Codex），给它
 ## 临时委派：开一个 agent，问一个问题
 
 ```sh
-corral start demo/ask --unique --cwd <仓库目录> --prompt "<你的问题>" -- claude
+corral start demo/ask --unique --cwd <仓库目录> --env CAIRN_DISABLE=1 --prompt "<你的问题>" -- claude
 corral wait <名字>
 corral reply <名字>
 ```
@@ -17,6 +17,7 @@ corral reply <名字>
 - `start` 输出里的 `name` 就是之后要用的名字（`--unique` 会补后缀，如 `demo/ask-3`）。
 - 第一句话**必须**用 `--prompt` 带上；新开的 agent 不能用 `send` 送第一句。
 - 换成 Codex：`-- codex --yolo`（在 Codex 沙箱里 corral 会直接拒绝，见下）。换成 pi：`-- pi`。换成 omp：`-- omp --approval-mode yolo`。
+- `--env CAIRN_DISABLE=1` 让临时委派的 agent 不用 cairn（工作接续记忆）：它开在同一个目录，会把它的停点存到你这条工作线上。没装 cairn 时这个变量不起作用，照写即可，不要删。人要开一个以后自己长期对话的 agent，直接 `corral start <名字> --cwd <目录> -- claude`，不带这个变量。
 - `reply` 的 `text` 是回复原文，多段文字和代码块原样保留。
 
 追问、用完：
@@ -37,7 +38,7 @@ corral stop <名字>
 要跑很久，或者人说「做完告诉我」，就不要在前台 `wait`：
 
 ```sh
-corral start demo/ask --unique --cwd <仓库目录> --prompt "<你的问题>" -- codex --yolo
+corral start demo/ask --unique --cwd <仓库目录> --env CAIRN_DISABLE=1 --prompt "<你的问题>" -- codex --yolo
 corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 ```
 

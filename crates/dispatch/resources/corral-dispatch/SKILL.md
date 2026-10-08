@@ -180,8 +180,10 @@ echo "<摘要>" | ranch dispatch route
 - 名字用 AGENTS.md 规定的前缀，`--cwd` 指向它的 worktree，agent 命令后面带上这一档的参数。第一句话很短，只让它去读文件：
 
   ```sh
-  corral start demo/dev-backend --unique --cwd <worktree> --label effort=high --label model=gpt-6-astra --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- codex --yolo -m gpt-6-astra -c 'model_reasoning_effort="high"'
+  corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 --label effort=high --label model=gpt-6-astra --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- codex --yolo -m gpt-6-astra -c 'model_reasoning_effort="high"'
   ```
+
+- 本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn（工作接续记忆）：它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
 
 - 用 `--label` 记下这一档的强度和模型：`effort=<medium / high / xhigh>`、`model=<模型名>`，和后面 agent 命令里的参数一致。看板靠它显示每个 agent 的档位；pi、omp 不分档，不带。
 
