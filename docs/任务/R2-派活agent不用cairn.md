@@ -1,4 +1,4 @@
-# 任务：corral-dispatch 技能派出去的 agent 一律不用 cairn
+# 任务：corral-dispatch、corral 技能开出去的 agent 一律不用 cairn
 
 2026-10-08 起草，paddock/main 自己做（ranch 由 paddock 主控兼管、自己实现，AGENTS.md「开发方式」）。
 路由：轻 / 交叉审查不要 / 影响面：看得见（只改技能文字）
@@ -12,24 +12,25 @@
 
 用户 10-08：“我理解你的建议是要修改dispatch的skill？”；问“但是如果用户没有安装cairn呢？”，主控答：只是一个环境变量，没装 cairn 时没有程序读它，行为和不加一样，技能里配一句说明。用户看过最终方案（ranch 改技能 → 用户装 cairn、在 owlet adopt → cairn 定 JSON 约定 → paddock 做只读的 Recap 面板），说“开始吧”。
 
+主控看任务文件时问：corral 技能（开一个 agent 问个问题）开的 agent 要不要也关？用户：“你的建议呢？”主控建议也关：那类 agent 按示例开在仓库目录（`--cwd <仓库目录>`），和主控同一条 cairn 工作线，它存的停点会盖过主控的；回答完就没人再用。用户：“同意，并进 R2 开始做吧”。
+
 ## 在哪里干活
 - worktree：`/Users/firegnu/Developer/personal_projs/ranch-worktrees/r2-dispatch-no-cairn`，分支 `r2-dispatch-no-cairn`（开工时从 main 建）。
 - 编译目录：`CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r2-dispatch-no-cairn`。
 
 ## 要做的
 
-只改 `crates/dispatch/resources/corral-dispatch/SKILL.md` 第 4 节「派出去」：
+1. `crates/dispatch/resources/corral-dispatch/SKILL.md` 第 4 节「派出去」：
 - 示例 `corral start` 命令加上 `--env CAIRN_DISABLE=1`。
 - 加一条：本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn；它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
 
-不改的：`项目AGENTS模板.md`（开主控那行照旧，主控要用 cairn；且有测试固定字节）；corral 技能；corral 程序。
+2. corral 技能 `crates/corral/resources/SKILL.md` 和 `corral guide` 输出的 `crates/corral/resources/AGENT_USAGE.md`：示例里开 agent 的 `corral start` 都加 `--env CAIRN_DISABLE=1`，配同样一句说明；另说明：要开一个以后自己长期对话的 agent（实际是主控），不走本技能，直接 `corral start … -- claude`，带着 cairn。
+
+不改的：`项目AGENTS模板.md`（开主控那行照旧，主控要用 cairn；且有测试固定字节）；corral 技能自检里“请先用 `corral start` 启动我”那句（那是开主控）；corral 程序的行为。
 
 对 paddock 的影响：技能内容是公开约定，这是兼容的新增；paddock 不用动（paddock New Agent 的 cairn 开关是 paddock 自己的另一件活）。
 
 ## 怎么算做完
-- 用户原话：“我理解你的建议是要修改dispatch的skill？”“但是如果用户没有安装cairn呢？”“开始吧”。
-- `git diff --check`；`crates/dispatch` 的测试（技能编进程序、装技能的测试）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 都过。
-- 部署（用户在场，照 AGENTS.md「安装」）：主控打包到 `~/.local/share/ranch/versions/<提交>/`，用户在终端里切 `~/.local/bin/ranch`、跑 `ranch dispatch install-skills`；主控核对装上的技能与仓库一致。正在跑的主控（如 `owlet/main`）重开后才读到新技能。
-
-## 主控想加、要问用户的
-- corral 技能（“开一个 agent 问个问题、看一下”）开的 agent 要不要也默认关 cairn？那类 agent 同样是一次性的，但本轮讨论只说了派活，先不改。
+- 用户原话：“我理解你的建议是要修改dispatch的skill？”“但是如果用户没有安装cairn呢？”“开始吧”“同意，并进 R2 开始做吧”。
+- `git diff --check`；`cargo test --all-targets`（含技能编进程序、装技能的测试）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 都过。
+- 部署（用户在场，照 AGENTS.md「安装」）：主控打包到 `~/.local/share/ranch/versions/<提交>/`，用户在终端里切 `~/.local/bin/ranch`、`~/.local/bin/corral`，跑 `ranch dispatch install-skills`、`corral install-skills`（只换程序和技能，不 `corral upgrade --all`）；主控核对装上的技能与仓库一致。正在跑的主控（如 `owlet/main`）重开后才读到新技能。
