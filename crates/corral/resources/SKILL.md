@@ -13,13 +13,13 @@ description: "Start a separate, new Claude Code or Codex agent session with the 
 ## 标准四步
 
 ```sh
-corral start demo/ask --unique --cwd <工作目录> --prompt "<要交给对方的话>" -- claude
+corral start demo/ask --unique --cwd <工作目录> --env CAIRN_DISABLE=1 --prompt "<要交给对方的话>" -- claude
 corral wait <名字> --timeout 90 --quiet 120
 corral reply <名字>
 corral stop <名字>
 ```
 
-1. **start**：输出里的 `name` 就是之后用的名字（`--unique` 会补后缀；旧的关掉后，同一个名字会被再次使用，汇报时说明是新开的）。第一句话必须用 `--prompt` 带上。要开 Codex，把最后换成 `-- codex --yolo`；要开 pi，换成 `-- pi`；要开 omp，换成 `-- omp --approval-mode yolo`。需要省钱时，调用方可以自己在 agent 命令后面传模型参数。
+1. **start**：输出里的 `name` 就是之后用的名字（`--unique` 会补后缀；旧的关掉后，同一个名字会被再次使用，汇报时说明是新开的）。第一句话必须用 `--prompt` 带上。要开 Codex，把最后换成 `-- codex --yolo`；要开 pi，换成 `-- pi`；要开 omp，换成 `-- omp --approval-mode yolo`。需要省钱时，调用方可以自己在 agent 命令后面传模型参数。`--env CAIRN_DISABLE=1` 让对方不用 cairn（工作接续记忆）：它开在同一个目录，会把它的停点存到你这条工作线上；没装 cairn 时这个变量不起作用，照写即可，不要删。用户要开一个以后自己长期对话的 agent，不用这个技能，直接 `corral start <名字> --cwd <目录> -- claude`，不带这个变量。
 2. **wait**：你的 shell 工具有超时，所以每次只等 90 秒；退出码 4 就再运行一次，直到返回。看输出里的 `result`：
    - `idle`：这一轮结束，去 reply。
    - `blocked`：对方弹了权限框或提问框。不要替它回答，告诉用户运行 `corral attach <名字>` 去处理，处理完再 wait。
@@ -33,7 +33,7 @@ corral stop <名字>
 要跑很久（跑测试、批量改、同时开好几个），或者用户说「做完告诉我」，就不要在前台 wait：
 
 ```sh
-corral start demo/ask --unique --cwd <工作目录> --prompt "<要交给对方的话>" -- claude
+corral start demo/ask --unique --cwd <工作目录> --env CAIRN_DISABLE=1 --prompt "<要交给对方的话>" -- claude
 corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 ```
 
