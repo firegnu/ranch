@@ -1,0 +1,3851 @@
+{
+  "omp/no-ui": {
+    "settled": {
+      "background_running": null,
+      "cursor": 4,
+      "fmt": 1,
+      "input_count": 0,
+      "inputs": [],
+      "inst": "inst",
+      "last_event": "SessionEnd",
+      "last_event_t": 106.0,
+      "last_prompt": null,
+      "last_tool": null,
+      "main_session": "s1",
+      "offset": 0,
+      "other_sessions": [],
+      "pending": [],
+      "raw": {
+        "s1": {
+          "inputs": [],
+          "reply": null,
+          "stop": null
+        }
+      },
+      "reply": null,
+      "reply_t": null,
+      "state": "exiting",
+      "state_started": 106.0,
+      "turn_started": null
+    },
+    "steps": [
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": false,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 101.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": null,
+          "last_event_t": null,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": null,
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {},
+          "reply": null,
+          "reply_t": null,
+          "state": "starting",
+          "state_started": null,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "p"
+          },
+          "has_ui": null,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 102.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": null,
+          "last_event_t": null,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": null,
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {},
+          "reply": null,
+          "reply_t": null,
+          "state": "starting",
+          "state_started": null,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_execution_start",
+          "event": {
+            "toolName": "ask"
+          },
+          "has_ui": "yes",
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 103.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": null,
+          "last_event_t": null,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": null,
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {},
+          "reply": null,
+          "reply_t": null,
+          "state": "starting",
+          "state_started": null,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 104.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 104.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 104.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_execution_start",
+          "event": {
+            "toolName": "ask"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 105.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "Notification",
+          "last_event_t": 105.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "blocked",
+          "state_started": 105.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "session_shutdown",
+          "event": {
+            "reason": "quit"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 106.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionEnd",
+          "last_event_t": 106.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "exiting",
+          "state_started": 106.0,
+          "turn_started": null
+        }
+      }
+    ]
+  },
+  "omp/turns": {
+    "settled": {
+      "background_running": null,
+      "cursor": 4,
+      "fmt": 1,
+      "input_count": 1,
+      "inputs": [
+        {
+          "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          "t": 103.0
+        }
+      ],
+      "inst": "inst",
+      "last_event": "SessionEnd",
+      "last_event_t": 122.6,
+      "last_prompt": "hi",
+      "last_tool": "bash",
+      "main_session": "s1",
+      "offset": 0,
+      "other_sessions": [],
+      "pending": [],
+      "raw": {
+        "s1": {
+          "inputs": [],
+          "reply": "after end",
+          "stop": null
+        }
+      },
+      "reply": "after end",
+      "reply_t": 120.6,
+      "state": "exiting",
+      "state_started": 122.6,
+      "turn_started": 103.0
+    },
+    "steps": [
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 101.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 101.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 101.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "input",
+          "event": {
+            "text": "hi"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 102.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 101.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [
+                "hi"
+              ],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 101.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "expanded hi"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 103.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 103.0,
+          "last_prompt": "hi",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 103.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "agent_start",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 104.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 103.0,
+          "last_prompt": "hi",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 103.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_execution_start",
+          "event": {
+            "toolName": "ask"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 105.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Notification",
+          "last_event_t": 105.0,
+          "last_prompt": "hi",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "blocked",
+          "state_started": 105.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_execution_end",
+          "event": {
+            "toolName": "ask"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 106.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 106.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 106.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_execution_start",
+          "event": {
+            "toolName": "bash"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 107.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PreToolUse",
+          "last_event_t": 107.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 106.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_approval_requested",
+          "event": {
+            "toolName": "bash"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 108.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Notification",
+          "last_event_t": 108.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "blocked",
+          "state_started": 108.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_approval_resolved",
+          "event": {
+            "toolName": "bash"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 109.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 109.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "tool_execution_end",
+          "event": {
+            "toolName": "bash"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 110.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 110.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "message_end",
+          "event": {
+            "message": {
+              "content": [
+                {
+                  "text": "answer",
+                  "type": "text"
+                },
+                {
+                  "thinking": "hidden",
+                  "type": "thinking"
+                }
+              ],
+              "role": "assistant"
+            }
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 111.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 110.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "answer",
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "agent_end",
+          "event": {
+            "willContinue": true
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 112.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 110.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "answer",
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "agent_end",
+          "event": {
+            "messages": [
+              {
+                "role": "user"
+              },
+              {
+                "errorMessage": "503 Service Unavailable",
+                "role": "assistant",
+                "stopReason": "error"
+              }
+            ]
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 113.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 110.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "answer",
+              "stop": {
+                "cwd": "/tmp",
+                "ev": "Stop",
+                "has_transcript": true,
+                "inst": "inst",
+                "last_assistant_message": "answer",
+                "session_id": "s1",
+                "t": 115.5,
+                "v": 1
+              }
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "agent_start",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 114.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 110.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "answer",
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "agent_end",
+          "event": {
+            "messages": [
+              {
+                "errorMessage": "bad request",
+                "role": "assistant",
+                "stopReason": "error"
+              }
+            ]
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 114.5,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 110.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "answer",
+              "stop": {
+                "cwd": "/tmp",
+                "ev": "Stop",
+                "has_transcript": true,
+                "inst": "inst",
+                "last_assistant_message": "answer",
+                "session_id": "s1",
+                "t": 114.75,
+                "v": 1
+              }
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "message_end",
+          "event": {
+            "message": {
+              "content": [
+                {
+                  "text": "after end",
+                  "type": "text"
+                },
+                {
+                  "thinking": "hidden",
+                  "type": "thinking"
+                }
+              ],
+              "role": "assistant"
+            }
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 114.6,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 110.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "after end",
+              "stop": {
+                "cwd": "/tmp",
+                "ev": "Stop",
+                "has_transcript": true,
+                "inst": "inst",
+                "last_assistant_message": "answer",
+                "session_id": "s1",
+                "t": 114.75,
+                "v": 1
+              }
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 109.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "agent_end",
+          "event": {
+            "messages": [
+              {
+                "errorMessage": "Rate limit hit",
+                "role": "assistant",
+                "stopReason": "error"
+              }
+            ]
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 115.6,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 114.75,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "after end",
+              "stop": {
+                "cwd": "/tmp",
+                "ev": "Stop",
+                "has_transcript": true,
+                "inst": "inst",
+                "last_assistant_message": "after end",
+                "session_id": "s1",
+                "t": 118.1,
+                "v": 1
+              }
+            }
+          },
+          "reply": "answer",
+          "reply_t": 114.75,
+          "state": "idle",
+          "state_started": 114.75,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "ui_prompt_start",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 118.6,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Notification",
+          "last_event_t": 118.6,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "after end",
+              "stop": null
+            }
+          },
+          "reply": "after end",
+          "reply_t": 118.1,
+          "state": "blocked",
+          "state_started": 118.6,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "ui_prompt_end",
+          "event": {},
+          "has_ui": true,
+          "idle": true,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 119.6,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 119.6,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "after end",
+              "stop": null
+            }
+          },
+          "reply": "after end",
+          "reply_t": 118.1,
+          "state": "idle",
+          "state_started": 119.6,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "agent_settled",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 120.6,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 120.6,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "after end",
+              "stop": null
+            }
+          },
+          "reply": "after end",
+          "reply_t": 120.6,
+          "state": "idle",
+          "state_started": 119.6,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "session_switch",
+          "event": {
+            "reason": "resume"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 121.6,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 121.6,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "after end",
+              "stop": null
+            }
+          },
+          "reply": "after end",
+          "reply_t": 120.6,
+          "state": "idle",
+          "state_started": 119.6,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "omp",
+          "cwd": "/tmp",
+          "ev": "session_shutdown",
+          "event": {
+            "reason": "reload"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 122.6,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "SessionEnd",
+          "last_event_t": 122.6,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "after end",
+              "stop": null
+            }
+          },
+          "reply": "after end",
+          "reply_t": 120.6,
+          "state": "exiting",
+          "state_started": 122.6,
+          "turn_started": 103.0
+        }
+      }
+    ]
+  },
+  "pi/agent-end": {
+    "settled": {
+      "background_running": null,
+      "cursor": 4,
+      "fmt": 1,
+      "input_count": 1,
+      "inputs": [
+        {
+          "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+          "t": 102.0
+        }
+      ],
+      "inst": "inst",
+      "last_event": "Stop",
+      "last_event_t": 104.44999999999999,
+      "last_prompt": "p",
+      "last_tool": null,
+      "main_session": "s1",
+      "offset": 0,
+      "other_sessions": [],
+      "pending": [],
+      "raw": {
+        "s1": {
+          "inputs": [],
+          "reply": "late",
+          "stop": null
+        }
+      },
+      "reply": "late",
+      "reply_t": 104.44999999999999,
+      "state": "idle",
+      "state_started": 104.44999999999999,
+      "turn_started": 102.0
+    },
+    "steps": [
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 101.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 101.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 101.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "p"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 102.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+              "t": 102.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 102.0,
+          "last_prompt": "p",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 102.0,
+          "turn_started": 102.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "message_end",
+          "event": {
+            "message": {
+              "content": [
+                {
+                  "text": "done",
+                  "type": "text"
+                },
+                {
+                  "thinking": "hidden",
+                  "type": "thinking"
+                }
+              ],
+              "role": "assistant"
+            }
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 103.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+              "t": 102.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 102.0,
+          "last_prompt": "p",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "done",
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 102.0,
+          "turn_started": 102.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "agent_end",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 104.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+              "t": 102.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 102.0,
+          "last_prompt": "p",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "done",
+              "stop": {
+                "cwd": "/tmp",
+                "ev": "Stop",
+                "has_transcript": true,
+                "inst": "inst",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+                "t": 104.25,
+                "v": 1
+              }
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 102.0,
+          "turn_started": 102.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "message_end",
+          "event": {
+            "message": {
+              "content": [
+                {
+                  "text": "late",
+                  "type": "text"
+                },
+                {
+                  "thinking": "hidden",
+                  "type": "thinking"
+                }
+              ],
+              "role": "assistant"
+            }
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 104.1,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+              "t": 102.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 102.0,
+          "last_prompt": "p",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "late",
+              "stop": {
+                "cwd": "/tmp",
+                "ev": "Stop",
+                "has_transcript": true,
+                "inst": "inst",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+                "t": 104.25,
+                "v": 1
+              }
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 102.0,
+          "turn_started": 102.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "agent_end",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 104.19999999999999,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+              "t": 102.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 102.0,
+          "last_prompt": "p",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "late",
+              "stop": {
+                "cwd": "/tmp",
+                "ev": "Stop",
+                "has_transcript": true,
+                "inst": "inst",
+                "last_assistant_message": "late",
+                "session_id": "s1",
+                "t": 104.44999999999999,
+                "v": 1
+              }
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 102.0,
+          "turn_started": 102.0
+        }
+      }
+    ]
+  },
+  "pi/no-ui": {
+    "settled": {
+      "background_running": null,
+      "cursor": 4,
+      "fmt": 1,
+      "input_count": 1,
+      "inputs": [
+        {
+          "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+          "t": 102.0
+        }
+      ],
+      "inst": "inst",
+      "last_event": "Stop",
+      "last_event_t": 103.0,
+      "last_prompt": "p",
+      "last_tool": null,
+      "main_session": "s1",
+      "offset": 0,
+      "other_sessions": [],
+      "pending": [],
+      "raw": {
+        "s1": {
+          "inputs": [],
+          "reply": null,
+          "stop": null
+        }
+      },
+      "reply": null,
+      "reply_t": null,
+      "state": "idle",
+      "state_started": 103.0,
+      "turn_started": 102.0
+    },
+    "steps": [
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": false,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 101.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 101.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 101.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "p"
+          },
+          "has_ui": null,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 102.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+              "t": 102.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 102.0,
+          "last_prompt": "p",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 102.0,
+          "turn_started": 102.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "agent_settled",
+          "event": {},
+          "has_ui": false,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 103.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+              "t": 102.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 103.0,
+          "last_prompt": "p",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 103.0,
+          "turn_started": 102.0
+        }
+      }
+    ]
+  },
+  "pi/shutdown-without-reason": {
+    "settled": {
+      "background_running": null,
+      "cursor": 4,
+      "fmt": 1,
+      "input_count": 0,
+      "inputs": [],
+      "inst": "inst",
+      "last_event": "SessionEnd",
+      "last_event_t": 102.0,
+      "last_prompt": null,
+      "last_tool": null,
+      "main_session": "s1",
+      "offset": 0,
+      "other_sessions": [],
+      "pending": [],
+      "raw": {
+        "s1": {
+          "inputs": [],
+          "reply": null,
+          "stop": null
+        }
+      },
+      "reply": null,
+      "reply_t": null,
+      "state": "exiting",
+      "state_started": 102.0,
+      "turn_started": null
+    },
+    "steps": [
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 101.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 101.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 101.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_shutdown",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 102.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionEnd",
+          "last_event_t": 102.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "exiting",
+          "state_started": 102.0,
+          "turn_started": null
+        }
+      }
+    ]
+  },
+  "pi/turns": {
+    "settled": {
+      "background_running": null,
+      "cursor": 4,
+      "fmt": 1,
+      "input_count": 4,
+      "inputs": [
+        {
+          "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          "t": 103.0
+        },
+        {
+          "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+          "t": 116.0
+        },
+        {
+          "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+          "t": 117.0
+        },
+        {
+          "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+          "t": 118.0
+        }
+      ],
+      "inst": "inst",
+      "last_event": "SessionEnd",
+      "last_event_t": 126.0,
+      "last_prompt": "z",
+      "last_tool": "edit",
+      "main_session": "s1",
+      "offset": 0,
+      "other_sessions": [],
+      "pending": [],
+      "raw": {
+        "s1": {
+          "inputs": [],
+          "reply": null,
+          "stop": null
+        }
+      },
+      "reply": "first\nsecond",
+      "reply_t": 111.0,
+      "state": "exiting",
+      "state_started": 126.0,
+      "turn_started": 118.0
+    },
+    "steps": [
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 101.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 101.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 101.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "input",
+          "event": {
+            "text": "hi"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 102.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 101.0,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [
+                "hi"
+              ],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "idle",
+          "state_started": 101.0,
+          "turn_started": null
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "expanded hi"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 103.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 103.0,
+          "last_prompt": "hi",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 103.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "tool_execution_start",
+          "event": {
+            "toolName": "bash"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 104.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PreToolUse",
+          "last_event_t": 104.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 103.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "tool_execution_end",
+          "event": {
+            "toolName": "bash"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 105.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 105.0,
+          "last_prompt": "hi",
+          "last_tool": "bash",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 103.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "tool_execution_start",
+          "event": {
+            "toolName": "ask"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 106.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PreToolUse",
+          "last_event_t": 106.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 103.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "ui_prompt_start",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 107.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Notification",
+          "last_event_t": 107.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "blocked",
+          "state_started": 107.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "ui_prompt_end",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 108.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 108.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 108.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "message_end",
+          "event": {
+            "message": {
+              "content": [
+                {
+                  "text": "first",
+                  "type": "text"
+                },
+                {
+                  "text": "second",
+                  "type": "text"
+                },
+                {
+                  "thinking": "hidden",
+                  "type": "thinking"
+                }
+              ],
+              "role": "assistant"
+            }
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 109.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 108.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "first\nsecond",
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 108.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "message_end",
+          "event": {
+            "message": {
+              "content": [
+                {
+                  "text": "no",
+                  "type": "text"
+                }
+              ],
+              "role": "user"
+            }
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 110.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 108.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "first\nsecond",
+              "stop": null
+            }
+          },
+          "reply": null,
+          "reply_t": null,
+          "state": "working",
+          "state_started": 108.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "agent_settled",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 111.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 111.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": "first\nsecond",
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 111.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "input",
+          "event": {
+            "text": "q1"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 112.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 111.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [
+                "q1"
+              ],
+              "reply": "first\nsecond",
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 111.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "input",
+          "event": {
+            "streamingBehavior": "steer",
+            "text": "q2"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 113.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 111.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [
+                "q1",
+                "q2"
+              ],
+              "reply": "first\nsecond",
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 111.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "input",
+          "event": {
+            "streamingBehavior": false,
+            "text": "q3"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 114.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 111.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [
+                "q3"
+              ],
+              "reply": "first\nsecond",
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 111.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "input",
+          "event": {
+            "streamingBehavior": "followUp",
+            "text": "q4"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 115.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 1,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 111.0,
+          "last_prompt": "hi",
+          "last_tool": "ask",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [
+                "q3",
+                "q4"
+              ],
+              "reply": "first\nsecond",
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 111.0,
+          "turn_started": 103.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "x"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 116.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 2,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 116.0,
+          "last_prompt": "q3",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [
+                "q4"
+              ],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "working",
+          "state_started": 116.0,
+          "turn_started": 116.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "y"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 117.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 3,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 117.0,
+          "last_prompt": "q4",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "working",
+          "state_started": 116.0,
+          "turn_started": 117.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "before_agent_start",
+          "event": {
+            "prompt": "z"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 118.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "UserPromptSubmit",
+          "last_event_t": 118.0,
+          "last_prompt": "z",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "working",
+          "state_started": 116.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "ui_prompt_start",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 119.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Notification",
+          "last_event_t": 119.0,
+          "last_prompt": "z",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "blocked",
+          "state_started": 119.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "ui_prompt_end",
+          "event": {},
+          "has_ui": true,
+          "idle": true,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 120.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Stop",
+          "last_event_t": 120.0,
+          "last_prompt": "z",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 120.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "tool_approval_requested",
+          "event": {
+            "toolName": "edit"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 121.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "Notification",
+          "last_event_t": 121.0,
+          "last_prompt": "z",
+          "last_tool": null,
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "blocked",
+          "state_started": 121.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "tool_approval_resolved",
+          "event": {
+            "toolName": "edit"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 122.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 122.0,
+          "last_prompt": "z",
+          "last_tool": "edit",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "working",
+          "state_started": 122.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "something_else",
+          "event": {},
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 123.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "PostToolUse",
+          "last_event_t": 122.0,
+          "last_prompt": "z",
+          "last_tool": "edit",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "working",
+          "state_started": 122.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_switch",
+          "event": {
+            "reason": "new"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 124.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 124.0,
+          "last_prompt": "z",
+          "last_tool": "edit",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 124.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_shutdown",
+          "event": {
+            "reason": "reload"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 125.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "SessionStart",
+          "last_event_t": 124.0,
+          "last_prompt": "z",
+          "last_tool": "edit",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "idle",
+          "state_started": 124.0,
+          "turn_started": 118.0
+        }
+      },
+      {
+        "error": null,
+        "event": {
+          "adapter": "pi",
+          "cwd": "/tmp",
+          "ev": "session_shutdown",
+          "event": {
+            "reason": "quit"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 126.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 4,
+          "inputs": [
+            {
+              "digest": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+              "t": 103.0
+            },
+            {
+              "digest": "58e2791934fdd9cfdd6d0e892cb6ca4894abc58559de0ec04d51bc2801bad291",
+              "t": 116.0
+            },
+            {
+              "digest": "112f2dfa31205df3f5f9db109460c8b85067d7dc27f70781c2e4ef903ee9f26a",
+              "t": 117.0
+            },
+            {
+              "digest": "594e519ae499312b29433b7dd8a97ff068defcba9755b6d5d00e84c524d67b06",
+              "t": 118.0
+            }
+          ],
+          "inst": "inst",
+          "last_event": "SessionEnd",
+          "last_event_t": 126.0,
+          "last_prompt": "z",
+          "last_tool": "edit",
+          "main_session": "s1",
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {
+            "s1": {
+              "inputs": [],
+              "reply": null,
+              "stop": null
+            }
+          },
+          "reply": "first\nsecond",
+          "reply_t": 111.0,
+          "state": "exiting",
+          "state_started": 126.0,
+          "turn_started": 118.0
+        }
+      }
+    ]
+  },
+  "unknown-adapters": {
+    "settled": {
+      "background_running": null,
+      "cursor": 4,
+      "fmt": 1,
+      "input_count": 0,
+      "inputs": [],
+      "inst": "inst",
+      "last_event": null,
+      "last_event_t": null,
+      "last_prompt": null,
+      "last_tool": null,
+      "main_session": null,
+      "offset": 0,
+      "other_sessions": [],
+      "pending": [],
+      "raw": {},
+      "reply": null,
+      "reply_t": null,
+      "state": "starting",
+      "state_started": null,
+      "turn_started": null
+    },
+    "steps": [
+      {
+        "error": {
+          "error": "incompatible",
+          "message": "unsupported raw event adapter",
+          "ok": false
+        },
+        "event": {
+          "adapter": "PI",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 101.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": null,
+          "last_event_t": null,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": null,
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {},
+          "reply": null,
+          "reply_t": null,
+          "state": "starting",
+          "state_started": null,
+          "turn_started": null
+        }
+      },
+      {
+        "error": {
+          "error": "incompatible",
+          "message": "unsupported raw event adapter",
+          "ok": false
+        },
+        "event": {
+          "adapter": null,
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 102.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": null,
+          "last_event_t": null,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": null,
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {},
+          "reply": null,
+          "reply_t": null,
+          "state": "starting",
+          "state_started": null,
+          "turn_started": null
+        }
+      },
+      {
+        "error": {
+          "error": "incompatible",
+          "message": "unsupported raw event adapter",
+          "ok": false
+        },
+        "event": {
+          "adapter": "",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 103.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": null,
+          "last_event_t": null,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": null,
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {},
+          "reply": null,
+          "reply_t": null,
+          "state": "starting",
+          "state_started": null,
+          "turn_started": null
+        }
+      },
+      {
+        "error": {
+          "error": "incompatible",
+          "message": "unsupported raw event adapter",
+          "ok": false
+        },
+        "event": {
+          "adapter": "claude",
+          "cwd": "/tmp",
+          "ev": "session_start",
+          "event": {
+            "reason": "startup"
+          },
+          "has_ui": true,
+          "idle": false,
+          "inst": "inst",
+          "session_id": "s1",
+          "t": 104.0,
+          "v": 2
+        },
+        "state": {
+          "background_running": null,
+          "cursor": 4,
+          "fmt": 1,
+          "input_count": 0,
+          "inputs": [],
+          "inst": "inst",
+          "last_event": null,
+          "last_event_t": null,
+          "last_prompt": null,
+          "last_tool": null,
+          "main_session": null,
+          "offset": 0,
+          "other_sessions": [],
+          "pending": [],
+          "raw": {},
+          "reply": null,
+          "reply_t": null,
+          "state": "starting",
+          "state_started": null,
+          "turn_started": null
+        }
+      }
+    ]
+  }
+}

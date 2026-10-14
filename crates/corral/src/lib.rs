@@ -1,4 +1,6 @@
 // From Saddle `crates/corral-core/src/lib.rs` at commit `a31dea2`; ranch has changed it since.
+#[cfg(test)]
+mod adapter_snapshot;
 mod after;
 mod attach;
 mod cli;

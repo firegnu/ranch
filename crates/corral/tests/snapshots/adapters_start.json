@@ -1,0 +1,833 @@
+{
+  "claude-code/args": {
+    "argv": [
+      "<ROOT>/bin/claude-code",
+      "--model",
+      "fixture",
+      "--",
+      "positional"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "claude-code",
+      "name": "lab/claude-code-args",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "claude-code",
+      "ok": true,
+      "state": "unknown"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "claude-code/empty-prompt": {
+    "start": {
+      "code": 1,
+      "out": {
+        "error": "usage",
+        "message": "--prompt requires a recognized agent",
+        "ok": false
+      }
+    }
+  },
+  "claude-code/plain": {
+    "argv": [
+      "<ROOT>/bin/claude-code"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "claude-code",
+      "name": "lab/claude-code-plain",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "claude-code",
+      "ok": true,
+      "state": "unknown"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "claude-code/prompt": {
+    "start": {
+      "code": 1,
+      "out": {
+        "error": "usage",
+        "message": "--prompt requires a recognized agent",
+        "ok": false
+      }
+    }
+  },
+  "claude/args": {
+    "argv": [
+      "<ROOT>/bin/claude",
+      "--settings",
+      "{\"hooks\":{\"Notification\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Notification\",\"timeout\":10,\"type\":\"command\"}]}],\"PermissionRequest\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PostToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PreToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"SessionEnd\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionEnd\",\"timeout\":10,\"type\":\"command\"}]}],\"SessionStart\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionStart\",\"timeout\":10,\"type\":\"command\"}]}],\"Stop\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Stop\",\"timeout\":10,\"type\":\"command\"}]}],\"StopFailure\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook StopFailure\",\"timeout\":10,\"type\":\"command\"}]}],\"UserPromptSubmit\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",\"timeout\":10,\"type\":\"command\"}]}]}}",
+      "--model",
+      "fixture",
+      "--",
+      "positional"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "claude",
+      "name": "lab/claude-args",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "claude",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "claude/bare": {
+    "argv": [
+      "<ROOT>/bin/claude",
+      "--settings",
+      "{\"hooks\":{\"Notification\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Notification\",\"timeout\":10,\"type\":\"command\"}]}],\"PermissionRequest\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PostToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PreToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"SessionEnd\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionEnd\",\"timeout\":10,\"type\":\"command\"}]}],\"SessionStart\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionStart\",\"timeout\":10,\"type\":\"command\"}]}],\"Stop\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Stop\",\"timeout\":10,\"type\":\"command\"}]}],\"StopFailure\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook StopFailure\",\"timeout\":10,\"type\":\"command\"}]}],\"UserPromptSubmit\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",\"timeout\":10,\"type\":\"command\"}]}]}}",
+      "-x",
+      "--",
+      "hi"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "claude",
+      "name": "lab/claude-bare",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "claude",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "claude/empty-prompt": {
+    "argv": [
+      "<ROOT>/bin/claude",
+      "--settings",
+      "{\"hooks\":{\"Notification\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Notification\",\"timeout\":10,\"type\":\"command\"}]}],\"PermissionRequest\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PostToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PreToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"SessionEnd\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionEnd\",\"timeout\":10,\"type\":\"command\"}]}],\"SessionStart\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionStart\",\"timeout\":10,\"type\":\"command\"}]}],\"Stop\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Stop\",\"timeout\":10,\"type\":\"command\"}]}],\"StopFailure\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook StopFailure\",\"timeout\":10,\"type\":\"command\"}]}],\"UserPromptSubmit\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",\"timeout\":10,\"type\":\"command\"}]}]}}",
+      "--",
+      ""
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "claude",
+      "name": "lab/claude-empty",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "claude",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "claude/plain": {
+    "argv": [
+      "<ROOT>/bin/claude",
+      "--settings",
+      "{\"hooks\":{\"Notification\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Notification\",\"timeout\":10,\"type\":\"command\"}]}],\"PermissionRequest\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PostToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PreToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"SessionEnd\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionEnd\",\"timeout\":10,\"type\":\"command\"}]}],\"SessionStart\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionStart\",\"timeout\":10,\"type\":\"command\"}]}],\"Stop\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Stop\",\"timeout\":10,\"type\":\"command\"}]}],\"StopFailure\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook StopFailure\",\"timeout\":10,\"type\":\"command\"}]}],\"UserPromptSubmit\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",\"timeout\":10,\"type\":\"command\"}]}]}}"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "claude",
+      "name": "lab/claude-plain",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "claude",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "claude/prompt": {
+    "argv": [
+      "<ROOT>/bin/claude",
+      "--settings",
+      "{\"hooks\":{\"Notification\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Notification\",\"timeout\":10,\"type\":\"command\"}]}],\"PermissionRequest\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PostToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"PreToolUse\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",\"timeout\":10,\"type\":\"command\"}],\"matcher\":\"*\"}],\"SessionEnd\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionEnd\",\"timeout\":10,\"type\":\"command\"}]}],\"SessionStart\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook SessionStart\",\"timeout\":10,\"type\":\"command\"}]}],\"Stop\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook Stop\",\"timeout\":10,\"type\":\"command\"}]}],\"StopFailure\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook StopFailure\",\"timeout\":10,\"type\":\"command\"}]}],\"UserPromptSubmit\":[{\"hooks\":[{\"command\":\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",\"timeout\":10,\"type\":\"command\"}]}]}}",
+      "--model",
+      "fixture",
+      "--",
+      "-literal prompt"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "claude",
+      "name": "lab/claude-prompt",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "claude",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "codex/args": {
+    "argv": [
+      "<ROOT>/bin/codex",
+      "-c",
+      "hooks.SessionStart=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook SessionStart\",timeout=10}]}]",
+      "-c",
+      "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",timeout=10}]}]",
+      "-c",
+      "hooks.PreToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",timeout=10}]}]",
+      "-c",
+      "hooks.Stop=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Stop\",timeout=10}]}]",
+      "-c",
+      "hooks.Interrupt=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Interrupt\",timeout=3}]}]",
+      "--dangerously-bypass-hook-trust",
+      "--model",
+      "fixture",
+      "--",
+      "positional"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "codex",
+      "name": "lab/codex-args",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "codex",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -2,
+      "ok": true,
+      "stopped_by": "keys"
+    }
+  },
+  "codex/bare": {
+    "argv": [
+      "<ROOT>/bin/codex",
+      "-c",
+      "hooks.SessionStart=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook SessionStart\",timeout=10}]}]",
+      "-c",
+      "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",timeout=10}]}]",
+      "-c",
+      "hooks.PreToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",timeout=10}]}]",
+      "-c",
+      "hooks.Stop=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Stop\",timeout=10}]}]",
+      "-c",
+      "hooks.Interrupt=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Interrupt\",timeout=3}]}]",
+      "--dangerously-bypass-hook-trust",
+      "-x",
+      "--",
+      "hi"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "codex",
+      "name": "lab/codex-bare",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "codex",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -2,
+      "ok": true,
+      "stopped_by": "keys"
+    }
+  },
+  "codex/empty-prompt": {
+    "argv": [
+      "<ROOT>/bin/codex",
+      "-c",
+      "hooks.SessionStart=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook SessionStart\",timeout=10}]}]",
+      "-c",
+      "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",timeout=10}]}]",
+      "-c",
+      "hooks.PreToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",timeout=10}]}]",
+      "-c",
+      "hooks.Stop=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Stop\",timeout=10}]}]",
+      "-c",
+      "hooks.Interrupt=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Interrupt\",timeout=3}]}]",
+      "--dangerously-bypass-hook-trust",
+      "--",
+      ""
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "codex",
+      "name": "lab/codex-empty",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "codex",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -2,
+      "ok": true,
+      "stopped_by": "keys"
+    }
+  },
+  "codex/plain": {
+    "argv": [
+      "<ROOT>/bin/codex",
+      "-c",
+      "hooks.SessionStart=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook SessionStart\",timeout=10}]}]",
+      "-c",
+      "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",timeout=10}]}]",
+      "-c",
+      "hooks.PreToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",timeout=10}]}]",
+      "-c",
+      "hooks.Stop=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Stop\",timeout=10}]}]",
+      "-c",
+      "hooks.Interrupt=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Interrupt\",timeout=3}]}]",
+      "--dangerously-bypass-hook-trust"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "codex",
+      "name": "lab/codex-plain",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "codex",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -2,
+      "ok": true,
+      "stopped_by": "keys"
+    }
+  },
+  "codex/prompt": {
+    "argv": [
+      "<ROOT>/bin/codex",
+      "-c",
+      "hooks.SessionStart=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook SessionStart\",timeout=10}]}]",
+      "-c",
+      "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook UserPromptSubmit\",timeout=10}]}]",
+      "-c",
+      "hooks.PreToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PreToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PostToolUse\",timeout=10}]}]",
+      "-c",
+      "hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook PermissionRequest\",timeout=10}]}]",
+      "-c",
+      "hooks.Stop=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Stop\",timeout=10}]}]",
+      "-c",
+      "hooks.Interrupt=[{hooks=[{type=\"command\",command=\"<ROOT>/pens/.runtime/helper __hook Interrupt\",timeout=3}]}]",
+      "--dangerously-bypass-hook-trust",
+      "--model",
+      "fixture",
+      "--",
+      "-literal prompt"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "codex",
+      "name": "lab/codex-prompt",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "codex",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -2,
+      "ok": true,
+      "stopped_by": "keys"
+    }
+  },
+  "omp/args": {
+    "argv": [
+      "<ROOT>/bin/omp",
+      "--extension",
+      "<ROOT>/pens/lab/omp-args/hook_omp.ts",
+      "--model",
+      "fixture",
+      "--",
+      "positional"
+    ],
+    "hook_files": {
+      "hook_omp.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"session_switch\", \"input\", \"before_agent_start\", \"agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"tool_approval_requested\", \"tool_approval_resolved\", \"message_end\", \"agent_end\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"omp\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "omp",
+      "name": "lab/omp-args",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "omp",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "omp/bare": {
+    "argv": [
+      "<ROOT>/bin/omp",
+      "--extension",
+      "<ROOT>/pens/lab/omp-bare/hook_omp.ts",
+      "-x",
+      "--",
+      "hi"
+    ],
+    "hook_files": {
+      "hook_omp.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"session_switch\", \"input\", \"before_agent_start\", \"agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"tool_approval_requested\", \"tool_approval_resolved\", \"message_end\", \"agent_end\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"omp\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "omp",
+      "name": "lab/omp-bare",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "omp",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "omp/empty-prompt": {
+    "argv": [
+      "<ROOT>/bin/omp",
+      "--extension",
+      "<ROOT>/pens/lab/omp-empty/hook_omp.ts",
+      "--",
+      ""
+    ],
+    "hook_files": {
+      "hook_omp.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"session_switch\", \"input\", \"before_agent_start\", \"agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"tool_approval_requested\", \"tool_approval_resolved\", \"message_end\", \"agent_end\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"omp\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "omp",
+      "name": "lab/omp-empty",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "omp",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "omp/plain": {
+    "argv": [
+      "<ROOT>/bin/omp",
+      "--extension",
+      "<ROOT>/pens/lab/omp-plain/hook_omp.ts"
+    ],
+    "hook_files": {
+      "hook_omp.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"session_switch\", \"input\", \"before_agent_start\", \"agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"tool_approval_requested\", \"tool_approval_resolved\", \"message_end\", \"agent_end\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"omp\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "omp",
+      "name": "lab/omp-plain",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "omp",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "omp/prompt": {
+    "argv": [
+      "<ROOT>/bin/omp",
+      "--extension",
+      "<ROOT>/pens/lab/omp-prompt/hook_omp.ts",
+      "--model",
+      "fixture",
+      "--",
+      "-literal prompt"
+    ],
+    "hook_files": {
+      "hook_omp.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"session_switch\", \"input\", \"before_agent_start\", \"agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"tool_approval_requested\", \"tool_approval_resolved\", \"message_end\", \"agent_end\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"omp\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "omp",
+      "name": "lab/omp-prompt",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "omp",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "other/args": {
+    "argv": [
+      "<ROOT>/bin/other",
+      "--model",
+      "fixture",
+      "--",
+      "positional"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "other",
+      "name": "lab/other-args",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "other",
+      "ok": true,
+      "state": "unknown"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "other/empty-prompt": {
+    "start": {
+      "code": 1,
+      "out": {
+        "error": "usage",
+        "message": "--prompt requires a recognized agent",
+        "ok": false
+      }
+    }
+  },
+  "other/plain": {
+    "argv": [
+      "<ROOT>/bin/other"
+    ],
+    "hook_files": {},
+    "start": {
+      "code": 0,
+      "kind": "other",
+      "name": "lab/other-plain",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "other",
+      "ok": true,
+      "state": "unknown"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "other/prompt": {
+    "start": {
+      "code": 1,
+      "out": {
+        "error": "usage",
+        "message": "--prompt requires a recognized agent",
+        "ok": false
+      }
+    }
+  },
+  "pi/args": {
+    "argv": [
+      "<ROOT>/bin/pi",
+      "--extension",
+      "<ROOT>/pens/lab/pi-args/hook_pi.ts",
+      "--model",
+      "fixture",
+      "--",
+      "positional"
+    ],
+    "hook_files": {
+      "hook_pi.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"input\", \"before_agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"ui_prompt_start\", \"ui_prompt_end\", \"message_end\", \"agent_settled\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"pi\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "pi",
+      "name": "lab/pi-args",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "pi",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "pi/bare": {
+    "argv": [
+      "<ROOT>/bin/pi",
+      "--extension",
+      "<ROOT>/pens/lab/pi-bare/hook_pi.ts",
+      "-x",
+      "--",
+      "hi"
+    ],
+    "hook_files": {
+      "hook_pi.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"input\", \"before_agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"ui_prompt_start\", \"ui_prompt_end\", \"message_end\", \"agent_settled\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"pi\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "pi",
+      "name": "lab/pi-bare",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "pi",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "pi/empty-prompt": {
+    "argv": [
+      "<ROOT>/bin/pi",
+      "--extension",
+      "<ROOT>/pens/lab/pi-empty/hook_pi.ts",
+      "--",
+      ""
+    ],
+    "hook_files": {
+      "hook_pi.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"input\", \"before_agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"ui_prompt_start\", \"ui_prompt_end\", \"message_end\", \"agent_settled\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"pi\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "pi",
+      "name": "lab/pi-empty",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "pi",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "pi/plain": {
+    "argv": [
+      "<ROOT>/bin/pi",
+      "--extension",
+      "<ROOT>/pens/lab/pi-plain/hook_pi.ts"
+    ],
+    "hook_files": {
+      "hook_pi.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"input\", \"before_agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"ui_prompt_start\", \"ui_prompt_end\", \"message_end\", \"agent_settled\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"pi\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "pi",
+      "name": "lab/pi-plain",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "pi",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  },
+  "pi/prompt": {
+    "argv": [
+      "<ROOT>/bin/pi",
+      "--extension",
+      "<ROOT>/pens/lab/pi-prompt/hook_pi.ts",
+      "--model",
+      "fixture",
+      "--",
+      "-literal prompt"
+    ],
+    "hook_files": {
+      "hook_pi.ts": {
+        "body": "// Stable v2 collector: native facts only. Corral's reader owns turn judgement.\n// Loaded code stays in the agent; upgrading Corral changes the reader, not this collector.\nimport { appendFileSync } from \"node:fs\";\n\nexport default function (api: any) {\n  for (const ev of [\"session_start\", \"input\", \"before_agent_start\", \"tool_execution_start\", \"tool_execution_end\", \"ui_prompt_start\", \"ui_prompt_end\", \"message_end\", \"agent_settled\", \"session_shutdown\"]) {\n    api.on(ev, (event: any, ctx: any) => {\n      try {\n        const path = process.env.CORRAL_EVENTS;\n        if (!path) return;\n        const record = {\n          v: 2, adapter: \"pi\", ev, t: Date.now() / 1000,\n          inst: process.env.CORRAL_INSTANCE ?? \"\",\n          session_id: ctx?.sessionManager?.getSessionId?.(), cwd: ctx?.cwd,\n          has_ui: ctx?.hasUI, idle: ctx?.isIdle?.(),\n          event: {\n            reason: event?.reason, text: event?.text, prompt: event?.prompt,\n            streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,\n            message: event?.message, messages: event?.messages, willContinue: event?.willContinue,\n          },\n        };\n        appendFileSync(path, JSON.stringify(record) + \"\\n\", { mode: 0o600 });\n      } catch {\n        // Hook failures must not affect the agent or write to its terminal.\n      }\n    });\n  }\n}\n",
+        "mode": "600"
+      }
+    },
+    "start": {
+      "code": 0,
+      "kind": "pi",
+      "name": "lab/pi-prompt",
+      "ok": true
+    },
+    "status": {
+      "code": 0,
+      "kind": "pi",
+      "ok": true,
+      "state": "starting"
+    },
+    "stop": {
+      "code": 0,
+      "exit_code": -1,
+      "ok": true,
+      "stopped_by": "SIGHUP"
+    }
+  }
+}
