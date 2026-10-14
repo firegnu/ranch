@@ -2,7 +2,7 @@
 
 ## 现在在哪（2026-10-14）
 
-- R3 已合并、推送、收尾（`docs/任务/R3-corral恢复适配器结构.md`，设计 `docs/DESIGN.md` §7）：corral 恢复一家一个适配器（`crates/corral/src/agents/`），行为不变，靠 `crates/corral/tests/snapshots/` 里在旧代码上钉的快照保证；四家真实 agent 实测过。打包 `versions/7b761e7`，**待部署**：用户在普通终端里把 `~/.local/bin/corral`、`~/.local/bin/ranch` 切到 `versions/7b761e7/bin/`；技能内容与已装的相同（dry-run 全是 same），不跑 `install-skills`；行为不变，不 `corral upgrade --all`。部署后主控开一个 `ranch/test-*` 走一遍。退回：链接切回 `versions/d55defb/bin/`。用户 10-14 定的「全局配置可以放宽」已记进 DESIGN §7，代码留给以后装全局钩子那件。
+- R3 已合并、推送、收尾（`docs/任务/R3-corral恢复适配器结构.md`，设计 `docs/DESIGN.md` §7）：corral 恢复一家一个适配器（`crates/corral/src/agents/`），行为不变，靠 `crates/corral/tests/snapshots/` 里在旧代码上钉的快照保证；四家真实 agent 实测过。已部署（10-14 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/7b761e7/bin/`；技能内容与已装的相同（dry-run 全是 same），没跑 `install-skills`；行为不变，没做 `corral upgrade --all`：正在跑的 agent 仍由 `d55defb` 的 pen 管，`.runtime/helper` 仍指向 `5c5540c`。部署后主控用新版读了现有 agent 的状态（正常），开 `ranch/test-claude` 问两句、拿到回复、`stop` 由 SIGHUP 停干净。退回：链接切回 `versions/d55defb/bin/`。用户 10-14 定的「全局配置可以放宽」已记进 DESIGN §7，代码留给以后装全局钩子那件。
 
 - R2 已合并、推送、收尾（`docs/任务/R2-派活agent不用cairn.md`）：corral-dispatch、corral 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（用户拿 owlet 试点 cairn）。只改技能文字，corral 程序行为与 `5c5540c` 相同。已部署（10-08 16:27 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/d55defb/bin/`，两条 `install-skills` 已跑，主控核对 `~/.claude`、`~/.agents` 下的技能与仓库逐字节一致；没做 `corral upgrade --all`（程序代码与 `5c5540c` 相同）。正在跑的主控重开后才读到新技能。
 
@@ -10,14 +10,14 @@
 
 - 第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。
 - 安装：
-  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/d55defb/bin/`（10-08 起；旧版 `5c5540c`、`d771c10`、`df46247` 目录保留，不删；运行中的 agent 仍由启动它的 `5c5540c` 管）
+  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/7b761e7/bin/`（10-14 起；旧版 `d55defb`、`5c5540c`、`d771c10`、`df46247` 目录保留，不删；10-14 部署时在跑的 6 个 agent 的 pen 是 `d55defb`，`~/.corral/.runtime/helper` 指向 `5c5540c`）
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/` 下。
 - Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。任务和完成记录在 paddock：`../paddock/docs/任务/M2-ranch与corral.md`、`M3-dispatch进ranch.md`。
 - 远程：`origin` = `github.com/firegnu/ranch`（public，不加许可证）。`.gitleaks.toml` 只放行 ureq 的公开测试私钥。
 
 ## 下一步
 
-1. 部署 R3（见上）。之后 paddock 可以提 P5-94 要的只读 `corral integration status --json`（paddock 原说等 R3 合并后再提）。
+1. paddock 可以提 P5-94 要的只读 `corral integration status --json`（R3 已部署，可以提了）。
 2. paddock 开工 P5-33（界面接 pause／resume）。
 3. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
 
