@@ -82,7 +82,7 @@
 
 ## 部署（用户在场）
 - 主控打包、核对；用户切 `~/.local/bin/corral`、`~/.local/bin/ranch`。
-- pen 加了 `CORRAL_KIND`。已在跑的四家不受影响，所以 `corral upgrade --all` 可做可不做。
+- pen 给 amp 加了 `CORRAL_KIND`、`CORRAL_CWD`、`CORRAL_PEN_PID`。已在跑的四家不受影响，所以 `corral upgrade --all` 可做可不做。
 - 插件是否装上（`corral integration install --agent amp --yes`），由用户决定，或者以后从 paddock 的 Settings 点。
 
 ## 用户定的（10-14）
@@ -98,3 +98,43 @@
 - 派遣：amp 在分工表里「点名才派」；用默认模式、不分档（用户选的推荐项）。所以这件也改 corral 技能、`corral guide` 和 corral-dispatch 技能的文字，部署时要重装两份技能。
 
 ## 完成记录
+
+### 做了什么
+- 适配器接口加三项：`prompt()`（amp 为否，`--prompt` 报 `amp takes no --prompt`）、`title_blocked()`（amp：标题以 `◆ Input needed` 开头）、`global()`（全局文件的目录、路径、内容）。pen 只给声明了全局文件的 agent 设 `CORRAL_KIND`、`CORRAL_CWD`、`CORRAL_PEN_PID`，现有四家的环境不变。
+- amp 适配器：裸启动、HUP 再 TERM 停、技能装到 claude 和 codex 两处。
+- `crates/corral/resources/amp_plugin.ts`：写 v1 事件，读事件和状态机不改。只在 `CORRAL_EVENTS` 有值、`CORRAL_KIND=amp`、它那个 amp 的父进程是 `CORRAL_PEN_PID` 时工作；只记顶层 thread；不挂 `tool.call`。
+- `corral integration install|uninstall --agent <种类> [--dry-run] [--yes]`；`integration status` 给 amp 报 `hooks:"global"` 和 `install{path,status,version}`。
+- `corral status`：适配器声明了 `title_blocked` 时，working／idle 遇到对应标题报 `blocked`。
+- 文档：CONTRACT（全局 agent、install/uninstall、新旧版本混用 amp 的边界）、DESIGN §7、corral README、R5 报告更正。技能：corral 技能、`corral guide`、corral-dispatch（amp 点名才派、不分档、先 wait 到 idle 再送第一句）。
+
+### 验证了什么
+- `cargo test --all-targets` 全过（3 项旧版兼容测试照旧默认忽略），`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过；R3 快照文件没改。
+- 合成测试（隔离 HOME、CORRAL_HOME、假 amp）：install／uninstall／dry-run 的 create、same、overwrite、remove、absent；foreign（不是 corral 写的、符号链接、目录）不动；XDG_CONFIG_HOME 只认绝对路径；只有 amp 能 install；amp 裸启动、三个变量只给 amp 且 `CORRAL_PEN_PID` 是它的 pen；喂 v1 事件看 idle → working → blocked → working → idle、子 agent 的 Stop 不算、回复取 `text`、Interrupt 和 StopFailure；标题规则在 working 和 idle 下都报 blocked。
+- 用户确认期间文件被换（R2）：拿 corral 的 pen 当终端跑 install 和 uninstall，在 `[y/N]` 时放一个用户文件再回答 y，两次都报 `changed`、文件原样。没写成自动测试。
+- 插件逻辑（R3、R4）：用 Bun 加载插件、假 amp 对象：查父 thread 失败时主 thread 照常记录、子 thread 不抢会话；A → B → A 时第二次进 A 重新报会话开始，后台 B 的事件不抢。把 A → B → A 的事件喂给新 corral：`idle`，回复是 A 的第二轮。
+- 真实 amp（用户的账号，真实 `~/.config/amp/plugins/corral.ts`，独立 CORRAL_HOME，`ranch/test-*`，用完都 stop）：
+  - 启动即 idle、马上 send 已确认、回复对；等批准（临时 `--settings-file` 让 shell 命令要确认）报 blocked，`keys enter` 批准后回到 working、再 idle；stop 后 amp 和插件、MCP 子进程都退干净。
+  - 审查后的插件：wait 到 idle → send 确认 → 回复 pong。
+  - 「怎么算做完」第 3 条换成了更直接的做法：不用 `amp plugins exec`，而是在 shell 里带着测试 pen 的全部变量直接跑 `amp -x`（嵌套的情形），事件一条没写；把 `CORRAL_PEN_PID` 改成它真正的父进程再跑，照常写了四条，说明拦住它的就是父进程检查。
+- 交叉审查（Codex，`docs/任务/R6-审查.md`）：必须改 4 条、建议改 3 条都改了：R1 嵌套 amp（父进程检查）、R2 确认后重查和新建不覆盖、R3 查询失败不缓存、R4 切回 thread；S1 新旧混用写进 CONTRACT、S2 技能先等 idle、S3 写明符号链接检查到 amp 配置目录为止。
+
+### 拿主意的地方
+- amp 在第一句之前没有 thread：插件一加载就报一个占位会话（`amp-startup`），corral 才认为它就绪、肯 send。
+- amp 加载插件时到的那一轮会跳过 `agent.start`：在 `session.start` 读 thread 最后一条用户消息、在 `agent.end` 再补一次，按消息 id 去重。
+- 等批准：插件接口一直报 `running`，用户选看终端标题（B）。原来订阅的状态接口没用，删了。
+- 嵌套 amp 用「父进程是 pen」判断，而不是再加一个 token：token 会和别的变量一起被继承。插件进程是 amp 的子进程，amp 是 pen 的子进程，这是在真实进程树上看过的。
+- 配置根目录（`~/.config`、`$XDG_CONFIG_HOME`）本身是符号链接不算 foreign：dotfiles 常这么做。
+- 确认后的重查是缩小窗口，不是彻底消除：重查到写之间还有极短的一段，覆盖已有的 corral 文件仍用 rename。用户的配置同步程序正好在这一瞬间换文件，才会碰上。
+
+### 没做的
+- agy、读屏兜底（阶段二、三）。
+- 旧版 corral 对 amp 没有完整语义（CONTRACT 写了边界），不补。
+- 确认窗口的检查没写成自动测试（要终端），记在上面的手动验证里。
+- 插件里的去重集合只增不减，一个会话里可以忽略。
+
+### 对 paddock 的影响（兼容新增）
+- `integration status` 多一个 amp 项：`hooks:"global"`、`install{path,status,version}`；新命令 `corral integration install|uninstall --agent amp [--dry-run] [--yes]`。
+- Settings 要讲清楚：插件装在 `~/.config/amp/plugins/corral.ts`；桌面版 Amp 可能也加载它，但什么都不做；每个加载了它的 amp 多一个闲置的插件进程；装完要重开已有的 amp。
+- New Agent 选 amp 时不能带 Prompt：先 start，等 idle 后再 send。
+- amp 要用这版及以后的 corral 操作；旧版 corral 开的 amp 要重开。
+- 技能文字改了，部署时重装两份技能。
