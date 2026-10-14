@@ -14,11 +14,11 @@
     - 现有四家和 amp 不变（R3 快照只多 `all` 里的 gemini）。
     - 真实一轮在用户真实 HOME 跑过：working→idle、回复对、`send` 确认、批准判 blocked 再继续、HUP 停干净。插件用完已卸，空的 `plugins` 目录也删了。
     - 审查后改的插件命令（用 `CORRAL_HELPER`）只在合成测试里跑过，部署后装插件时可以再真跑一轮。
-  - 已打包 `versions/f86d1c2/`，**还没部署**，R7 一起带上。部署要做的：
-    1. 切两个链接到 `versions/f86d1c2/bin/`。
-    2. 重装两份技能：claude、codex 两处是 overwrite，gemini 是新装；dry-run 已核对。
-    3. `corral upgrade --all` 可做可不做：agy 的钩子不依赖共享 helper 先切。
-    4. agy 插件装不装由用户定（`corral integration install --agent agy`，或以后从 paddock Settings 点）。
+  - 已部署（10-14 21:15，用户在普通终端里跑，R7 一起带上）：
+    - 两个链接指向 `versions/f86d1c2/bin/`，两条 `install-skills` 已跑（gemini 位置新装）。
+    - 没跑 `corral upgrade --all`（paddock 在干活；这次不必须）。在跑的 agent 的 pen 和 `~/.corral/.runtime/helper` 仍是 `0e5bd19`。
+    - 主控核对：`integration status` 六家技能都是 same，amp 插件 same，agy 插件 create（没装，`enabled:true`）；两条 install-skills 的 dry-run 全是 same。
+    - agy 插件装不装由用户定（`corral integration install --agent agy`，或以后从 paddock Settings 点）。
   - 退回：切回 `versions/0e5bd19/bin/`。
   - 对 paddock 的影响（兼容新增）写在任务文件完成记录末尾，还没回报 paddock/main。
 
@@ -45,7 +45,7 @@
 
 ## 下一步
 
-1. 部署 R7＋R8（用户在场，见上）。之后经用户同意回报 paddock/main：agy 的接入（见 R8 完成记录「对 paddock 的影响」）。
+1. 经用户同意回报 paddock/main：agy 的接入（见 R8 完成记录「对 paddock 的影响」）。找个所有 agent 都空闲的时候跑 `corral upgrade --all`（可选）。
 2. paddock 接 R6：Settings 里装／卸 amp 插件、New Agent 支持 amp（在 paddock 自己的任务里做）。
 3. 修 macOS 上 pen 继承多余描述符的问题（见「悬着」第一条），单独一件小活，先写任务文件给用户看。
 4. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
