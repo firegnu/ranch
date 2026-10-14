@@ -97,3 +97,26 @@
 技能（10-14）：agy 只从 `~/.gemini/config/skills` 读全局技能（`.agents/skills` 只在项目目录里读）。主控问用户，用户选“两份都装”：`corral install-skills` 和 `ranch dispatch install-skills` 都多装 `~/.gemini/config/skills`。
 
 ## 完成记录
+
+## 真实一轮（10-14，用户在场）
+
+用户：“可以开始，跑完卸掉”。
+
+**环境**：真实 HOME，worktree 编出的 corral（`e5de242`），状态目录 `/tmp/r8agy.Vg4v/real`；测试 agent `ranch/test-agy`（`--label role=test`），工作目录是摸底时已信任的临时目录。
+
+**安装**：`integration install --agent agy --yes` 写了 `~/.gemini/config/plugins/corral/{hooks.json,plugin.json}`，`agy plugin list` 显示 `corral (enabled)`、1 个钩子。
+
+**验收**：
+1. 带 `--prompt` 的第一句：
+   - 头 6 秒左右是 `starting`（agy 在启动），之后 working → idle。
+   - `reply` 是「2 加 3 等于 5。」。
+   - 事件依次为 SessionStart、UserPromptSubmit（提示词是原话，`last_input_source` 是 `send`）、Stop（回复原文）。
+2. `send` 一句要跑命令的话：
+   - `send` 确认送达（`merged_with_draft:false`），之后转 working。
+   - agy 弹批准框时报 `blocked`。屏幕最下面是 `> 1. Yes, run command`…`4. No, cancel`、`↑/↓ Navigate · tab Amend · ctrl+g edit/expand command`。
+   - `keys enter`（选第 1 项，只批准这一次）后转 working，`last_tool` 是 `run_command`；之后 idle，回复是完整原文（多段文字和代码块）。
+3. `stop`：`stopped_by:SIGHUP`，pen、agy 和 agy 起的两个子进程都退了。
+
+**卸载**：
+- `integration uninstall --agent agy --yes` 删了两个文件和 `corral` 目录，`agy plugin list` 显示 “No plugins installed.”。
+- 安装时建出来的空 `plugins` 目录卸载不删（照约定只删 corral 自己那块），主控用 `rmdir` 删掉，恢复成原来没有 `plugins` 的样子。
