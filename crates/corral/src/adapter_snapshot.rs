@@ -38,8 +38,8 @@ fn kinds_quit_steps_and_files_are_unchanged() {
         "/usr/bin/claude",
     ] {
         kinds[kind] = json!({
-            "known": crate::hooks::known(kind),
-            "quit_steps": crate::hooks::quit_steps(kind),
+            "known": crate::agents::known(kind),
+            "quit_steps": crate::agents::quit_steps(kind),
         });
     }
     snapshot(

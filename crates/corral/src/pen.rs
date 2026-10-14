@@ -748,7 +748,7 @@ pub fn worker() -> i32 {
             .iter()
             .map(|v| v.as_str().unwrap_or("").to_owned())
             .collect();
-        let argv = crate::hooks::argv(&raw, &dir, cfg["prompt"].as_str())?;
+        let argv = crate::agents::argv(&raw, &dir, cfg["prompt"].as_str())?;
         let (environment, warnings) =
             crate::environment::build(&name, &instance, &dir.join("events"), &cfg["env"]);
         fs::OpenOptions::new()
@@ -823,10 +823,7 @@ pub fn worker() -> i32 {
         drop(command);
         drop(slave);
         let started = now();
-        let kind = std::path::Path::new(program)
-            .file_name()
-            .unwrap()
-            .to_string_lossy();
+        let kind = crate::agents::kind(program);
         let mut pen = Pen {
             agent: agent.id(),
             master: Handle::new(master),

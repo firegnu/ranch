@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod adapter_snapshot;
 mod after;
+mod agents;
 mod attach;
 mod cli;
 mod environment;

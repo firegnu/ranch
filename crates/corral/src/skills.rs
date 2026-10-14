@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/skills.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/skills.rs` at commit `a31dea2`; ranch has changed it since.
 use crate::{Error, Result};
 use serde_json::{Value, json};
 use std::{
@@ -27,14 +27,16 @@ pub fn run(
     yes: bool,
     project: Option<&str>,
 ) -> Result<Value> {
-    if !["all", "claude", "codex"].contains(&target) {
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    if target != "all"
+        && crate::agents::find(target).is_none_or(|a| a.skill_base(&home, None).is_none())
+    {
         return Err(Error::new(1, "usage", "invalid skill target"));
     }
     let project = project.map(std::path::absolute).transpose()?;
     if project.as_ref().is_some_and(|p| !p.is_dir()) {
         return Err(Error::new(1, "bad_project", "no such project directory"));
     }
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let mut items = Vec::new();
     let mut warnings = Vec::new();
     use std::os::unix::fs::PermissionsExt;
@@ -52,23 +54,13 @@ pub fn run(
         );
     }
 
-    for agent in ["claude", "codex"] {
+    for adapter in crate::agents::all() {
+        let agent = adapter.kind();
         if target != "all" && target != agent {
             continue;
         }
-        let base = if let Some(p) = &project {
-            p.join(if agent == "claude" {
-                ".claude"
-            } else {
-                ".agents"
-            })
-        } else if agent == "claude" {
-            std::env::var_os("CLAUDE_CONFIG_DIR")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".claude"))
-        } else {
-            home.join(".agents")
+        let Some(base) = adapter.skill_base(&home, project.as_deref()) else {
+            continue;
         };
         let path = base.join("skills/corral/SKILL.md");
         let foreign_link = linked(&path, &base);

@@ -28,15 +28,16 @@ pub(super) fn settle(s: &mut Value, at: f64, cwd: &Path) {
 }
 
 pub(super) fn apply_raw(s: &mut Value, e: &Value, cwd: &Path) -> Result<()> {
-    let adapter = e["adapter"].as_str().unwrap_or("");
-    if !matches!(adapter, "pi" | "omp") {
+    let Some(adapter) =
+        crate::agents::find(e["adapter"].as_str().unwrap_or("")).filter(|a| a.raw_events())
+    else {
         return Err(Error::new(
             9,
             "incompatible",
             "unsupported raw event adapter",
         ));
-    }
-    if adapter == "omp" && e["has_ui"] != true {
+    };
+    if adapter.raw_ignored(e) {
         return Ok(());
     }
     let key = e["session_id"].as_str().unwrap_or("");
@@ -79,7 +80,7 @@ pub(super) fn apply_raw(s: &mut Value, e: &Value, cwd: &Path) -> Result<()> {
             r["stop"] = Value::Null;
             return Ok(());
         }
-        "tool_execution_start" if adapter == "omp" && body["toolName"] == "ask" => {
+        "tool_execution_start" if adapter.raw_asks(&body["toolName"]) => {
             mapped["notification_type"] = json!("permission_prompt");
             "Notification"
         }
@@ -142,7 +143,7 @@ pub(super) fn apply_raw(s: &mut Value, e: &Value, cwd: &Path) -> Result<()> {
         }
         "session_shutdown" => {
             r["stop"] = Value::Null;
-            if adapter == "pi" && !body["reason"].is_null() && body["reason"] != "quit" {
+            if !adapter.raw_shutdown_ends(&body["reason"]) {
                 return Ok(());
             }
             "SessionEnd"
