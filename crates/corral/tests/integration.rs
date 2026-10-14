@@ -31,6 +31,7 @@ impl Lab {
                 format!("relative:{}:/usr/bin:/bin", self.path("bin").display()),
             )
             .env_remove("CLAUDE_CONFIG_DIR")
+            .env_remove("XDG_CONFIG_HOME")
             .env_remove("CODEX_SANDBOX");
         c
     }
@@ -100,6 +101,11 @@ fn lists_every_registered_agent_in_order_even_when_none_is_installed() {
             {"kind":"omp","path":null,"version":null,"hooks":"launch","skills":[
                 {"target":"claude","path":format!("{home}/.claude/skills/corral/SKILL.md"),"status":"create"},
                 {"target":"codex","path":format!("{home}/.agents/skills/corral/SKILL.md"),"status":"create"}]},
+            {"kind":"amp","path":null,"version":null,"hooks":"global",
+             "install":{"path":format!("{home}/.config/amp/plugins/corral.ts"),"status":"create","version":null},
+             "skills":[
+                {"target":"claude","path":format!("{home}/.claude/skills/corral/SKILL.md"),"status":"create"},
+                {"target":"codex","path":format!("{home}/.agents/skills/corral/SKILL.md"),"status":"create"}]},
         ]})
     );
 }
@@ -140,6 +146,7 @@ fn finds_programs_and_reads_versions_without_hanging() {
             (json!("codex"), json!(format!("{bin}/codex")), Value::Null),
             (json!("pi"), json!(format!("{bin}/pi")), Value::Null),
             (json!("omp"), json!(format!("{bin}/omp")), Value::Null),
+            (json!("amp"), Value::Null, Value::Null),
         ]
     );
     // The hanging program and the child it left behind were both killed.
@@ -208,4 +215,194 @@ fn rejects_unknown_integration_commands() {
         let v: Value = serde_json::from_slice(&o.stdout).unwrap();
         assert_eq!(v["error"], "usage", "{args:?}");
     }
+}
+
+const PLUGIN: &str = include_str!("../resources/amp_plugin.ts");
+
+impl Lab {
+    fn json(&self, args: &[&str]) -> (Option<i32>, Value) {
+        let o = self
+            .cmd(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        (o.status.code(), serde_json::from_slice(&o.stdout).unwrap())
+    }
+    fn amp(&self) -> Value {
+        self.status()["agents"][4].clone()
+    }
+}
+
+#[test]
+fn installs_and_removes_only_the_amp_plugin() {
+    let lab = Lab::new();
+    let plugin = lab.path(".config/amp/plugins/corral.ts");
+    // The user's own plugin and settings are never touched.
+    lab.write(
+        ".config/amp/plugins/mine.ts",
+        "export default function () {}\n",
+    );
+    lab.write(".config/amp/settings.json", "{}\n");
+    let untouched = lab.files();
+
+    let (code, v) = lab.json(&["integration", "install", "--agent", "amp", "--dry-run"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        v,
+        json!({"ok":true,"action":"install","agent":"amp","path":plugin,"status":"create","dry_run":true,"written":false,"warnings":[]})
+    );
+    let (code, v) = lab.json(&["integration", "install", "--agent", "amp"]);
+    assert_eq!(
+        (code, &v["error"]),
+        (Some(1), &json!("confirmation_required"))
+    );
+    assert_eq!(lab.files(), untouched, "wrote without confirmation");
+
+    let (code, v) = lab.json(&["integration", "install", "--agent", "amp", "--yes"]);
+    assert_eq!(
+        (code, &v["status"], &v["written"]),
+        (Some(0), &json!("create"), &json!(true))
+    );
+    assert_eq!(fs::read_to_string(&plugin).unwrap(), PLUGIN);
+    let mut expected = untouched.clone();
+    expected.insert(plugin.clone(), PLUGIN.as_bytes().to_vec());
+    assert_eq!(lab.files(), expected, "wrote more than the plugin");
+    assert_eq!(
+        lab.amp()["install"],
+        json!({"path":plugin,"status":"same","version":1})
+    );
+    let (_, v) = lab.json(&["integration", "install", "--agent", "amp", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("same"), &json!(false))
+    );
+
+    // An older or edited copy of corral's plugin is updated in place.
+    fs::write(&plugin, "const CORRAL_INTEGRATION = 0;\n").unwrap();
+    assert_eq!(
+        lab.amp()["install"],
+        json!({"path":plugin,"status":"overwrite","version":0})
+    );
+    let (_, v) = lab.json(&["integration", "install", "--agent", "amp", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("overwrite"), &json!(true))
+    );
+    assert_eq!(fs::read_to_string(&plugin).unwrap(), PLUGIN);
+
+    let (_, v) = lab.json(&["integration", "uninstall", "--agent", "amp", "--dry-run"]);
+    assert_eq!(
+        (&v["action"], &v["status"], &v["written"]),
+        (&json!("uninstall"), &json!("remove"), &json!(false))
+    );
+    let (code, v) = lab.json(&["integration", "uninstall", "--agent", "amp"]);
+    assert_eq!(
+        (code, &v["error"]),
+        (Some(1), &json!("confirmation_required"))
+    );
+    let (_, v) = lab.json(&["integration", "uninstall", "--agent", "amp", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("remove"), &json!(true))
+    );
+    assert_eq!(
+        lab.files(),
+        untouched,
+        "uninstall left something behind or removed too much"
+    );
+    let (_, v) = lab.json(&["integration", "uninstall", "--agent", "amp", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("absent"), &json!(false))
+    );
+    assert_eq!(lab.amp()["install"]["status"], "create");
+}
+
+#[test]
+fn leaves_plugins_corral_does_not_own_in_place() {
+    let lab = Lab::new();
+    let plugin = lab.path(".config/amp/plugins/corral.ts");
+    // A file of the same name without corral's version mark.
+    lab.write(
+        ".config/amp/plugins/corral.ts",
+        "export default function () {}\n",
+    );
+    let before = lab.files();
+    for args in [
+        &["integration", "install", "--agent", "amp", "--yes"][..],
+        &["integration", "uninstall", "--agent", "amp", "--yes"],
+    ] {
+        let (code, v) = lab.json(args);
+        assert_eq!(
+            (code, &v["status"], &v["written"]),
+            (Some(0), &json!("foreign"), &json!(false)),
+            "{args:?}"
+        );
+        assert_eq!(v["warnings"].as_array().unwrap().len(), 1);
+    }
+    assert_eq!(lab.files(), before);
+    assert_eq!(
+        lab.amp()["install"],
+        json!({"path":plugin,"status":"foreign","version":null})
+    );
+
+    // A plugin directory that is a link belongs to someone else, even when it is empty.
+    fs::remove_dir_all(lab.path(".config/amp/plugins")).unwrap();
+    fs::create_dir_all(lab.path("dotfiles/plugins")).unwrap();
+    symlink(
+        lab.path("dotfiles/plugins"),
+        lab.path(".config/amp/plugins"),
+    )
+    .unwrap();
+    let before = lab.files();
+    let (_, v) = lab.json(&["integration", "install", "--agent", "amp", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("foreign"), &json!(false))
+    );
+    assert_eq!(lab.files(), before);
+
+    // So is a directory where the file should be.
+    fs::remove_file(lab.path(".config/amp/plugins")).unwrap();
+    fs::create_dir_all(&plugin).unwrap();
+    assert_eq!(lab.amp()["install"]["status"], "foreign");
+}
+
+#[test]
+fn follows_xdg_config_home_when_it_is_absolute() {
+    let lab = Lab::new();
+    let xdg = lab.path("xdg");
+    let o = lab
+        .cmd(&["integration", "install", "--agent", "amp", "--yes"])
+        .env("XDG_CONFIG_HOME", &xdg)
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["path"], json!(xdg.join("amp/plugins/corral.ts")));
+    assert!(xdg.join("amp/plugins/corral.ts").is_file());
+    let o = lab
+        .cmd(&["integration", "install", "--agent", "amp", "--dry-run"])
+        .env("XDG_CONFIG_HOME", "relative")
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["path"], json!(lab.path(".config/amp/plugins/corral.ts")));
+}
+
+#[test]
+fn install_is_only_for_agents_that_need_it() {
+    let lab = Lab::new();
+    let before = lab.files();
+    for args in [
+        &["integration", "install", "--agent", "claude", "--yes"][..],
+        &["integration", "uninstall", "--agent", "omp", "--yes"],
+        &["integration", "install", "--agent", "agy", "--yes"],
+        &["integration", "install", "--yes"],
+        &["integration", "install", "amp", "--yes"],
+        &["integration", "install", "--agent", "amp", "--json"],
+    ] {
+        let (code, v) = lab.json(args);
+        assert_eq!((code, &v["error"]), (Some(1), &json!("usage")), "{args:?}");
+    }
+    assert_eq!(lab.files(), before);
 }

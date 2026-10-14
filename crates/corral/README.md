@@ -52,8 +52,12 @@ explicitly. The command never installs skills on ordinary startup.
 
 `corral integration status` lists every agent kind the adapter registry supports, in order, with
 the program found on PATH, its `--version` line (3 s limit, killed with its process group after),
-how hooks are attached (`launch` for all four today) and the status of the corral skill in each
-place that agent reads. It is read-only; the output format is in `docs/CONTRACT.md` of the repository.
+how hooks are attached and the status of the corral skill in each place that agent reads. It is
+read-only. Hooks are `launch` (passed when corral starts the agent) except for amp, which cannot
+load a plugin for one run: its hooks are `global`, a plugin that
+`corral integration install|uninstall --agent amp` writes to or removes from
+`~/.config/amp/plugins/corral.ts` after the user agrees, and that does nothing unless corral
+started that amp. The output formats are in `docs/CONTRACT.md` of the repository.
 
 ## Source
 
@@ -61,6 +65,6 @@ Moved from Saddle `crates/corral-core` at commit `a31dea2` (unchanged since `964
 Each Rust file names its original path. `resources/` and `tests/collectors.mjs` were
 byte-for-byte copies without a header, because the resources are compiled into the
 program or installed into user directories. Files that ranch has changed since say so in
-their header; `resources/AGENT_USAGE.md` and `resources/SKILL.md` gained pause and resume. Saddle's `tests/product.rs` was not moved:
+their header; `resources/AGENT_USAGE.md` and `resources/SKILL.md` gained pause and resume. `resources/amp_plugin.ts` and `src/agents/amp.rs` are new in ranch (R6). Saddle's `tests/product.rs` was not moved:
 it tests the Saddle terminal host together with corral. The two design documents in
 the repository's `docs/` come from Saddle `docs/` at the same commit.

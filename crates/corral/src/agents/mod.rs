@@ -8,18 +8,33 @@
 //! `state::FILES` (names and cleanup depend on it; the tests check this).
 //!
 //! Hooks only apply to the agent corral starts: they are passed as start-up arguments or
-//! loaded from the agent's state directory, never written into the agent's global config.
+//! loaded from the agent's state directory. An agent that cannot load hooks for one run declares
+//! a `Global` file instead, which `corral integration install` writes only with the user's
+//! consent; that file must do nothing unless `CORRAL_KIND` names its agent.
 use crate::Result;
 use serde_json::{Value, json};
-use std::{borrow::Cow, fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt, path::Path};
+use std::{
+    borrow::Cow,
+    fs::OpenOptions,
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+};
 
+mod amp;
 mod claude;
 mod codex;
 mod omp;
 mod pi;
 
 /// Registration order is the order `integration status` lists agents in.
-static ADAPTERS: &[&dyn Adapter] = &[&claude::Claude, &codex::Codex, &pi::Pi, &omp::Omp];
+static ADAPTERS: &[&dyn Adapter] = &[
+    &claude::Claude,
+    &codex::Codex,
+    &pi::Pi,
+    &omp::Omp,
+    &amp::Amp,
+];
 
 pub(crate) trait Adapter: Sync {
     /// The program's file name that selects this adapter; also recorded as the agent's `kind`.
@@ -31,6 +46,14 @@ pub(crate) trait Adapter: Sync {
     /// Which of corral's skill places (`skills::TARGETS`) this agent reads skills from.
     fn skill_targets(&self) -> &'static [&'static str] {
         &[]
+    }
+    /// Whether `corral start --prompt` can pass a first prompt on the command line.
+    fn prompt(&self) -> bool {
+        true
+    }
+    /// The file this agent needs in its global config to report to corral, if any.
+    fn global(&self) -> Option<Global> {
+        None
     }
     /// The agent's hook writes version 2 raw events (`"adapter": kind`) for `events::raw`.
     fn raw_events(&self) -> bool {
@@ -48,6 +71,18 @@ pub(crate) trait Adapter: Sync {
     fn raw_shutdown_ends(&self, _reason: &Value) -> bool {
         true
     }
+}
+
+/// A hook file installed into an agent's own config directory, because the agent cannot load one
+/// for a single run.
+pub(crate) struct Global {
+    /// The agent's config directory, given HOME. corral leaves the file alone if anything from the
+    /// file up to this directory is a symbolic link.
+    pub dir: fn(&Path) -> PathBuf,
+    /// The file's path inside `dir`.
+    pub file: &'static str,
+    /// What corral writes; it names its version as `CORRAL_INTEGRATION = <n>`.
+    pub body: &'static str,
 }
 
 /// What an adapter needs to build its hook arguments.
@@ -89,6 +124,17 @@ pub fn kind(program: &str) -> Cow<'_, str> {
 }
 pub fn known(kind: &str) -> bool {
     find(kind).is_some()
+}
+/// Extra environment for an agent whose hooks are a global file: they act only when
+/// `CORRAL_KIND` names their agent, and report the agent's directory as `CORRAL_CWD`.
+pub fn env(program: &str, cwd: &str) -> Vec<(String, String)> {
+    match find(&kind(program)).filter(|a| a.global().is_some()) {
+        Some(a) => vec![
+            ("CORRAL_KIND".into(), a.kind().into()),
+            ("CORRAL_CWD".into(), cwd.into()),
+        ],
+        None => vec![],
+    }
 }
 pub fn quit_steps(kind: &str) -> Value {
     match find(kind) {

@@ -749,8 +749,12 @@ pub fn worker() -> i32 {
             .map(|v| v.as_str().unwrap_or("").to_owned())
             .collect();
         let argv = crate::agents::argv(&raw, &dir, cfg["prompt"].as_str())?;
-        let (environment, warnings) =
+        let (mut environment, warnings) =
             crate::environment::build(&name, &instance, &dir.join("events"), &cfg["env"]);
+        environment.extend(crate::agents::env(
+            &raw[0],
+            cfg["cwd"].as_str().unwrap_or(""),
+        ));
         fs::OpenOptions::new()
             .write(true)
             .create(true)
