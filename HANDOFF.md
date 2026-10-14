@@ -65,5 +65,5 @@
   - Antigravity IDE 会不会加载插件，没核对。
 - R8 摸底留在用户 `~/.gemini` 里、还没清的东西，等用户定：
   - agy 信任列表里的 `/private/tmp/r8agy.Vg4v/work`（目录已删）；
-  - `~/.gemini/antigravity-cli/brain/` 下的三次测试对话。
+  - `~/.gemini/antigravity-cli/brain/` 下的两份测试对话：摸底的 `dc7a4646-…`、真实一轮的 `42d1db0b-…`。
 - paddock 的 `docs/DESIGN.md` §3“Saddle 保底”和决策表还写着“只保证 Saddle 和运行时对得上、不兼容时写需求给 Saddle 适配”；ranch 这边已按用户 10-07“保底规矩放松吧，Saddle 不用再写影响了”改了 AGENTS.md 和 DESIGN §2，paddock 那边要不要跟着改，在 paddock 自己的任务里做。

@@ -194,7 +194,7 @@
 - 不加 `state_source`（用户 10-14）。
 - **摸底留在用户 `~/.gemini` 里的东西，没清，等用户定**：
   - agy 信任列表里的测试目录 `/private/tmp/r8agy.Vg4v/work`；
-  - 测试对话记录 `~/.gemini/antigravity-cli/brain/dc7a4646-…`，以及真实一轮的两次对话记录。
+  - 测试对话记录：摸底的 `~/.gemini/antigravity-cli/brain/dc7a4646-…`、真实一轮的 `42d1db0b-…`（两句话在同一个对话里）。
 
 ### 对 paddock 的影响（兼容新增，paddock 在自己的任务里接）
 - `integration status` 多一项 agy：`hooks:"global"`，`install` 多一个 `enabled` 字段（只有 agy 有）。`install.path` 是目录。
