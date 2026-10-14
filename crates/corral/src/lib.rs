@@ -9,6 +9,7 @@ mod environment;
 mod events;
 mod freeze;
 mod hooks;
+mod integration;
 mod pen;
 mod skills;
 mod state;

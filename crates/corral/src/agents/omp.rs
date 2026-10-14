@@ -19,6 +19,10 @@ impl Adapter for Omp {
     fn quit_steps(&self) -> Value {
         json!([{"signal":"HUP","wait":5},{"signal":"TERM","wait":3}])
     }
+    /// omp reads Claude Code's and the Agent Skills locations, among others.
+    fn skill_targets(&self) -> &'static [&'static str] {
+        &["claude", "codex"]
+    }
     fn raw_events(&self) -> bool {
         true
     }

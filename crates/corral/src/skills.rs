@@ -7,6 +7,21 @@ use std::{
     path::{Path, PathBuf},
 };
 const BODY: &str = include_str!("../resources/SKILL.md");
+/// The places corral installs its skill, in order, named by their `install-skills --target`
+/// value. `codex` is `~/.agents`, the Agent Skills location Codex, pi and omp all read; adapters
+/// say which of these their agent reads.
+pub(crate) const TARGETS: [&str; 2] = ["claude", "codex"];
+fn base(target: &str, home: &Path, project: Option<&Path>) -> PathBuf {
+    match (target, project) {
+        ("claude", Some(p)) => p.join(".claude"),
+        ("claude", None) => std::env::var_os("CLAUDE_CONFIG_DIR")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".claude")),
+        (_, Some(p)) => p.join(".agents"),
+        (_, None) => home.join(".agents"),
+    }
+}
 fn linked(path: &Path, base: &Path) -> bool {
     let mut p = Some(path);
     while let Some(q) = p {
@@ -20,6 +35,44 @@ fn linked(path: &Path, base: &Path) -> bool {
     }
     false
 }
+/// The skill file for `target` and what installing (or removing) it would do there: `create`,
+/// `same` or `overwrite` (`absent` or `remove` when removing), or `foreign` for a file corral does
+/// not own and leaves in place.
+pub(crate) fn plan(
+    target: &str,
+    home: &Path,
+    project: Option<&Path>,
+    remove: bool,
+) -> Result<(PathBuf, &'static str)> {
+    let base = base(target, home, project);
+    let path = base.join("skills/corral/SKILL.md");
+    let foreign_link = linked(&path, &base);
+    let current = if foreign_link {
+        None
+    } else {
+        match fs::read_to_string(&path) {
+            Ok(s) => Some(s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        }
+    };
+    let status = if foreign_link {
+        "foreign"
+    } else if remove {
+        match current.as_deref() {
+            None => "absent",
+            Some(s) if s.contains("<!-- corral-skill:") => "remove",
+            Some(_) => "foreign",
+        }
+    } else {
+        match current.as_deref() {
+            None => "create",
+            Some(s) if s == BODY => "same",
+            Some(_) => "overwrite",
+        }
+    };
+    Ok((path, status))
+}
 pub fn run(
     target: &str,
     remove: bool,
@@ -27,16 +80,14 @@ pub fn run(
     yes: bool,
     project: Option<&str>,
 ) -> Result<Value> {
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-    if target != "all"
-        && crate::agents::find(target).is_none_or(|a| a.skill_base(&home, None).is_none())
-    {
+    if target != "all" && !TARGETS.contains(&target) {
         return Err(Error::new(1, "usage", "invalid skill target"));
     }
     let project = project.map(std::path::absolute).transpose()?;
     if project.as_ref().is_some_and(|p| !p.is_dir()) {
         return Err(Error::new(1, "bad_project", "no such project directory"));
     }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let mut items = Vec::new();
     let mut warnings = Vec::new();
     use std::os::unix::fs::PermissionsExt;
@@ -54,40 +105,11 @@ pub fn run(
         );
     }
 
-    for adapter in crate::agents::all() {
-        let agent = adapter.kind();
+    for agent in TARGETS {
         if target != "all" && target != agent {
             continue;
         }
-        let Some(base) = adapter.skill_base(&home, project.as_deref()) else {
-            continue;
-        };
-        let path = base.join("skills/corral/SKILL.md");
-        let foreign_link = linked(&path, &base);
-        let current = if foreign_link {
-            None
-        } else {
-            match fs::read_to_string(&path) {
-                Ok(s) => Some(s),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => return Err(e.into()),
-            }
-        };
-        let status = if foreign_link {
-            "foreign"
-        } else if remove {
-            match current.as_deref() {
-                None => "absent",
-                Some(s) if s.contains("<!-- corral-skill:") => "remove",
-                Some(_) => "foreign",
-            }
-        } else {
-            match current.as_deref() {
-                None => "create",
-                Some(s) if s == BODY => "same",
-                Some(_) => "overwrite",
-            }
-        };
+        let (path, status) = plan(agent, &home, project.as_deref(), remove)?;
         if status == "foreign" {
             warnings.push(format!(
                 "{} is not an owned regular skill file; left in place",

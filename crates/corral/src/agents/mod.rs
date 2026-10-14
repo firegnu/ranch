@@ -11,20 +11,14 @@
 //! loaded from the agent's state directory, never written into the agent's global config.
 use crate::Result;
 use serde_json::{Value, json};
-use std::{
-    borrow::Cow,
-    fs::OpenOptions,
-    io::Write,
-    os::unix::fs::OpenOptionsExt,
-    path::{Path, PathBuf},
-};
+use std::{borrow::Cow, fs::OpenOptions, io::Write, os::unix::fs::OpenOptionsExt, path::Path};
 
 mod claude;
 mod codex;
 mod omp;
 mod pi;
 
-/// Registration order is the order `install-skills` lists skill targets in.
+/// Registration order is the order `integration status` lists agents in.
 static ADAPTERS: &[&dyn Adapter] = &[&claude::Claude, &codex::Codex, &pi::Pi, &omp::Omp];
 
 pub(crate) trait Adapter: Sync {
@@ -34,9 +28,9 @@ pub(crate) trait Adapter: Sync {
     fn hook_args(&self, launch: &Launch) -> Result<Vec<String>>;
     /// Steps the pen follows to stop the agent (it always ends with SIGKILL).
     fn quit_steps(&self) -> Value;
-    /// Where this agent reads skills from, for `install-skills --target <kind>`.
-    fn skill_base(&self, _home: &Path, _project: Option<&Path>) -> Option<PathBuf> {
-        None
+    /// Which of corral's skill places (`skills::TARGETS`) this agent reads skills from.
+    fn skill_targets(&self) -> &'static [&'static str] {
+        &[]
     }
     /// The agent's hook writes version 2 raw events (`"adapter": kind`) for `events::raw`.
     fn raw_events(&self) -> bool {
@@ -139,6 +133,13 @@ mod tests {
         for a in all() {
             assert!(!kinds.contains(&a.kind()), "{} registered twice", a.kind());
             kinds.push(a.kind());
+            for t in a.skill_targets() {
+                assert!(
+                    crate::skills::TARGETS.contains(t),
+                    "{}: unknown skill target {t}",
+                    a.kind()
+                );
+            }
             a.hook_args(&launch).unwrap();
         }
         for entry in std::fs::read_dir(dir.path()).unwrap() {

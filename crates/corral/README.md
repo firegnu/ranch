@@ -50,6 +50,11 @@ are reported as foreign and left untouched, so a source-repository link cannot
 make installation write into that repository. Deployment must handle these links
 explicitly. The command never installs skills on ordinary startup.
 
+`corral integration status` lists every agent kind the adapter registry supports, in order, with
+the program found on PATH, its `--version` line (3 s limit, killed with its process group after),
+how hooks are attached (`launch` for all four today) and the status of the corral skill in each
+place that agent reads. It is read-only; the output format is in `docs/CONTRACT.md` of the repository.
+
 ## Source
 
 Moved from Saddle `crates/corral-core` at commit `a31dea2` (unchanged since `9648ff0`).

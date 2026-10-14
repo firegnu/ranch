@@ -8,5 +8,6 @@ that must exist once per machine and user.
   `ranch dispatch install-skills` installs the corral-dispatch skill.
 - `tools/package`: builds an immutable version directory with `bin/corral` and `bin/ranch`.
 
-Front ends use only the installed commands and their JSON output. Design and rules:
+Front ends use only the installed commands and their JSON output. Public additions ranch makes to
+the corral contract: `docs/CONTRACT.md`. Design and rules:
 `docs/DESIGN.md`, `AGENTS.md` (in Chinese).

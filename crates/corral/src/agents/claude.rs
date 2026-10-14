@@ -3,7 +3,6 @@
 use super::{Adapter, Launch};
 use crate::Result;
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
 
 pub struct Claude;
 impl Adapter for Claude {
@@ -39,13 +38,7 @@ impl Adapter for Claude {
     fn quit_steps(&self) -> Value {
         json!([{"signal":"HUP","wait":5},{"signal":"TERM","wait":3}])
     }
-    fn skill_base(&self, home: &Path, project: Option<&Path>) -> Option<PathBuf> {
-        Some(match project {
-            Some(p) => p.join(".claude"),
-            None => std::env::var_os("CLAUDE_CONFIG_DIR")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".claude")),
-        })
+    fn skill_targets(&self) -> &'static [&'static str] {
+        &["claude"]
     }
 }
