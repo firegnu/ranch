@@ -369,6 +369,31 @@ fn amp_starts_bare_and_reads_the_events_its_plugin_writes() {
         state(&[json!({"t":5.0,"ev":"PostToolUse","tool_name":"Bash"})]).0,
         "working"
     );
+    // amp shows a pending approval only in the terminal title; the fake echoes it back.
+    let title = |t: &str| {
+        let keys = [format!("text:\x1b]0;{t}\x07"), "enter".into()];
+        let o = lab
+            .cmd()
+            .args(["keys", "lab/amp"])
+            .args(&keys)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+        let end = Instant::now() + Duration::from_secs(5);
+        loop {
+            let s = lab.result(lab.cmd().args(["status", "lab/amp"]).output().unwrap());
+            if s["out"]["title"] == t {
+                return s["out"]["state"].clone();
+            }
+            assert!(Instant::now() < end, "title never became {t}: {s}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    assert_eq!(
+        title("◆ Input needed: Create a file - amp - /tmp"),
+        "blocked"
+    );
+    assert_eq!(title("Create a file - amp - /tmp"), "working");
     // A subagent's thread never became the main session, so it changes nothing.
     assert_eq!(
         state(&[json!({"t":5.5,"ev":"Stop","session_id":"T-sub","last_assistant_message":"sub"})])
@@ -381,6 +406,9 @@ fn amp_starts_bare_and_reads_the_events_its_plugin_writes() {
     );
     let reply = lab.result(lab.cmd().args(["reply", "lab/amp"]).output().unwrap());
     assert_eq!(reply["out"]["text"], "done here", "{reply}");
+    // A turn whose start amp did not report still shows its approval in the title.
+    assert_eq!(title("◆ Input needed: Next - amp - /tmp"), "blocked");
+    assert_eq!(title("Next - amp - /tmp"), "idle");
     assert_eq!(
         state(&[json!({"t":7.0,"ev":"UserPromptSubmit","prompt":"again"})]).0,
         "working"

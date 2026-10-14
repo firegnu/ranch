@@ -25,6 +25,11 @@ impl Adapter for Amp {
     fn prompt(&self) -> bool {
         false
     }
+    /// amp's plugin API keeps saying `running` while a command waits for approval, but amp puts
+    /// `◆ Input needed: <thread title>` in the terminal title.
+    fn title_blocked(&self, title: &str) -> bool {
+        title.starts_with("◆ Input needed")
+    }
     /// A system plugin: `$XDG_CONFIG_HOME/amp/plugins`, by default under `~/.config`.
     fn global(&self) -> Option<Global> {
         Some(Global {

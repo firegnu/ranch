@@ -19,6 +19,9 @@ export default function (amp: any) {
       // Recording must never affect amp.
     }
   };
+  // amp has no thread until the first prompt, but corral sends only to an agent that is ready.
+  // The first top-level thread then takes over from this placeholder session.
+  write("SessionStart", "amp-startup", { source: "startup" });
   // Only top-level threads are the agent's; a subagent's thread has a parent.
   const threads = new Map<string, Promise<boolean>>();
   const watch = (ctx: any): Promise<boolean> => {
@@ -29,39 +32,45 @@ export default function (amp: any) {
         .then(() => ctx.thread.parentThreadID())
         .then((parent: unknown) => parent === null, () => true)
         .then((isTop: boolean) => {
-          if (isTop) {
-            write("SessionStart", id, { source: "startup" });
-            let asking = false;
-            ctx.thread.state.subscribe((state: string) => {
-              if (state === "awaiting-approval" && !asking) {
-                asking = true;
-                write("Notification", id, { notification_type: "permission_prompt" });
-              } else if (state !== "awaiting-approval" && asking) {
-                asking = false;
-                if (state === "running") write("PostToolUse", id);
-              }
-            });
-          }
+          if (isTop) write("SessionStart", id, { source: "startup" });
           return isTop;
         });
       threads.set(id, top);
     }
     return top;
   };
+  // amp skips agent.start for a turn that begins while it is still loading plugins. Such a turn
+  // still starts a thread, so its prompt is read from the thread, or else recorded at its end.
+  // Each user message is recorded once.
+  const seen = new Set<string>();
+  const submitted = (thread: string, id: unknown, prompt: unknown) => {
+    const key = `${thread}/${String(id)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    write("UserPromptSubmit", thread, { prompt });
+  };
+  const text = (m: any): string =>
+    Array.isArray(m?.content)
+      ? m.content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n")
+      : "";
   const reply = (messages: any[]): string | undefined => {
     for (const m of [...(messages ?? [])].reverse()) {
-      if (m?.role !== "assistant" || !Array.isArray(m.content)) continue;
-      const text = m.content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n");
-      if (text) return text;
+      if (m?.role === "assistant" && text(m)) return text(m);
     }
     return undefined;
   };
 
   amp.on("session.start", async (_event: any, ctx: any) => {
-    await watch(ctx);
+    if (!(await watch(ctx))) return;
+    try {
+      const last = (await ctx.thread.messages({ from: "end", limit: 1 })).at(-1);
+      if (last?.role === "user" && text(last)) submitted(ctx.thread.id, last.id, text(last));
+    } catch {
+      // agent.start or agent.end records it.
+    }
   });
   amp.on("agent.start", async (event: any, ctx: any) => {
-    if (await watch(ctx)) write("UserPromptSubmit", ctx.thread.id, { prompt: event.message });
+    if (await watch(ctx)) submitted(ctx.thread.id, event.id, event.message);
     return {};
   });
   amp.on("tool.result", async (event: any, ctx: any) => {
@@ -69,6 +78,7 @@ export default function (amp: any) {
   });
   amp.on("agent.end", async (event: any, ctx: any) => {
     if (!(await watch(ctx))) return;
+    submitted(ctx.thread.id, event.id, event.message);
     if (event.status === "done") {
       write("Stop", ctx.thread.id, { last_assistant_message: reply(event.messages) });
     } else {

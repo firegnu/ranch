@@ -141,6 +141,13 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             } else {
                 snap["state"].clone()
             };
+        // An agent whose hooks cannot report a pending approval may show it in the title.
+        if matches!(public["state"].as_str(), Some("working" | "idle"))
+            && agents::find(m["kind"].as_str().unwrap_or(""))
+                .is_some_and(|a| a.title_blocked(st["title"].as_str().unwrap_or("")))
+        {
+            public["state"] = json!("blocked");
+        }
         if public["state"] == snap["state"] {
             public["state_started"] = snap["state_started"].clone();
         }

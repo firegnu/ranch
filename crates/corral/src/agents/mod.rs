@@ -51,6 +51,11 @@ pub(crate) trait Adapter: Sync {
     fn prompt(&self) -> bool {
         true
     }
+    /// Whether the terminal title says the agent waits for the user while its hooks say it works or
+    /// is idle; for agents whose hooks cannot report that.
+    fn title_blocked(&self, _title: &str) -> bool {
+        false
+    }
     /// The file this agent needs in its global config to report to corral, if any.
     fn global(&self) -> Option<Global> {
         None
