@@ -11,7 +11,11 @@
 //! loaded from the agent's state directory. An agent that cannot load hooks for one run declares
 //! a `Global` file instead, which `corral integration install` writes only with the user's
 //! consent; that file must do nothing unless `CORRAL_KIND` names its agent.
+//!
+//! An agent whose hooks cannot report that it waits for the user can say how its terminal shows
+//! it: by its title, or by screen rules, for which its pen keeps a screen (`screen.rs`).
 use crate::Result;
+use crate::screen::Rule;
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -55,6 +59,11 @@ pub(crate) trait Adapter: Sync {
     /// is idle; for agents whose hooks cannot report that.
     fn title_blocked(&self, _title: &str) -> bool {
         false
+    }
+    /// What on the screen shows the agent waits for the user, for agents whose hooks cannot report
+    /// that. The pen keeps a screen only for an agent with rules.
+    fn screen_rules(&self) -> &'static [Rule] {
+        &[]
     }
     /// The file this agent needs in its global config to report to corral, if any.
     fn global(&self) -> Option<Global> {
@@ -126,6 +135,17 @@ pub fn kind(program: &str) -> Cow<'_, str> {
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
+}
+/// Whether the pen keeps a screen for this kind.
+pub fn reads_screen(kind: &str) -> bool {
+    find(kind).is_some_and(|a| !a.screen_rules().is_empty())
+}
+/// Whether the agent waits for the user although its hooks say it works or is idle (`state`),
+/// going by its terminal title and, from pens that keep one, its screen.
+pub fn waits_on_terminal(a: &dyn Adapter, state: &str, title: &str, screen: Option<&str>) -> bool {
+    matches!(state, "working" | "idle")
+        && (a.title_blocked(title)
+            || screen.is_some_and(|s| crate::screen::matches(a.screen_rules(), s)))
 }
 pub fn known(kind: &str) -> bool {
     find(kind).is_some()
@@ -203,5 +223,53 @@ mod tests {
                 "{name} is missing from state::FILES"
             );
         }
+    }
+
+    #[test]
+    fn the_terminal_turns_working_or_idle_into_blocked_only_where_the_adapter_says_so() {
+        struct Screened;
+        impl Adapter for Screened {
+            fn kind(&self) -> &'static str {
+                "screened"
+            }
+            fn hook_args(&self, _launch: &Launch) -> Result<Vec<String>> {
+                Ok(vec![])
+            }
+            fn quit_steps(&self) -> Value {
+                json!([])
+            }
+            fn screen_rules(&self) -> &'static [Rule] {
+                &[Rule {
+                    rows: 1,
+                    all: &["Allow?"],
+                    none: &[],
+                }]
+            }
+        }
+        let asking = Some("work\nAllow?");
+        for state in ["working", "idle"] {
+            assert!(waits_on_terminal(&Screened, state, "", asking));
+            assert!(!waits_on_terminal(
+                &Screened,
+                state,
+                "",
+                Some("Allow?\nwork")
+            ));
+            // A pen without a screen.
+            assert!(!waits_on_terminal(&Screened, state, "", None));
+        }
+        for state in ["blocked", "starting", "unknown", "stopped"] {
+            assert!(!waits_on_terminal(&Screened, state, "", asking));
+        }
+        // The agents corral knows read no screen; only amp reads its title.
+        for a in all() {
+            assert!(!reads_screen(a.kind()), "{}", a.kind());
+            assert!(!waits_on_terminal(a, "working", "", asking), "{}", a.kind());
+            assert_eq!(
+                waits_on_terminal(a, "working", "◆ Input needed: x", None),
+                a.kind() == "amp"
+            );
+        }
+        assert!(!reads_screen("unknown-program"));
     }
 }

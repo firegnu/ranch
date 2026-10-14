@@ -11,6 +11,7 @@ mod freeze;
 mod hooks;
 mod integration;
 mod pen;
+mod screen;
 mod skills;
 mod state;
 mod terminal;

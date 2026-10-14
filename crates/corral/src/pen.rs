@@ -200,6 +200,9 @@ struct Pen {
     frozen: Vec<i32>,
     #[serde(default)]
     resumed_at: Option<f64>,
+    /// Only for an agent with screen rules; snapshots leave it out and it is rebuilt from `ring`.
+    #[serde(skip)]
+    screen: Option<crate::screen::Screen>,
 }
 impl Drop for Pen {
     fn drop(&mut self) {
@@ -265,6 +268,9 @@ impl Pen {
         status["capabilities"] =
             json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1});
         status["upgrade"] = self.upgrade.public();
+        if let Some(s) = &self.screen {
+            status["screen"] = json!(s.text());
+        }
         status
     }
     fn resize(&mut self, rows: u16, cols: u16, redraw: bool) {
@@ -281,6 +287,9 @@ impl Pen {
         };
         unsafe {
             libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ as _, &s);
+        }
+        if let Some(screen) = &mut self.screen {
+            screen.resize((s.ws_row, s.ws_col));
         }
         if redraw {
             self.resize_at = Some(now() + 0.15);
@@ -533,6 +542,14 @@ impl Pen {
         }
     }
     fn run(&mut self) -> Result<()> {
+        if self.screen.is_none()
+            && crate::agents::reads_screen(self.metadata["kind"].as_str().unwrap_or(""))
+        {
+            let (a, b) = self.ring.as_slices();
+            let mut screen = crate::screen::Screen::new(self.size, a);
+            screen.feed(b);
+            self.screen = Some(screen);
+        }
         loop {
             if let Some(target) = self.pending_upgrade.take() {
                 self.handoff(target);
@@ -620,6 +637,9 @@ impl Pen {
                             Ok(n) => {
                                 self.last_output = Some(now());
                                 self.term.feed(&data[..n]);
+                                if let Some(s) = &mut self.screen {
+                                    s.feed(&data[..n]);
+                                }
                                 self.ring.extend(&data[..n]);
                                 if self.ring.len() > 512 * 1024 {
                                     self.ring.drain(..self.ring.len() - 512 * 1024);
@@ -865,6 +885,7 @@ pub fn worker() -> i32 {
             paused: None,
             frozen: Vec::new(),
             resumed_at: None,
+            screen: None,
         };
         if let Some(prompt) = cfg["prompt"].as_str() {
             pen.recent
