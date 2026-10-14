@@ -62,3 +62,22 @@
 2. **herdr 源码**：从 GitHub 下 v0.9.4 源码到临时目录只读，参考读屏规则的思路。主控建议可以。
 
 ## 完成记录
+
+2026-10-14，ranch 主控。
+
+- 做了什么：写了调研报告 `docs/调研/R5-agy与amp接入、全局安装和读屏兜底.md`。agy、amp 各自能拿到什么、缺什么；全局安装（位置、命令、status 字段）和读屏兜底（放哪、库、规则、钩子优先）的方案；分步；要用户定的五件事。
+- 验证了什么：都在临时 HOME（`/tmp/r5agy`、`/tmp/r5amp.*`）里做。
+  - agy：插件 `validate`／`install`／`list`／`disable` 实测。直接放目录不经 `install` 也能被发现；停用记在 agy 自己的 `config.json`。
+  - amp：`plugins exec` 实测插件进程继承 amp 的环境变量。
+  - 其余来自 `--help`、程序字符串、插件文档和 herdr 源码（只读）。
+  - 没有启动 agy、amp 会话，没有登录，没有碰用户的 `~/.gemini`、`~/.config/amp` 和在跑的 agent。只改文档，没有跑 cargo。
+- 拿主意的地方：
+  - agy 用插件目录而不是全局 `hooks.json`（只动自己那块）。
+  - 钩子里不写死 corral 路径，用 pen 设的环境变量。
+  - 新加 `CORRAL_KIND` 防止 agent 里跑的子 agy／amp 写进父 agent 的事件。
+  - 读屏建议放 pen 里、用 vt100、升级快照不带屏幕。
+  - 次序建议 ① agy → ② amp → ③ 读屏。
+- 没做的事：
+  - 真实一轮（要登录，等用户定）。所以钩子的环境变量、agy transcript 格式、两家的退出步骤、amp `tool.call` allow 是否跳过权限都还是未知。
+  - DESIGN 没改，等用户定了在实现那件里写。
+  - herdr 的读屏规则只参考，没有搬。
