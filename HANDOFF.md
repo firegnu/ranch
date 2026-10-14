@@ -47,7 +47,7 @@
 
 1. 经用户同意回报 paddock/main：agy 的接入（见 R8 完成记录「对 paddock 的影响」）。找个所有 agent 都空闲的时候跑 `corral upgrade --all`（可选）。
 2. paddock 接 R6：Settings 里装／卸 amp 插件、New Agent 支持 amp（在 paddock 自己的任务里做）。
-3. 修 macOS 上 pen 继承多余描述符的问题（见「悬着」第一条），单独一件小活，先写任务文件给用户看。
+3. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修 macOS 上 pen 继承多余描述符的问题（见「悬着」第一条）。动手前再给用户看、定验收。
 4. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
 5. paddock 开工 P5-33（界面接 pause／resume）。
 6. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
@@ -58,7 +58,7 @@
   - `protocol.rs` 的 `concurrent_unique_starts_and_listing_preserve_live_locks` 偶尔卡住就是这个（R8 期间抓到现场：一个 pen 开着测试进程的管道）。
   - paddock 同时起好几个 agent 时理论上也会碰上。
   - 修法：pen 启动时（`pen.rs` 起 pen 的 `pre_exec`）关掉 0、1、2 以外继承来的描述符。
-  - 不在 R8 里改，等用户定。
+  - 已记成草稿任务 R9，找时间再做。
 - agy 的已知限制（DESIGN §7「接入 agy」；用户 10-14：“主要是想通过agy加进来读屏幕的能力，agy很少用。”所以不主动追）：
   - 子 agent 的会话会不会触发钩子、抢主会话，没实测；
   - 钩子 shell 里 `exec` 失败时不回 `{}`；
