@@ -8,6 +8,8 @@
 
 ## 结论先说
 
+> **10-14 更正（R6 真实 amp 实测）**：第 2 条「amp 能报全」不对。amp 的插件接口在等用户批准命令时，thread 状态仍报 `running`，订阅和主动查都拿不到 `awaiting-approval`；amp 把「◆ Input needed: …」写进终端标题，R6 改用标题判等批准。另外 amp 刚启动、还在加载插件时会跳过那一轮的 `agent.start`，R6 用 thread 里的消息补记。
+
 1. **agy 和 amp 都不能在启动时临时挂钩子，只能走「全局安装」那一档。** 两家都有干净的「corral 自己一块」的位置：agy 是插件目录 `~/.gemini/config/plugins/corral/`，amp 是插件文件 `~/.config/amp/plugins/corral.ts`。装、卸只动这一块，不用改别人的文件。
 2. **amp 能报全：** 工作中、空闲、等批准、回复原文、出错／取消都有。缺的只是首句不能从启动参数带进去，需要 corral 在启动后往终端里打字。
 3. **agy 能报：** 工作中、空闲、会话 ID，回复要从 transcript 文件读（格式未知）。**等批准／等回答没有钩子**，要靠读屏补。

@@ -139,6 +139,7 @@ echo "<摘要>" | ranch dispatch route
 | Claude Code | 设计和品味：架构、模块边界、数据库设计方案；界面和交互方案；界面实现（网页、终端）；配色、文案这类要看了才知道好不好的活 |
 | Codex | 方式已定的实现：照方案写后端、迁移、接口、业务规则；修 bug、补测试、批量机械改动、跑很久的活；两家都做得了的活；交叉审查；前端做完的浏览器验收 |
 | pi、omp | 项目代码之外的杂活：本机清理、一次性脚本、核对数据、跑命令汇报。两家同类，任选，一家手上有活就开另一家。只接轻档；项目代码里的改动再小也不给它 |
+| amp | 分工还没定：只在用户或任务文件点名 amp 时派给它，别的活不主动给 |
 
 - 既要设计又要实现的，拆成两步：Claude 出方案，用户定（架构级的决定照第 1 节由用户拍板），再派人实现。界面活例外，实现也给 Claude。
 - 新界面、或者没有现成示意的大改，派人实现之前先给用户看样子：一张文字线框或示意，用户选定了再派。规则明确的小调整（换个颜色、加一个提示）直接做。
@@ -156,7 +157,7 @@ echo "<摘要>" | ranch dispatch route
 
 - 拿不准用常规；审查发现质量不够，再升一档重做。
 - 下面这些很费 token，可以提议，但要先问用户，同意了才开：Claude Code 用 `fable`（任何强度）、opus 开 `max`；Codex 开 `ultra`（它还会自己再开子 agent）。用户点名就算同意。
-- pi、omp 用它们的默认，不分档。
+- pi、omp、amp 用它们的默认，不分档。
 - 模型名会随版本变，过时了改这张表。
 
 **影响面**：定验证预算，写进任务书「怎么算做完」。难度定模型和强度，影响面定验证，两件事分开定。
@@ -183,9 +184,11 @@ echo "<摘要>" | ranch dispatch route
   corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 --label effort=high --label model=gpt-6-astra --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- codex --yolo -m gpt-6-astra -c 'model_reasoning_effort="high"'
   ```
 
+  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- amp`，马上用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
+
 - 本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn（工作接续记忆）：它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
 
-- 用 `--label` 记下这一档的强度和模型：`effort=<medium / high / xhigh>`、`model=<模型名>`，和后面 agent 命令里的参数一致。看板靠它显示每个 agent 的档位；pi、omp 不分档，不带。
+- 用 `--label` 记下这一档的强度和模型：`effort=<medium / high / xhigh>`、`model=<模型名>`，和后面 agent 命令里的参数一致。看板靠它显示每个 agent 的档位；pi、omp、amp 不分档，不带。
 
 - 被委派的 agent 一律免确认启动，中途不弹权限框，也不会被自动检查拦下。agent 命令按下表写，后面接上第 3 节的分档参数：
 
@@ -195,6 +198,7 @@ echo "<摘要>" | ranch dispatch route
   | Codex | `codex --yolo` |
   | pi | `pi`（本来就没有权限框） |
   | omp | `omp --approval-mode yolo` |
+  | amp | `amp`（没有免确认的启动参数，要不要确认看用户自己的 amp 设置；卡在确认上时状态是 `blocked`，请用户去点） |
 
   免确认也就没有安全网：能约束它的只剩任务文件里「不要做」那几条，所以那一节要写全。免确认跳不过「是否信任这个目录」的框，见下一条。
 - 开完运行 `corral wait <名字> --timeout 60`，不要用 sleep 等。60 秒到了状态还是 `starting`，就是卡在「是否信任这个目录」这类对话框上（新项目、新仓库第一次开时常见）。这时请用户在另一个终端窗口运行 `corral attach <名字>`，或者在看板里选中它去点。不要替它点，也不要让用户在你这里用 `!` 运行。卡在启动中时，提醒不会来，不要干等。

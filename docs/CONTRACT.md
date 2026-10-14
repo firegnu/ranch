@@ -51,7 +51,8 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 - `install.version`：装着的文件里写的版本号（`CORRAL_INTEGRATION = <n>`），没装或不是 corral 的为 `null`。版本号只在插件内容变了时加一，不跟 corral 的版本走。
 - 装上后，只有之后启动的 agent 才会加载；已经开着的要重开。
 - 装上的文件只在 corral 启动的那家 agent 里起作用（看环境变量 `CORRAL_EVENTS` 和 `CORRAL_KIND`），用户自己开的、别的程序里跑的都什么都不做。amp 的桌面版可能也会加载它，同样什么都不做；但每个加载了它的 amp 会多一个闲置的插件进程，前端要讲清楚。
-- `hooks` 为 `"global"` 的 agent 不支持 `corral start --prompt`（报 `usage`），要启动后再发第一句。
+- `hooks` 为 `"global"` 的 agent 不支持 `corral start --prompt`（报 `usage`），要启动后再发第一句。amp 一起来就报 `idle`，start 完马上 `send` 就行。
+- amp 的插件报不出「等批准」：corral 看 amp 设的终端标题（以 `◆ Input needed` 开头）把 `working`／`idle` 报成 `blocked`（`status`、`wait` 一样）。
 
 ## `corral integration install|uninstall`（R6）
 
