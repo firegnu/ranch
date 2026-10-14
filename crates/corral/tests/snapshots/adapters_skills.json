@@ -1,0 +1,464 @@
+{
+  "all/claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/claude-config/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "all/empty-claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "all/home": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "all/project": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/project/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/project/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "all/remove": {
+    "code": 0,
+    "out": {
+      "action": "remove",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "absent"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "absent"
+        }
+      ],
+      "ok": true,
+      "warnings": [],
+      "written": false
+    }
+  },
+  "bad-project": {
+    "code": 1,
+    "out": {
+      "error": "bad_project",
+      "message": "no such project directory",
+      "ok": false
+    }
+  },
+  "bad-target/": {
+    "code": 1,
+    "out": {
+      "error": "usage",
+      "message": "invalid skill target",
+      "ok": false
+    }
+  },
+  "bad-target/Claude": {
+    "code": 1,
+    "out": {
+      "error": "usage",
+      "message": "invalid skill target",
+      "ok": false
+    }
+  },
+  "bad-target/omp": {
+    "code": 1,
+    "out": {
+      "error": "usage",
+      "message": "invalid skill target",
+      "ok": false
+    }
+  },
+  "bad-target/pi": {
+    "code": 1,
+    "out": {
+      "error": "usage",
+      "message": "invalid skill target",
+      "ok": false
+    }
+  },
+  "claude/claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/claude-config/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "claude/empty-claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "claude/home": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "claude/project": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/project/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "claude/remove": {
+    "code": 0,
+    "out": {
+      "action": "remove",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "absent"
+        }
+      ],
+      "ok": true,
+      "warnings": [],
+      "written": false
+    }
+  },
+  "codex/claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "codex/empty-claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "codex/home": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "codex/project": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "codex",
+          "path": "<ROOT>/project/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "codex/remove": {
+    "code": 0,
+    "out": {
+      "action": "remove",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "absent"
+        }
+      ],
+      "ok": true,
+      "warnings": [],
+      "written": false
+    }
+  },
+  "default/claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/claude-config/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "default/empty-claude-config": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "default/home": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "default/project": {
+    "code": 0,
+    "out": {
+      "action": "install",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/project/.claude/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/project/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        }
+      ],
+      "ok": true,
+      "warnings": [
+        "corral is not on PATH: the skill will tell agents that corral is not installed"
+      ],
+      "written": false
+    }
+  },
+  "default/remove": {
+    "code": 0,
+    "out": {
+      "action": "remove",
+      "dry_run": true,
+      "items": [
+        {
+          "agent": "claude",
+          "path": "<ROOT>/.claude/skills/corral/SKILL.md",
+          "status": "absent"
+        },
+        {
+          "agent": "codex",
+          "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "absent"
+        }
+      ],
+      "ok": true,
+      "warnings": [],
+      "written": false
+    }
+  }
+}

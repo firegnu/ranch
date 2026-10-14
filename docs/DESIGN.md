@@ -42,3 +42,12 @@
 - 冻结范围（交叉审查 R1，用户 10-07 接受）：冻 agent 的子孙和它们所在会话里的所有进程，冻完逐个确认停住；冻结那一刻正好另开新会话、父进程又同时退出的进程（守护进程两次 fork）会漏掉。macOS 没有系统级冻结一组进程的手段（Linux 有 cgroup freezer），轮询进程表堵不死这个空隙；用户只在活都做完后暂停，这种情况一般不会发生。
 - 对前端：满足下面的部署条件后，Saddle 不跟也能用（暂停的 agent 显示原来的状态，send 收到 `paused`），用户 10-07 定不跟；paddock 在 P5-33 接界面。
 - 兼容边界（交叉审查 R6 指出）：旧版 corral 的命令行和后台提醒进程不读 `paused`，对暂停中的 agent 会误判：旧 `wait` 报 idle 或 stopped-quiet，旧 `send --after` 提前送或把等待记成 unknown（旧 send 被拒、旧 stop 正常）。新版无法替旧客户端纠正，所以靠部署次序保证不混用：只有换成新 pen 的 agent 才能暂停；先切 `~/.local/bin/corral`，再 `corral upgrade --all`（同一条命令把 pen 和持久提醒都交给新版），逐项 complete；还要确认没有旧版 corral 的进程还在跑（`ps` 查旧版本目录下 `corral` 的 `wait`、`__after` 等进程：切链接前就起的 `wait` 不会被换掉，无记录的旧提醒也不在 `upgrade --all` 能发现的范围内），有就等它们结束或让发起者用新入口重开。这些都满足之后才开始用暂停。Saddle 默认按 PATH 找 `corral`，切链接后即是新版；配置里固定了旧版本路径的不在保护之内。用户 10-07 同意先切链接、再 upgrade 的处理（“R6 我同意”），复核补上“确认没有旧版进程还在跑”后再次同意。
+
+## 7. agent 适配器（用户 10-14）
+
+用户 10-14（paddock P5-94「Settings 里一键适配 agent」讨论时，经 paddock/main 转达）：“各个agent是按照这插件的方式接入到ranch的（代码级别的插件类型）。”“先恢复适配器结构，全局配置可以放宽。”任务 `docs/任务/R3-corral恢复适配器结构.md`。
+
+- 结构：`crates/corral/src/agents/`，`mod.rs` 是 `Adapter` 接口和登记表 `ADAPTERS`，每家一个文件（现在 claude、codex、pi、omp），沿用 Python 版 corral `src/corral/agents/` 的做法。每家写明：种类（程序的文件名）、启动时加的钩子参数、停止步骤、技能装到哪（`install-skills --target` 认的值由此而来）、原始事件（v2，pi／omp）里的分家规则。共用的代码（pen、cli、skills、events）只查登记表，不写某一家的名字；不认识的程序不加钩子、不能带 `--prompt`、状态为 `unknown`、按默认步骤停。
+- 加一家：加 `<种类>.rs`、在 `ADAPTERS` 登记一行。适配器往 agent 状态目录写文件的（如 pi 的 `hook_pi.ts`），文件名还要加进 `state::FILES`：agent 名字检查和清理都靠它，加进去后同名的 agent 名字不再合法（测试会查漏）。新事件名要用到共用状态机（如 codex 的 `Interrupt`）时，改 `events.rs`，它是 v1 事件格式的一部分。
+- 共用、不归某一家的：钩子写事件（`__hook`）、`.runtime/helper`、v1／v2 事件格式和读取、pi／omp 共有的原始事件翻译（`events/raw.rs`）。
+- 全局配置：到 R3 为止，钩子只随 corral 启动的那个 agent 生效（启动参数或状态目录里的文件），不写任何全局配置。用户 10-14 同意放宽，条件：经用户确认才装；钩子不在 corral 启动的 agent 里就什么都不做；只动自己那块；原子写；能卸干净。R3 不改代码，留给以后装全局钩子那件。

@@ -1,0 +1,152 @@
+//! Agent adapters: one file per agent kind, registered in `ADAPTERS`. Shared code asks the
+//! registry and never names a kind itself. The structure follows the Python corral
+//! (`src/corral/agents/` at `6923da1`); the behaviour moved here in R3 from Saddle
+//! `crates/corral-core/src/hooks.rs` and `events/raw.rs` at commit `a31dea2`.
+//!
+//! To add an agent: write `<kind>.rs` with a type implementing `Adapter`, and add it to
+//! `ADAPTERS`. A file the adapter writes into the agent's state directory must also be listed in
+//! `state::FILES` (names and cleanup depend on it; the tests check this).
+//!
+//! Hooks only apply to the agent corral starts: they are passed as start-up arguments or
+//! loaded from the agent's state directory, never written into the agent's global config.
+use crate::Result;
+use serde_json::{Value, json};
+use std::{
+    borrow::Cow,
+    fs::OpenOptions,
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+};
+
+mod claude;
+mod codex;
+mod omp;
+mod pi;
+
+/// Registration order is the order `install-skills` lists skill targets in.
+static ADAPTERS: &[&dyn Adapter] = &[&claude::Claude, &codex::Codex, &pi::Pi, &omp::Omp];
+
+pub(crate) trait Adapter: Sync {
+    /// The program's file name that selects this adapter; also recorded as the agent's `kind`.
+    fn kind(&self) -> &'static str;
+    /// Arguments placed right after the program to connect corral's hooks for this run.
+    fn hook_args(&self, launch: &Launch) -> Result<Vec<String>>;
+    /// Steps the pen follows to stop the agent (it always ends with SIGKILL).
+    fn quit_steps(&self) -> Value;
+    /// Where this agent reads skills from, for `install-skills --target <kind>`.
+    fn skill_base(&self, _home: &Path, _project: Option<&Path>) -> Option<PathBuf> {
+        None
+    }
+    /// The agent's hook writes version 2 raw events (`"adapter": kind`) for `events::raw`.
+    fn raw_events(&self) -> bool {
+        false
+    }
+    /// A raw event to drop before it touches any state.
+    fn raw_ignored(&self, _event: &Value) -> bool {
+        false
+    }
+    /// A started tool that asks the user a question, so the agent waits for an answer.
+    fn raw_asks(&self, _tool: &Value) -> bool {
+        false
+    }
+    /// Whether `session_shutdown` with this reason ends the session.
+    fn raw_shutdown_ends(&self, _reason: &Value) -> bool {
+        true
+    }
+}
+
+/// What an adapter needs to build its hook arguments.
+pub(crate) struct Launch<'a> {
+    helper: String,
+    dir: &'a Path,
+}
+impl Launch<'_> {
+    /// Shell command that records `event` through the namespace's stable helper entry.
+    pub fn hook_command(&self, event: &str) -> String {
+        format!("{} __hook {event}", self.helper)
+    }
+    /// Writes a hook file into the agent's state directory and returns its path.
+    pub fn hook_file(&self, name: &str, body: &str) -> Result<String> {
+        let path = self.dir.join(name);
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)?;
+        f.write_all(body.as_bytes())?;
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+pub fn find(kind: &str) -> Option<&'static dyn Adapter> {
+    ADAPTERS.iter().copied().find(|a| a.kind() == kind)
+}
+pub fn all() -> impl Iterator<Item = &'static dyn Adapter> {
+    ADAPTERS.iter().copied()
+}
+/// The agent kind of a program: its file name.
+pub fn kind(program: &str) -> Cow<'_, str> {
+    Path::new(program)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+}
+pub fn known(kind: &str) -> bool {
+    find(kind).is_some()
+}
+pub fn quit_steps(kind: &str) -> Value {
+    match find(kind) {
+        Some(a) => a.quit_steps(),
+        // An unknown program: hang up, then terminate.
+        None => json!([{"signal":"HUP","wait":3},{"signal":"TERM","wait":3}]),
+    }
+}
+/// The command line the pen starts: the program, its hook arguments, the user's arguments and
+/// the first prompt after `--`, so options taking several values cannot swallow it and it may
+/// start with `-`.
+pub fn argv(argv: &[String], dir: &Path, prompt: Option<&str>) -> Result<Vec<String>> {
+    let mut out = vec![argv[0].clone()];
+    let exe = crate::hooks::helper(&crate::executable()?, false)?;
+    let helper = shell_words::quote(
+        exe.to_str()
+            .ok_or_else(|| crate::Error::new(1, "error", "non UTF-8 helper path"))?,
+    )
+    .into_owned();
+    if let Some(adapter) = find(&kind(&argv[0])) {
+        out.extend(adapter.hook_args(&Launch { helper, dir })?);
+    }
+    out.extend_from_slice(&argv[1..]);
+    if let Some(p) = prompt {
+        out.extend(["--".into(), p.into()]);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kinds_are_unique_and_files_written_are_internal() {
+        let dir = tempfile::tempdir().unwrap();
+        let launch = Launch {
+            helper: "helper".into(),
+            dir: dir.path(),
+        };
+        let mut kinds = Vec::new();
+        for a in all() {
+            assert!(!kinds.contains(&a.kind()), "{} registered twice", a.kind());
+            kinds.push(a.kind());
+            a.hook_args(&launch).unwrap();
+        }
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            assert!(
+                crate::state::FILES.contains(&name.as_str()),
+                "{name} is missing from state::FILES"
+            );
+        }
+    }
+}

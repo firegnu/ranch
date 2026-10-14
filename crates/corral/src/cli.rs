@@ -1,5 +1,5 @@
 // From Saddle `crates/corral-core/src/cli.rs` at commit `a31dea2`; ranch has changed it since.
-use crate::{Error, Result, events, hooks, now, pen, state};
+use crate::{Error, Result, agents, events, now, pen, state};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde_json::{Value, json};
 use std::{
@@ -129,7 +129,7 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             public[key] = value.clone();
         }
     }
-    let snapshot = if hooks::known(m["kind"].as_str().unwrap_or("")) {
+    let snapshot = if agents::known(m["kind"].as_str().unwrap_or("")) {
         let snap = events::read(
             &d,
             st["instance"].as_str().unwrap_or(""),
@@ -509,11 +509,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                 return Err(Error::new(1, "bad_cwd", "no such directory").with("cwd", json!(cwd)));
             }
             let argv = &args[sep + 1..];
-            let kind = Path::new(&argv[0])
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
-            if parsed.has("--prompt") && !hooks::known(&kind) {
+            if parsed.has("--prompt") && !agents::known(&agents::kind(&argv[0])) {
                 return Err(usage("--prompt requires a recognized agent"));
             }
             pen::start(
@@ -646,7 +642,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             let m = state::read(state::dir(name)?.join("meta.json"));
             state::require(
                 name,
-                json!({"op":"stop","steps":hooks::quit_steps(m["kind"].as_str().unwrap_or(""))}),
+                json!({"op":"stop","steps":agents::quit_steps(m["kind"].as_str().unwrap_or(""))}),
             )?;
             let deadline = now() + timeout.max(0.0);
             loop {

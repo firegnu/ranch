@@ -1,0 +1,167 @@
+{
+  "files": [
+    "lock",
+    "meta.json",
+    "sock",
+    "hook.py",
+    "hook_pi.ts",
+    "hook_omp.ts",
+    "events",
+    "cursor",
+    "exit.json",
+    "pen.log",
+    "labels.json",
+    "upgrade.json",
+    "upgrade.committed",
+    "upgrade.active"
+  ],
+  "kinds": {
+    "": {
+      "known": false,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 3
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "/usr/bin/claude": {
+      "known": false,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 3
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "Claude": {
+      "known": false,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 3
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "cat": {
+      "known": false,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 3
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "claude": {
+      "known": true,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 5
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "claude-code": {
+      "known": false,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 3
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "claude.exe": {
+      "known": false,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 3
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "codex": {
+      "known": true,
+      "quit_steps": [
+        {
+          "keys": "Aw==",
+          "wait": 0.3
+        },
+        {
+          "keys": "Aw==",
+          "wait": 60
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "omp": {
+      "known": true,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 5
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "other": {
+      "known": false,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 3
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    },
+    "pi": {
+      "known": true,
+      "quit_steps": [
+        {
+          "signal": "HUP",
+          "wait": 5
+        },
+        {
+          "signal": "TERM",
+          "wait": 3
+        }
+      ]
+    }
+  }
+}
