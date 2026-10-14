@@ -268,8 +268,8 @@ impl Pen {
         status["capabilities"] =
             json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1});
         status["upgrade"] = self.upgrade.public();
-        if let Some(s) = &self.screen {
-            status["screen"] = json!(s.text());
+        if let Some(text) = self.screen.as_ref().and_then(|s| s.text()) {
+            status["screen"] = json!(text);
         }
         status
     }
