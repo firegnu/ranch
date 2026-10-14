@@ -2,6 +2,26 @@
 
 ## 现在在哪（2026-10-14）
 
+- R8 接入 agy 已合并、推送、收尾（`docs/任务/R8-接入agy.md`，交叉审查 `R8-审查.md`，设计 DESIGN §7「接入 agy」，格式 CONTRACT）。
+  - 做了什么：
+    - 全局安装可以装一个目录：agy 的插件 `~/.gemini/config/plugins/corral/`。
+    - `__hook agy:<事件>` 把 agy 的钩子翻译成 v1 事件，提示词和回复从 transcript 逐行取。
+    - 读屏判等批准（R7 的机制第一次用上）。
+    - `integration status` 多报 `install.enabled`。
+    - 技能多一个 `gemini` 位置，corral 和 corral-dispatch 两份都装。
+    - 技能里 agy 必带 `--prompt`、点名才派。
+  - 验证：
+    - 现有四家和 amp 不变（R3 快照只多 `all` 里的 gemini）。
+    - 真实一轮在用户真实 HOME 跑过：working→idle、回复对、`send` 确认、批准判 blocked 再继续、HUP 停干净。插件用完已卸，空的 `plugins` 目录也删了。
+    - 审查后改的插件命令（用 `CORRAL_HELPER`）只在合成测试里跑过，部署后装插件时可以再真跑一轮。
+  - 已打包 `versions/f86d1c2/`，**还没部署**，R7 一起带上。部署要做的：
+    1. 切两个链接到 `versions/f86d1c2/bin/`。
+    2. 重装两份技能：claude、codex 两处是 overwrite，gemini 是新装；dry-run 已核对。
+    3. `corral upgrade --all` 可做可不做：agy 的钩子不依赖共享 helper 先切。
+    4. agy 插件装不装由用户定（`corral integration install --agent agy`，或以后从 paddock Settings 点）。
+  - 退回：切回 `versions/0e5bd19/bin/`。
+  - 对 paddock 的影响（兼容新增）写在任务文件完成记录末尾，还没回报 paddock/main。
+
 - R7 读屏兜底已合并、推送、收尾（`docs/任务/R7-读屏兜底.md`，交叉审查 `R7-审查.md`，设计 DESIGN §7「读屏兜底」）：适配器可声明读屏规则，只有声明了的那家 pen 才用 vt100 维护屏幕，命令行在 working／idle 而屏幕命中时报 blocked。这一件没有哪家声明规则，现有四家和 amp 行为不变；公开输出不变，paddock 不用动。审查后加了保护：vt100 panic 只丢掉屏幕，控制字符串不进解析器。已打包 `versions/3b7d113/`，**还没部署**（技能 dry-run 全是 same，不用重装；现有五家不建屏幕，`corral upgrade --all` 可做可不做）。退回：切回 `versions/0e5bd19/bin/`。
 
 - R6 接入 amp 已合并、推送、收尾（`docs/任务/R6-接入amp.md`，交叉审查 `R6-审查.md`，设计 DESIGN §7，格式 CONTRACT）：全局安装框架（`corral integration install|uninstall --agent amp`）、amp 适配器和插件（`~/.config/amp/plugins/corral.ts`）、终端标题判等批准、技能里 amp 点名才派。已部署（10-14 19:01 用户在普通终端里跑）：两个链接指向 `versions/0e5bd19/bin/`，两条 `install-skills` 已跑，`corral upgrade --all` 已跑（paddock/main、ranch/main complete，pen 原地换成 `0e5bd19`；`~/.corral/.runtime/helper` 也是 `0e5bd19`；已不在的 agent 只有旧提醒记录，结为 complete）。主控核对：`integration status` 五家技能都是 same、amp 插件 same；两条 install-skills 的 dry-run 全是 same；进程表里的 corral 只有 `0e5bd19`；开 `ranch/test-claude` 问一句拿到回复、stop 干净。插件已经在用户同意下装进真实的 `~/.config/amp/plugins/corral.ts`，就是最终内容（`integration status` 为 same），留不留由用户定。退回：切回 `versions/653c5b2/bin/`。已回报 paddock/main（10-14，用户要它接着做 paddock 这边的集成）。
@@ -25,14 +45,25 @@
 
 ## 下一步
 
-1. paddock 接 R6：Settings 里装／卸 amp 插件、New Agent 支持 amp（在 paddock 自己的任务里做）。
-2. 部署 R7（用户在场，见上；可以和 agy 那件一起部署）。
-3. 阶段三：agy（用 R6 的全局安装、R7 的读屏；规则按真实画面定，是否加 `state_source` 那时再定）。先写任务文件给用户看。
+1. 部署 R7＋R8（用户在场，见上）。之后经用户同意回报 paddock/main：agy 的接入（见 R8 完成记录「对 paddock 的影响」）。
+2. paddock 接 R6：Settings 里装／卸 amp 插件、New Agent 支持 amp（在 paddock 自己的任务里做）。
+3. 修 macOS 上 pen 继承多余描述符的问题（见「悬着」第一条），单独一件小活，先写任务文件给用户看。
 4. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
 5. paddock 开工 P5-33（界面接 pause／resume）。
 6. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
 
 ## 悬着
 
-- `crates/corral/tests/protocol.rs` 第一次并行跑时有一项卡住过，之后未复现。
+- macOS 上多个线程同时起 `corral start` 时，某一次的输出管道可能漏进另一个常驻的 pen（Rust 标准库在 macOS 上建管道和设 close-on-exec 分两步），调用方等不到输出结束，卡住不返回。
+  - `protocol.rs` 的 `concurrent_unique_starts_and_listing_preserve_live_locks` 偶尔卡住就是这个（R8 期间抓到现场：一个 pen 开着测试进程的管道）。
+  - paddock 同时起好几个 agent 时理论上也会碰上。
+  - 修法：pen 启动时（`pen.rs` 起 pen 的 `pre_exec`）关掉 0、1、2 以外继承来的描述符。
+  - 不在 R8 里改，等用户定。
+- agy 的已知限制（DESIGN §7「接入 agy」）：
+  - 子 agent 的会话会不会触发钩子、抢主会话，没实测；
+  - 钩子 shell 里 `exec` 失败时不回 `{}`；
+  - Antigravity IDE 会不会加载插件，没核对。
+- R8 摸底留在用户 `~/.gemini` 里、还没清的东西，等用户定：
+  - agy 信任列表里的 `/private/tmp/r8agy.Vg4v/work`（目录已删）；
+  - `~/.gemini/antigravity-cli/brain/` 下的三次测试对话。
 - paddock 的 `docs/DESIGN.md` §3“Saddle 保底”和决策表还写着“只保证 Saddle 和运行时对得上、不兼容时写需求给 Saddle 适配”；ranch 这边已按用户 10-07“保底规矩放松吧，Saddle 不用再写影响了”改了 AGENTS.md 和 DESIGN §2，paddock 那边要不要跟着改，在 paddock 自己的任务里做。
