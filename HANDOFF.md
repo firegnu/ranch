@@ -16,7 +16,7 @@
     - 审查后改的插件命令（用 `CORRAL_HELPER`）只在合成测试里跑过，部署后装插件时可以再真跑一轮。
   - 已部署（10-14 21:15，用户在普通终端里跑，R7 一起带上）：
     - 两个链接指向 `versions/f86d1c2/bin/`，两条 `install-skills` 已跑（gemini 位置新装）。
-    - 没跑 `corral upgrade --all`（paddock 在干活；这次不必须）。在跑的 agent 的 pen 和 `~/.corral/.runtime/helper` 仍是 `0e5bd19`。
+    - 之后所有 agent 空闲时用户跑了 `corral upgrade --all`：paddock/main、ranch/main complete，pen 原地换成 `f86d1c2`；`~/.corral/.runtime/helper` 切到 `f86d1c2`；已不在的 agent 只有旧提醒记录，结为 complete（两条 not_delivered）。主控核对：两个 agent 的 `exe` 都是 `f86d1c2`、升级状态 none，进程表里的 corral 只有 `f86d1c2`。
     - 主控核对：`integration status` 六家技能都是 same，amp 插件 same，agy 插件 create（没装，`enabled:true`）；两条 install-skills 的 dry-run 全是 same。
     - agy 插件装不装由用户定（`corral integration install --agent agy`，或以后从 paddock Settings 点）。
   - 退回：切回 `versions/0e5bd19/bin/`。
