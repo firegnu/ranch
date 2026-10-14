@@ -2,7 +2,7 @@
 
 ## 现在在哪（2026-10-14）
 
-- R6 接入 amp 已合并、推送、收尾（`docs/任务/R6-接入amp.md`，交叉审查 `R6-审查.md`，设计 DESIGN §7，格式 CONTRACT）：全局安装框架（`corral integration install|uninstall --agent amp`）、amp 适配器和插件（`~/.config/amp/plugins/corral.ts`）、终端标题判等批准、技能里 amp 点名才派。已打包 `versions/0e5bd19/`，**还没部署**。插件已经在用户同意下装进真实的 `~/.config/amp/plugins/corral.ts`，就是最终内容（`integration status` 为 same），留不留由用户定。部署（用户在场）：切 `~/.local/bin/corral`、`~/.local/bin/ranch` 到 `versions/0e5bd19/bin/`；`corral install-skills`、`ranch dispatch install-skills`（技能文字改了，dry-run 是 overwrite）；`corral upgrade --all` 可做可不做（现有四家行为不变）。退回：切回 `versions/653c5b2/bin/`。要回报 paddock/main（对 paddock 的影响见任务文件完成记录）。
+- R6 接入 amp 已合并、推送、收尾（`docs/任务/R6-接入amp.md`，交叉审查 `R6-审查.md`，设计 DESIGN §7，格式 CONTRACT）：全局安装框架（`corral integration install|uninstall --agent amp`）、amp 适配器和插件（`~/.config/amp/plugins/corral.ts`）、终端标题判等批准、技能里 amp 点名才派。已部署（10-14 19:01 用户在普通终端里跑）：两个链接指向 `versions/0e5bd19/bin/`，两条 `install-skills` 已跑，`corral upgrade --all` 已跑（paddock/main、ranch/main complete，pen 原地换成 `0e5bd19`；`~/.corral/.runtime/helper` 也是 `0e5bd19`；已不在的 agent 只有旧提醒记录，结为 complete）。主控核对：`integration status` 五家技能都是 same、amp 插件 same；两条 install-skills 的 dry-run 全是 same；进程表里的 corral 只有 `0e5bd19`；开 `ranch/test-claude` 问一句拿到回复、stop 干净。插件已经在用户同意下装进真实的 `~/.config/amp/plugins/corral.ts`，就是最终内容（`integration status` 为 same），留不留由用户定。退回：切回 `versions/653c5b2/bin/`。要回报 paddock/main（对 paddock 的影响见任务文件完成记录）。
 
 - R5 调研已合并、推送、收尾（`docs/任务/R5-agy与amp接入调研.md`，报告 `docs/调研/R5-agy与amp接入、全局安装和读屏兜底.md`）：只出报告，没改代码、没改 DESIGN，不用部署。结论：agy、amp 都只能走全局安装（agy 插件目录 `~/.gemini/config/plugins/corral/`，amp 系统插件 `~/.config/amp/plugins/corral.ts`）；amp 能报全，agy 缺「等批准」要读屏补；读屏建议放 pen 里用 vt100。建议次序 ① 全局安装框架 + agy → ② amp → ③ 读屏。用户 10-14 已定第六节，见任务文件末尾；等用户来讨论后再立任务。
 
@@ -16,14 +16,14 @@
 
 - 第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。
 - 安装：
-  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/653c5b2/bin/`（10-14 起；R6 的 `0e5bd19` 已打包未部署；旧版 `7b761e7`、`d55defb`、`5c5540c`、`d771c10`、`df46247` 目录保留，不删；10-14 `corral upgrade --all` 后，在跑的 agent 的 pen 和 `~/.corral/.runtime/helper` 都是 `7b761e7`）
+  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/0e5bd19/bin/`（10-14 19:01 起；旧版 `653c5b2`、`7b761e7`、`d55defb`、`5c5540c`、`d771c10`、`df46247` 目录保留，不删；10-14 19:01 `corral upgrade --all` 后，在跑的 agent 的 pen 和 `~/.corral/.runtime/helper` 都是 `0e5bd19`）
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/` 下。
 - Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。任务和完成记录在 paddock：`../paddock/docs/任务/M2-ranch与corral.md`、`M3-dispatch进ranch.md`。
 - 远程：`origin` = `github.com/firegnu/ranch`（public，不加许可证）。`.gitleaks.toml` 只放行 ureq 的公开测试私钥。
 
 ## 下一步
 
-1. 部署 R6（见上），回报 paddock/main。
+1. 回报 paddock/main（等用户点头）。
 2. 阶段二：读屏兜底（vt100，放 pen 里；不能影响现有不靠读屏就能工作的四家和 amp，只给 agy、amp 这类兜底）。用户 10-14 定的次序：amp → 读屏 → agy。先写任务文件给用户看。
 3. 阶段三：agy。
 4. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
