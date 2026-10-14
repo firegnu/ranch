@@ -2,6 +2,8 @@
 
 ## 现在在哪（2026-10-14）
 
+- R4 已合并、推送、收尾（`docs/任务/R4-corral-integration-status.md`）：新增只读命令 `corral integration status`（给 paddock P5-94 Settings 用，格式在新建的 `docs/CONTRACT.md`）；技能位置改成按位置登记（pi 读 `~/.agents`，omp 两个都读），`install-skills` 行为不变。打包 `versions/653c5b2`，**待部署**：用户在普通终端里把 `~/.local/bin/corral`、`~/.local/bin/ranch` 切到 `versions/653c5b2/bin/`；技能内容没变（dry-run 全是 same），pen、钩子、启动命令没变，不跑 `install-skills`、不 `corral upgrade --all`。退回：切回 `versions/7b761e7/bin/`。部署后告诉 paddock/main：合并提交 `b0e3b6f`、格式见 `docs/CONTRACT.md`、没有 `--json`。
+
 - R3 已合并、推送、收尾（`docs/任务/R3-corral恢复适配器结构.md`，设计 `docs/DESIGN.md` §7）：corral 恢复一家一个适配器（`crates/corral/src/agents/`），行为不变，靠 `crates/corral/tests/snapshots/` 里在旧代码上钉的快照保证；四家真实 agent 实测过。已部署（10-14 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/7b761e7/bin/`；技能内容与已装的相同（dry-run 全是 same），没跑 `install-skills`；之后用户又跑了 `corral upgrade --all`（10-14，所有 agent 都空闲时）：6 个在跑的 agent（cairn、client-demo、global-mesh、jb-generator、paddock、ranch 的 main）全部 complete，pen 原地换成 `7b761e7`，agent 进程没重启；`.runtime/helper` 切到 `7b761e7`；已不在的 agent（jb-finetune/codex-1、owlet/main、ranch/review-pause-1、saddle/main）只有旧提醒记录，结为 complete（其中两条 not_delivered）。主控核对：各 agent `exe` 都是 `7b761e7`、升级状态 none，进程表里没有别的版本的 corral 进程。部署后主控用新版读了现有 agent 的状态（正常），开 `ranch/test-claude` 问两句、拿到回复、`stop` 由 SIGHUP 停干净。退回：链接切回 `versions/d55defb/bin/`。用户 10-14 定的「全局配置可以放宽」已记进 DESIGN §7，代码留给以后装全局钩子那件。
 
 - R2 已合并、推送、收尾（`docs/任务/R2-派活agent不用cairn.md`）：corral-dispatch、corral 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（用户拿 owlet 试点 cairn）。只改技能文字，corral 程序行为与 `5c5540c` 相同。已部署（10-08 16:27 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/d55defb/bin/`，两条 `install-skills` 已跑，主控核对 `~/.claude`、`~/.agents` 下的技能与仓库逐字节一致；没做 `corral upgrade --all`（程序代码与 `5c5540c` 相同）。正在跑的主控重开后才读到新技能。
@@ -17,7 +19,7 @@
 
 ## 下一步
 
-1. paddock 可以提 P5-94 要的只读 `corral integration status --json`（R3 已部署，可以提了）。
+1. 部署 R4（见上），然后回报 paddock/main。
 2. paddock 开工 P5-33（界面接 pause／resume）。
 3. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
 
