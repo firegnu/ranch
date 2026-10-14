@@ -81,3 +81,15 @@
   - 真实一轮（要登录，等用户定）。所以钩子的环境变量、agy transcript 格式、两家的退出步骤、amp `tool.call` allow 是否跳过权限都还是未知。
   - DESIGN 没改，等用户定了在实现那件里写。
   - herdr 的读屏规则只参考，没有搬。
+
+## 用户对报告第六节的决定（10-14，经 paddock/main 转达）
+
+用户原话：“按你的建议，五条都同意，发给ranch吧，但是发给他先不让他动作，我还要和他讨论。”
+
+1. 两个全局位置都接受：agy `~/.gemini/config/plugins/corral/`（plugin.json + hooks.json），amp `~/.config/amp/plugins/corral.ts`。用户知道自己开的每个 amp 会多一个闲置 Bun 进程。
+2. 真实一轮：在临时 HOME 的测试实例里由用户自己登录一次，用完删掉。动手前先查清 agy 的登录是不是存在系统钥匙串里，别动到用户平时用的那份。
+3. 次序：**先 amp**（和报告建议的不同），全局安装框架随 amp 一起做；然后 agy；读屏兜底单独一件，放最后。理由：amp 不靠读屏就能报全，第一步做完就完整可用，用户也要用 amp；agy 的「等批准」要等读屏才有。
+4. 读屏用 vt100。
+5. amp 先不支持 `--prompt`（paddock 的 New Agent 选 amp 时不给 Prompt）。
+
+**先不动手**：不写第一步的任务文件、不开始实现，等用户直接来讨论。

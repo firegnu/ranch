@@ -2,7 +2,7 @@
 
 ## 现在在哪（2026-10-14）
 
-- R5 调研已合并、推送、收尾（`docs/任务/R5-agy与amp接入调研.md`，报告 `docs/调研/R5-agy与amp接入、全局安装和读屏兜底.md`）：只出报告，没改代码、没改 DESIGN，不用部署。结论：agy、amp 都只能走全局安装（agy 插件目录 `~/.gemini/config/plugins/corral/`，amp 系统插件 `~/.config/amp/plugins/corral.ts`）；amp 能报全，agy 缺「等批准」要读屏补；读屏建议放 pen 里用 vt100。建议次序 ① 全局安装框架 + agy → ② amp → ③ 读屏。等用户定报告第六节的五件事（全局位置、真实一轮怎么测、先做哪步、读屏库、amp 首句）。
+- R5 调研已合并、推送、收尾（`docs/任务/R5-agy与amp接入调研.md`，报告 `docs/调研/R5-agy与amp接入、全局安装和读屏兜底.md`）：只出报告，没改代码、没改 DESIGN，不用部署。结论：agy、amp 都只能走全局安装（agy 插件目录 `~/.gemini/config/plugins/corral/`，amp 系统插件 `~/.config/amp/plugins/corral.ts`）；amp 能报全，agy 缺「等批准」要读屏补；读屏建议放 pen 里用 vt100。建议次序 ① 全局安装框架 + agy → ② amp → ③ 读屏。用户 10-14 已定第六节，见任务文件末尾；等用户来讨论后再立任务。
 
 - R4 已合并、推送、收尾（`docs/任务/R4-corral-integration-status.md`）：新增只读命令 `corral integration status`（给 paddock P5-94 Settings 用，格式在新建的 `docs/CONTRACT.md`）；技能位置改成按位置登记（pi 读 `~/.agents`，omp 两个都读），`install-skills` 行为不变。已部署（10-14 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/653c5b2/bin/`；技能内容没变（dry-run 全是 same），pen、钩子、启动命令没变，没跑 `install-skills`、没 `corral upgrade --all`（在跑的 agent 的 pen 仍是 `7b761e7`，和 `653c5b2` 的 pen 代码相同）。主控部署后跑 `corral integration status`，四家路径、版本、技能状态都对。退回：切回 `versions/7b761e7/bin/`。已回报 paddock/main（合并提交 `b0e3b6f`、格式见 `docs/CONTRACT.md`、没有 `--json`）。
 
@@ -21,7 +21,7 @@
 
 ## 下一步
 
-1. 等用户定 R5 报告第六节的事，再按定下的次序立任务（每步先写任务文件给用户看）。
+1. R5 第六节用户已定（记在 `docs/任务/R5-agy与amp接入调研.md` 末尾）：先 amp（连全局安装框架）→ agy → 读屏（vt100）。**先不动手**：不写任务文件、不实现，等用户直接来讨论。
 2. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
 3. paddock 开工 P5-33（界面接 pause／resume）。
 4. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
