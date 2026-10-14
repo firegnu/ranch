@@ -14,7 +14,7 @@
 
 ## 安装与更新
 
-用 `ranch dispatch install-skills` 安装或更新（`--dry-run` 只看会写什么，`--target claude|codex` 只装一处）。写文件前会列出并请你确认；非交互运行要在你同意后加 `--yes`。
+用 `ranch dispatch install-skills` 安装或更新（`--dry-run` 只看会写什么，`--target claude|codex|gemini` 只装一处）。写文件前会列出并请你确认；非交互运行要在你同意后加 `--yes`。
 
 - 文件装到 `~/.claude/skills/corral-dispatch`（设了 `CLAUDE_CONFIG_DIR` 时装到它下面）和 `~/.agents/skills/corral-dispatch`。
 - 软链接的目录或文件只报告、不覆盖；目录里不属于本技能的文件留着并提示。项目 AGENTS.md 不自动改动。

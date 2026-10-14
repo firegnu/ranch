@@ -5,7 +5,7 @@ use std::{io::Write, process::ExitCode};
 
 const USAGE: &str = "Usage:
   ranch dispatch route < SUMMARY
-  ranch dispatch install-skills [--target all|claude|codex] [--dry-run] [--yes]";
+  ranch dispatch install-skills [--target all|claude|codex|gemini] [--dry-run] [--yes]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

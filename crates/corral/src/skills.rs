@@ -8,11 +8,13 @@ use std::{
 };
 const BODY: &str = include_str!("../resources/SKILL.md");
 /// The places corral installs its skill, in order, named by their `install-skills --target`
-/// value. `codex` is `~/.agents`, the Agent Skills location Codex, pi and omp all read; adapters
-/// say which of these their agent reads.
-pub(crate) const TARGETS: [&str; 2] = ["claude", "codex"];
+/// value. `codex` is `~/.agents`, the Agent Skills location Codex, pi and omp all read; `gemini` is
+/// `~/.gemini/config`, where agy reads global skills (in a project agy reads `.agents`, so `gemini`
+/// has no project place). Adapters say which of these their agent reads.
+pub(crate) const TARGETS: [&str; 3] = ["claude", "codex", "gemini"];
 fn base(target: &str, home: &Path, project: Option<&Path>) -> PathBuf {
     match (target, project) {
+        ("gemini", _) => home.join(".gemini/config"),
         ("claude", Some(p)) => p.join(".claude"),
         ("claude", None) => std::env::var_os("CLAUDE_CONFIG_DIR")
             .filter(|v| !v.is_empty())
@@ -105,8 +107,15 @@ pub fn run(
         );
     }
 
+    if project.is_some() && target == "gemini" {
+        return Err(Error::new(
+            1,
+            "usage",
+            "gemini has no project place: agy reads the project's .agents (target codex)",
+        ));
+    }
     for agent in TARGETS {
-        if target != "all" && target != agent {
+        if target != "all" && target != agent || project.is_some() && agent == "gemini" {
             continue;
         }
         let (path, status) = plan(agent, &home, project.as_deref(), remove)?;

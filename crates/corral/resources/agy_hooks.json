@@ -1,0 +1,37 @@
+{
+  "corral": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "[ \"$CORRAL_KIND\" = agy ] && [ -x \"$CORRAL_HOME/.runtime/helper\" ] && exec \"$CORRAL_HOME/.runtime/helper\" __hook agy:SessionStart; echo {} # CORRAL_INTEGRATION = 1",
+        "timeout": 10
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "[ \"$CORRAL_KIND\" = agy ] && [ -x \"$CORRAL_HOME/.runtime/helper\" ] && exec \"$CORRAL_HOME/.runtime/helper\" __hook agy:PreInvocation; echo {} # CORRAL_INTEGRATION = 1",
+        "timeout": 10
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"$CORRAL_KIND\" = agy ] && [ -x \"$CORRAL_HOME/.runtime/helper\" ] && exec \"$CORRAL_HOME/.runtime/helper\" __hook agy:PostToolUse; echo {} # CORRAL_INTEGRATION = 1",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "[ \"$CORRAL_KIND\" = agy ] && [ -x \"$CORRAL_HOME/.runtime/helper\" ] && exec \"$CORRAL_HOME/.runtime/helper\" __hook agy:Stop; echo {} # CORRAL_INTEGRATION = 1",
+        "timeout": 10
+      }
+    ]
+  }
+}

@@ -106,6 +106,10 @@ fn lists_every_registered_agent_in_order_even_when_none_is_installed() {
              "skills":[
                 {"target":"claude","path":format!("{home}/.claude/skills/corral/SKILL.md"),"status":"create"},
                 {"target":"codex","path":format!("{home}/.agents/skills/corral/SKILL.md"),"status":"create"}]},
+            {"kind":"agy","path":null,"version":null,"hooks":"global",
+             "install":{"path":format!("{home}/.gemini/config/plugins/corral"),"status":"create","version":null,"enabled":true},
+             "skills":[
+                {"target":"gemini","path":format!("{home}/.gemini/config/skills/corral/SKILL.md"),"status":"create"}]},
         ]})
     );
 }
@@ -147,6 +151,7 @@ fn finds_programs_and_reads_versions_without_hanging() {
             (json!("pi"), json!(format!("{bin}/pi")), Value::Null),
             (json!("omp"), json!(format!("{bin}/omp")), Value::Null),
             (json!("amp"), Value::Null, Value::Null),
+            (json!("agy"), Value::Null, Value::Null),
         ]
     );
     // The hanging program and the child it left behind were both killed.
@@ -230,6 +235,9 @@ impl Lab {
     }
     fn amp(&self) -> Value {
         self.status()["agents"][4].clone()
+    }
+    fn agy(&self) -> Value {
+        self.status()["agents"][5].clone()
     }
 }
 
@@ -396,7 +404,7 @@ fn install_is_only_for_agents_that_need_it() {
     for args in [
         &["integration", "install", "--agent", "claude", "--yes"][..],
         &["integration", "uninstall", "--agent", "omp", "--yes"],
-        &["integration", "install", "--agent", "agy", "--yes"],
+        &["integration", "install", "--agent", "other", "--yes"],
         &["integration", "install", "--yes"],
         &["integration", "install", "amp", "--yes"],
         &["integration", "install", "--agent", "amp", "--json"],
@@ -405,4 +413,149 @@ fn install_is_only_for_agents_that_need_it() {
         assert_eq!((code, &v["error"]), (Some(1), &json!("usage")), "{args:?}");
     }
     assert_eq!(lab.files(), before);
+}
+
+const AGY_HOOKS: &str = include_str!("../resources/agy_hooks.json");
+const AGY_PLUGIN: &str = include_str!("../resources/agy_plugin.json");
+
+/// agy (R8) loads a plugin directory, so corral installs a directory holding only its own files.
+#[test]
+fn installs_and_removes_only_the_agy_plugin_directory() {
+    let lab = Lab::new();
+    let dir = lab.path(".gemini/config/plugins/corral");
+    let (hooks, plugin) = (dir.join("hooks.json"), dir.join("plugin.json"));
+    // The user's own plugin and agy's settings are never touched.
+    lab.write(".gemini/config/plugins/mine/plugin.json", "{}\n");
+    lab.write(".gemini/config/config.json", "{\"plugins\":{}}\n");
+    let untouched = lab.files();
+
+    let (code, v) = lab.json(&["integration", "install", "--agent", "agy", "--dry-run"]);
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        v,
+        json!({"ok":true,"action":"install","agent":"agy","path":dir,"status":"create","dry_run":true,"written":false,"warnings":[]})
+    );
+    let (code, v) = lab.json(&["integration", "install", "--agent", "agy"]);
+    assert_eq!(
+        (code, &v["error"]),
+        (Some(1), &json!("confirmation_required"))
+    );
+    assert_eq!(lab.files(), untouched, "wrote without confirmation");
+
+    let (_, v) = lab.json(&["integration", "install", "--agent", "agy", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("create"), &json!(true))
+    );
+    let mut expected = untouched.clone();
+    expected.insert(dir.clone(), vec![]);
+    expected.insert(hooks.clone(), AGY_HOOKS.as_bytes().to_vec());
+    expected.insert(plugin.clone(), AGY_PLUGIN.as_bytes().to_vec());
+    assert_eq!(lab.files(), expected, "wrote more than the plugin");
+    assert_eq!(
+        lab.agy()["install"],
+        json!({"path":dir,"status":"same","version":1,"enabled":true})
+    );
+
+    // Whether agy has it switched on comes from agy's own settings.
+    lab.write(
+        ".gemini/config/config.json",
+        "{\"plugins\":{\"corral\":{\"enabled\":false}}}\n",
+    );
+    assert_eq!(lab.agy()["install"]["enabled"], false);
+    lab.write(".gemini/config/config.json", "not json");
+    assert_eq!(lab.agy()["install"]["enabled"], Value::Null);
+    fs::remove_file(lab.path(".gemini/config/config.json")).unwrap();
+    assert_eq!(lab.agy()["install"]["enabled"], true);
+    lab.write(".gemini/config/config.json", "{\"plugins\":{}}\n");
+
+    // An older copy, or one with a file missing, is brought up to date.
+    fs::write(&hooks, "{} CORRAL_INTEGRATION = 0").unwrap();
+    assert_eq!(
+        (
+            &lab.agy()["install"]["status"],
+            &lab.agy()["install"]["version"]
+        ),
+        (&json!("overwrite"), &json!(0))
+    );
+    fs::remove_file(&plugin).unwrap();
+    let (_, v) = lab.json(&["integration", "install", "--agent", "agy", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("overwrite"), &json!(true))
+    );
+    assert_eq!(lab.files(), expected);
+    // A temporary file corral left behind does not make the directory someone else's.
+    lab.write(".gemini/config/plugins/corral/.corral-x.tmp", "");
+    assert_eq!(lab.agy()["install"]["status"], "same");
+    fs::remove_file(dir.join(".corral-x.tmp")).unwrap();
+
+    let (code, v) = lab.json(&["integration", "uninstall", "--agent", "agy"]);
+    assert_eq!(
+        (code, &v["error"]),
+        (Some(1), &json!("confirmation_required"))
+    );
+    let (_, v) = lab.json(&["integration", "uninstall", "--agent", "agy", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["written"]),
+        (&json!("remove"), &json!(true))
+    );
+    assert_eq!(
+        lab.files(),
+        untouched,
+        "uninstall left something or removed too much"
+    );
+    let (_, v) = lab.json(&["integration", "uninstall", "--agent", "agy", "--yes"]);
+    assert_eq!(v["status"], "absent");
+}
+
+#[test]
+fn leaves_a_plugin_directory_corral_does_not_own_in_place() {
+    let lab = Lab::new();
+    let dir = lab.path(".gemini/config/plugins/corral");
+    let check = |what: &str| {
+        let before = lab.files();
+        for args in [
+            &["integration", "install", "--agent", "agy", "--yes"][..],
+            &["integration", "uninstall", "--agent", "agy", "--yes"],
+        ] {
+            let (code, v) = lab.json(args);
+            assert_eq!(
+                (code, &v["status"], &v["written"]),
+                (Some(0), &json!("foreign"), &json!(false)),
+                "{what} {args:?}"
+            );
+            assert_eq!(v["warnings"].as_array().unwrap().len(), 1, "{what}");
+        }
+        assert_eq!(lab.files(), before, "{what}");
+        assert_eq!(lab.agy()["install"]["status"], "foreign", "{what}");
+    };
+    assert_eq!(
+        lab.json(&["integration", "install", "--agent", "agy", "--yes"])
+            .1["written"],
+        true
+    );
+    // A file corral did not write, beside its own.
+    lab.write(".gemini/config/plugins/corral/notes.md", "mine\n");
+    check("an extra file");
+    fs::remove_file(dir.join("notes.md")).unwrap();
+    // One of corral's names without corral's version mark.
+    fs::write(dir.join("plugin.json"), "{\"name\":\"corral\"}\n").unwrap();
+    check("a file without the mark");
+    fs::remove_dir_all(&dir).unwrap();
+    // A file where the directory should be.
+    lab.write(".gemini/config/plugins/corral", "CORRAL_INTEGRATION = 1\n");
+    check("a file for the directory");
+    fs::remove_file(&dir).unwrap();
+    // A linked directory, even holding corral's own files.
+    fs::create_dir_all(lab.path("dotfiles/corral")).unwrap();
+    fs::write(lab.path("dotfiles/corral/hooks.json"), AGY_HOOKS).unwrap();
+    symlink(lab.path("dotfiles/corral"), &dir).unwrap();
+    check("a linked directory");
+    fs::remove_file(&dir).unwrap();
+    // A linked file inside it.
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(lab.path("dotfiles/plugin.json"), AGY_PLUGIN).unwrap();
+    symlink(lab.path("dotfiles/plugin.json"), dir.join("plugin.json")).unwrap();
+    check("a linked file");
 }

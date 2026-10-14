@@ -29,25 +29,26 @@ fn linked(path: &Path, base: &Path) -> bool {
     false
 }
 
-/// Installs the skill under `~/.claude` (or `CLAUDE_CONFIG_DIR`) and `~/.agents`.
+/// Installs the skill under `~/.claude` (or `CLAUDE_CONFIG_DIR`), `~/.agents` and, for agy,
+/// `~/.gemini/config`.
 pub fn install(target: &str, dry: bool, yes: bool) -> Result<Value, Failure> {
-    if !["all", "claude", "codex"].contains(&target) {
+    if !["all", "claude", "codex", "gemini"].contains(&target) {
         return Err(fail("usage", "invalid skill target"));
     }
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let mut items = Vec::new();
     let mut warnings = Vec::new();
-    for agent in ["claude", "codex"] {
+    for agent in ["claude", "codex", "gemini"] {
         if target != "all" && target != agent {
             continue;
         }
-        let base = if agent == "claude" {
-            std::env::var_os("CLAUDE_CONFIG_DIR")
+        let base = match agent {
+            "claude" => std::env::var_os("CLAUDE_CONFIG_DIR")
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".claude"))
-        } else {
-            home.join(".agents")
+                .unwrap_or_else(|| home.join(".claude")),
+            "gemini" => home.join(".gemini/config"),
+            _ => home.join(".agents"),
         };
         let dir = base.join("skills/corral-dispatch");
         for (name, body) in crate::SKILL {
@@ -167,8 +168,11 @@ mod tests {
                 .iter()
                 .map(|i| i["status"].as_str().unwrap().to_owned())
                 .collect();
-            assert_eq!(statuses, vec!["create"; 6]);
+            assert_eq!(statuses, vec!["create"; 9]);
             let skill = home.join(".claude/skills/corral-dispatch/SKILL.md");
+            assert_eq!(fs::read(&skill).unwrap(), crate::SKILL[0].1);
+            // agy reads global skills from its own config directory (R8).
+            let skill = home.join(".gemini/config/skills/corral-dispatch/SKILL.md");
             assert_eq!(fs::read(&skill).unwrap(), crate::SKILL[0].1);
             fs::write(
                 home.join(".agents/skills/corral-dispatch/遥测操作.md"),

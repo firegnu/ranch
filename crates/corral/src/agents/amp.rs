@@ -34,8 +34,9 @@ impl Adapter for Amp {
     fn global(&self) -> Option<Global> {
         Some(Global {
             dir: config,
-            file: "plugins/corral.ts",
-            body: include_str!("../../resources/amp_plugin.ts"),
+            path: "plugins/corral.ts",
+            files: &[("", include_str!("../../resources/amp_plugin.ts"))],
+            enabled: None,
         })
     }
 }

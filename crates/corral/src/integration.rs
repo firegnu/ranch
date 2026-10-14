@@ -44,6 +44,9 @@ pub fn status() -> Result<Value> {
             let (file, status, installed) = plan(&g, &home, false)?;
             item["hooks"] = json!("global");
             item["install"] = json!({"path":file,"status":status,"version":installed});
+            if let Some(enabled) = g.enabled {
+                item["install"]["enabled"] = json!(enabled(&home));
+            }
         }
         list.push(item);
     }
@@ -113,31 +116,77 @@ fn installed_version(text: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-/// An agent's global hook file and what installing (or removing) it would do there: `create`,
-/// `same` or `overwrite` (`absent` or `remove` when removing), or `foreign` for anything corral
-/// does not own and leaves in place. Also the version of the file that is there, if corral's.
+/// Where each of `g`'s files goes.
+fn targets(g: &Global, root: &Path) -> Vec<(PathBuf, &'static str)> {
+    g.files
+        .iter()
+        .map(|(f, body)| {
+            (
+                if f.is_empty() {
+                    root.to_path_buf()
+                } else {
+                    root.join(f)
+                },
+                *body,
+            )
+        })
+        .collect()
+}
+
+/// An agent's global hook file (or directory of them) and what installing (or removing) it would
+/// do there: `create`, `same` or `overwrite` (`absent` or `remove` when removing), or `foreign` for
+/// anything corral does not own and leaves in place. Also the version that is there, if corral's.
 fn plan(g: &Global, home: &Path, remove: bool) -> Result<(PathBuf, &'static str, Option<u64>)> {
     let dir = (g.dir)(home);
-    let path = dir.join(g.file);
-    if skills::linked(&path, &dir) {
-        return Ok((path, "foreign", None));
+    let root = dir.join(g.path);
+    let files = targets(g, &root);
+    let foreign = Ok((root.clone(), "foreign", None));
+    if skills::linked(&root, &dir) || files.iter().any(|(p, _)| skills::linked(p, &dir)) {
+        return foreign;
     }
-    let current = match fs::symlink_metadata(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e.into()),
-        Ok(m) if !m.is_file() => return Ok((path, "foreign", None)),
-        Ok(_) => Some(String::from_utf8(fs::read(&path)?).unwrap_or_default()),
+    // A directory is corral's only if it holds nothing but corral's files.
+    if files.iter().any(|(p, _)| p != &root) {
+        match fs::symlink_metadata(&root) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+            Ok(m) if !m.is_dir() => return foreign,
+            Ok(_) => {
+                for entry in fs::read_dir(&root)? {
+                    let entry = entry?.path();
+                    let temp = entry
+                        .file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with(".corral-"));
+                    if !temp && !files.iter().any(|(p, _)| p == &entry) {
+                        return foreign;
+                    }
+                }
+            }
+        }
+    }
+    let (mut present, mut same, mut version) = (0, 0, None);
+    for (path, body) in &files {
+        match fs::symlink_metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e.into()),
+            Ok(m) if !m.is_file() => return foreign,
+            Ok(_) => {}
+        }
+        let text = String::from_utf8(fs::read(path)?).unwrap_or_default();
+        let Some(v) = installed_version(&text) else {
+            return foreign;
+        };
+        version = version.or(Some(v));
+        present += 1;
+        same += usize::from(text == *body);
+    }
+    let status = match (present, remove) {
+        (0, false) => "create",
+        (0, true) => "absent",
+        (_, true) => "remove",
+        (_, false) if same == files.len() => "same",
+        (_, false) => "overwrite",
     };
-    let version = current.as_deref().and_then(installed_version);
-    let status = match (current.as_deref(), version, remove) {
-        (None, _, false) => "create",
-        (None, _, true) => "absent",
-        (Some(_), None, _) => "foreign",
-        (Some(_), Some(_), true) => "remove",
-        (Some(s), Some(_), false) if s == g.body => "same",
-        (Some(_), Some(_), false) => "overwrite",
-    };
-    Ok((path, status, version))
+    Ok((root, status, version))
 }
 
 pub fn install(kind: &str, remove: bool, dry: bool, yes: bool) -> Result<Value> {
@@ -156,10 +205,7 @@ pub fn install(kind: &str, remove: bool, dry: bool, yes: bool) -> Result<Value> 
     let action = if remove { "uninstall" } else { "install" };
     let mut warnings = Vec::new();
     if status == "foreign" {
-        warnings.push(format!(
-            "{} is not a file corral installed; left in place",
-            path.display()
-        ));
+        warnings.push(format!("{} is not corral's; left in place", path.display()));
     }
     let mut result = json!({"ok":true,"action":action,"agent":kind,"path":path,"status":status,"dry_run":dry,"written":false,"warnings":warnings});
     if dry || !matches!(status, "create" | "overwrite" | "remove") {
@@ -174,7 +220,7 @@ pub fn install(kind: &str, remove: bool, dry: bool, yes: bool) -> Result<Value> 
             "corral integration {action} 将{verb}：\n  [{status}] {}",
             path.display()
         );
-        eprint!("确认{verb}这个文件？[y/N] ");
+        eprint!("确认{verb}？[y/N] ");
         std::io::stderr().flush()?;
         let mut line = String::new();
         std::io::stdin().read_line(&mut line)?;
@@ -193,26 +239,43 @@ pub fn install(kind: &str, remove: bool, dry: bool, yes: bool) -> Result<Value> 
             ));
         }
     }
+    let files = targets(&g, &path);
     if remove {
-        fs::remove_file(&path)?;
+        // The file that makes the agent load the rest goes first, the directory last.
+        for (file, _) in files.iter().rev() {
+            match fs::remove_file(file) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                r => r?,
+            }
+        }
+        if files.iter().any(|(p, _)| p != &path) {
+            let _ = fs::remove_dir(&path);
+        }
     } else {
-        let parent = path.parent().unwrap();
-        fs::create_dir_all(parent)?;
-        // Written beside the target under a name the agent does not load, then moved over corral's
-        // own file, or linked where there was none, which fails if a file has appeared there.
-        let temp = parent.join(format!(".corral-{}.tmp", uuid::Uuid::new_v4()));
-        let written = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp)
-            .and_then(|mut f| f.write_all(g.body.as_bytes()))
-            .and_then(|()| match status {
-                "create" => fs::hard_link(&temp, &path).and_then(|()| fs::remove_file(&temp)),
-                _ => fs::rename(&temp, &path),
-            });
-        if let Err(e) = written {
-            let _ = fs::remove_file(&temp);
-            return Err(e.into());
+        for (file, body) in &files {
+            let parent = file.parent().unwrap();
+            fs::create_dir_all(parent)?;
+            // Written beside the target under a name the agent does not load, then moved over
+            // corral's own file, or linked where there was none, which fails if a file has
+            // appeared there.
+            let fresh = !fs::exists(file)?;
+            let temp = parent.join(format!(".corral-{}.tmp", uuid::Uuid::new_v4()));
+            let written = fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temp)
+                .and_then(|mut f| f.write_all(body.as_bytes()))
+                .and_then(|()| {
+                    if fresh {
+                        fs::hard_link(&temp, file).and_then(|()| fs::remove_file(&temp))
+                    } else {
+                        fs::rename(&temp, file)
+                    }
+                });
+            if let Err(e) = written {
+                let _ = fs::remove_file(&temp);
+                return Err(e.into());
+            }
         }
     }
     result["written"] = json!(true);

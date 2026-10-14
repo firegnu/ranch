@@ -1,0 +1,4 @@
+{
+  "name": "corral",
+  "description": "corral：只在 corral 启动的 agy 里记录状态，在别处什么都不做。CORRAL_INTEGRATION = 1"
+}
