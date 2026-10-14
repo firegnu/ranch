@@ -69,3 +69,20 @@ paddock 要在 Settings 里加一页，每家 agent 一行。「corral 支持哪
 - 主控打包、核对；用户切 `~/.local/bin/corral`、`~/.local/bin/ranch`。技能内容不变，不跑 `install-skills`。只加了命令行这边的新命令，pen 和钩子没变，不需要 `corral upgrade --all`。
 
 ## 完成记录
+
+- 做了什么：
+  - 技能位置按位置登记：`skills.rs` 的 `TARGETS`（`claude`、`codex`）和 `base`、`plan`（某个位置的技能文件和装／删会怎样）；`install-skills` 改用它们。适配器的 `skill_base` 换成 `skill_targets`：claude → `claude`；codex、pi → `codex`；omp → `claude`、`codex`。
+  - `corral integration status`（`src/integration.rs`，`cli.rs` 接入、用法行和 `--help`）：按登记顺序列出每家的 `kind`、`path`、`version`、`hooks`、`skills`，格式同任务文件第 2 条。
+  - 新建 `docs/CONTRACT.md`（ranch 在原 corral 约定之上的新增，这件只写 `integration status`）；根 README、`crates/corral/README.md`、`docs/DESIGN.md` §7 补上。
+- 验证了什么：
+  - `crates/corral/tests/integration.rs`（隔离的 HOME、PATH，合成程序）：四家按顺序、全没装时 path／version 为 null、技能全是 create 且路径对；PATH 里不可执行的文件和相对目录不算；`--version` 正常（取第一行非空、去空白）、退出码非 0、没输出、卡住（3 秒左右返回，卡住的程序和它留下的子进程都被杀掉）；`CLAUDE_CONFIG_DIR` 下 same、`~/.agents` 下 overwrite、符号链接 foreign；跑前跑后 HOME 下的文件逐字节一样；`integration`、`integration install`、多余参数、`--json` 都报 usage。
+  - 反向检查：把杀进程组改成只杀主进程，测试抓到留下的子进程（改回后通过；那次留下的两个 `sleep 60` 核对是测试进程组的，按 PID 停掉）。
+  - R3 的快照（含 `install-skills` 的 `adapters_skills.json`）未改、照旧通过；`git diff --check`；`cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 都过。
+  - 本机只读跑新编的 `corral integration status`：四家路径和版本（claude 2.1.299、codex-cli 0.162.1、pi 1.2.0、omp/18.10.4）都对，技能都是 same，用时约 1.3 秒。
+- 拿主意的地方：
+  - 不加 `--json`（corral 只输出 JSON）；`--target codex` 不改名；只报 corral 能装的用户级位置。
+  - `version` 只要退出码 0 的标准输出；标准错误不看。
+  - `hooks` 写成字符串，以后的全局接法再配字段；约定里写明前端要容忍不认识的值。
+  - 约定里加了一句别放进每秒的刷新（要等各家 `--version`）。
+- 没做的事：install/uninstall、全局钩子、新 agent；`--target` 改名；部署（要用户在场）。
+- 对 paddock：兼容新增一条命令 `corral integration status`（没有 `--json`），格式见 `docs/CONTRACT.md`；Install／Update 照旧调 `corral install-skills --target claude|codex --yes`。

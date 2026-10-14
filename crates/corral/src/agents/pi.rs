@@ -19,6 +19,10 @@ impl Adapter for Pi {
     fn quit_steps(&self) -> Value {
         json!([{"signal":"HUP","wait":5},{"signal":"TERM","wait":3}])
     }
+    /// pi also reads the Agent Skills location `~/.agents/skills`, besides its own directory.
+    fn skill_targets(&self) -> &'static [&'static str] {
+        &["codex"]
+    }
     fn raw_events(&self) -> bool {
         true
     }

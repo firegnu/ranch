@@ -47,7 +47,9 @@
 
 用户 10-14（paddock P5-94「Settings 里一键适配 agent」讨论时，经 paddock/main 转达）：“各个agent是按照这插件的方式接入到ranch的（代码级别的插件类型）。”“先恢复适配器结构，全局配置可以放宽。”任务 `docs/任务/R3-corral恢复适配器结构.md`。
 
-- 结构：`crates/corral/src/agents/`，`mod.rs` 是 `Adapter` 接口和登记表 `ADAPTERS`，每家一个文件（现在 claude、codex、pi、omp），沿用 Python 版 corral `src/corral/agents/` 的做法。每家写明：种类（程序的文件名）、启动时加的钩子参数、停止步骤、技能装到哪（`install-skills --target` 认的值由此而来）、原始事件（v2，pi／omp）里的分家规则。共用的代码（pen、cli、skills、events）只查登记表，不写某一家的名字；不认识的程序不加钩子、不能带 `--prompt`、状态为 `unknown`、按默认步骤停。
+- 结构：`crates/corral/src/agents/`，`mod.rs` 是 `Adapter` 接口和登记表 `ADAPTERS`，每家一个文件（现在 claude、codex、pi、omp），沿用 Python 版 corral `src/corral/agents/` 的做法。每家写明：种类（程序的文件名）、启动时加的钩子参数、停止步骤、读哪些技能位置（R4 起；见下）、原始事件（v2，pi／omp）里的分家规则。共用的代码（pen、cli、skills、events）只查登记表，不写某一家的名字；不认识的程序不加钩子、不能带 `--prompt`、状态为 `unknown`、按默认步骤停。
 - 加一家：加 `<种类>.rs`、在 `ADAPTERS` 登记一行。适配器往 agent 状态目录写文件的（如 pi 的 `hook_pi.ts`），文件名还要加进 `state::FILES`：agent 名字检查和清理都靠它，加进去后同名的 agent 名字不再合法（测试会查漏）。新事件名要用到共用状态机（如 codex 的 `Interrupt`）时，改 `events.rs`，它是 v1 事件格式的一部分。
+- 技能位置（R4）：按位置登记（`skills.rs` 的 `TARGETS`：`claude` 是 `$CLAUDE_CONFIG_DIR` 或 `~/.claude`，`codex` 是几家共用的 `~/.agents`），各家适配器声明自己读哪些位置（claude 读 `claude`；codex、pi 读 `codex`；omp 两个都读）。R3 时位置挂在 claude、codex 两家上，pi、omp 报没有，不符合事实。`--target codex` 的名字沿用，没改公开用法。
+- `corral integration status`（R4）由登记表生成，给前端（paddock Settings）列出各家：程序、版本、钩子怎么接（现在都是 `launch`）、技能装没装；格式见 `docs/CONTRACT.md`。
 - 共用、不归某一家的：钩子写事件（`__hook`）、`.runtime/helper`、v1／v2 事件格式和读取、pi／omp 共有的原始事件翻译（`events/raw.rs`）。
 - 全局配置：到 R3 为止，钩子只随 corral 启动的那个 agent 生效（启动参数或状态目录里的文件），不写任何全局配置。用户 10-14 同意放宽，条件：经用户确认才装；钩子不在 corral 启动的 agent 里就什么都不做；只动自己那块；原子写；能卸干净。R3 不改代码，留给以后装全局钩子那件。

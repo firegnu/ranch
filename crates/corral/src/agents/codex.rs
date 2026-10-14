@@ -3,7 +3,6 @@
 use super::{Adapter, Launch};
 use crate::Result;
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
 
 pub struct Codex;
 impl Adapter for Codex {
@@ -44,7 +43,7 @@ impl Adapter for Codex {
     fn quit_steps(&self) -> Value {
         json!([{"keys":"Aw==","wait":0.3},{"keys":"Aw==","wait":60},{"signal":"TERM","wait":3}])
     }
-    fn skill_base(&self, home: &Path, project: Option<&Path>) -> Option<PathBuf> {
-        Some(project.unwrap_or(home).join(".agents"))
+    fn skill_targets(&self) -> &'static [&'static str] {
+        &["codex"]
     }
 }

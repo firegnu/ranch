@@ -376,7 +376,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
     let op = args.first().map(String::as_str).unwrap_or("");
     if matches!(op, "--help" | "-h") {
         println!(
-            "corral start|send|keys|status|wait|reply|where|ls|read|attach|stop|pause|resume|upgrade|recover|after|guide|install-skills"
+            "corral start|send|keys|status|wait|reply|where|ls|read|attach|stop|pause|resume|upgrade|recover|after|guide|install-skills|integration"
         );
         return Ok(None);
     }
@@ -397,6 +397,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "install-skills" => {
             Some("[--target all|claude|codex] [--project DIR] [--remove] [--dry-run] [--yes]")
         }
+        "integration" => Some("status"),
         _ => None,
     };
     if let Some(usage) = help
@@ -435,6 +436,14 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             p.has("--yes"),
             p.get("--project"),
         )?));
+    }
+    if op == "integration" {
+        let p = Args::parse(&args[1..], &[], &[])?;
+        p.count(1)?;
+        if p.words[0] != "status" {
+            return Err(usage("unknown integration command"));
+        }
+        return Ok(Some(crate::integration::status()?));
     }
     if op == "after" {
         let p = Args::parse(&args[1..], &[], &["--request-id"])?;
