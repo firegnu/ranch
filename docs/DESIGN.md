@@ -13,7 +13,7 @@
 ## 2. 与前端的关系
 
 - 前端只调用 ranch 装好的命令，读 JSON 输出，不在 Cargo 里引用 ranch 的包，不读内部状态目录。各自的依赖、锁文件、工具链互不进入。
-- 全局位置归 ranch：`~/.corral`、`~/.local/bin/corral`、corral 技能（`~/.claude/skills/corral`、`~/.agents/skills/corral`），以后还有 `~/.local/bin/ranch` 和 `corral-dispatch` 技能目录。Saddle、paddock 不再打包、安装这些。
+- 全局位置归 ranch：`~/.corral`、`~/.local/bin/corral`、corral 技能（`~/.claude/skills/corral`、`~/.agents/skills/corral`，R8 起还有 `~/.gemini/config/skills/corral`），以后还有 `~/.local/bin/ranch` 和 `corral-dispatch` 技能目录。Saddle、paddock 不再打包、安装这些。
 - Saddle 是保底版（用户 10-05）：不再加新功能。用户 10-07 基本不用 Saddle 了，定“保底规矩放松吧，Saddle 不用再写影响了”：改 ranch 时只按 AGENTS.md 的规矩写明对 paddock 的影响，不再写对 Saddle 的影响，也不再问 Saddle 跟不跟。
 - 单独分发 paddock 时，打包带上 ranch 的某个版本（paddock DESIGN §7）。
 
@@ -47,11 +47,48 @@
 
 用户 10-14（paddock P5-94「Settings 里一键适配 agent」讨论时，经 paddock/main 转达）：“各个agent是按照这插件的方式接入到ranch的（代码级别的插件类型）。”“先恢复适配器结构，全局配置可以放宽。”任务 `docs/任务/R3-corral恢复适配器结构.md`。
 
-- 结构：`crates/corral/src/agents/`，`mod.rs` 是 `Adapter` 接口和登记表 `ADAPTERS`，每家一个文件（现在 claude、codex、pi、omp、amp），沿用 Python 版 corral `src/corral/agents/` 的做法。每家写明：种类（程序的文件名）、启动时加的钩子参数、停止步骤、读哪些技能位置（R4 起；见下）、原始事件（v2，pi／omp）里的分家规则。共用的代码（pen、cli、skills、events）只查登记表，不写某一家的名字；不认识的程序不加钩子、不能带 `--prompt`、状态为 `unknown`、按默认步骤停。
+- 结构：`crates/corral/src/agents/`，`mod.rs` 是 `Adapter` 接口和登记表 `ADAPTERS`，每家一个文件（现在 claude、codex、pi、omp、amp、agy），沿用 Python 版 corral `src/corral/agents/` 的做法。每家写明：种类（程序的文件名）、启动时加的钩子参数、停止步骤、读哪些技能位置（R4 起；见下）、原始事件（v2，pi／omp）里的分家规则。共用的代码（pen、cli、skills、events）只查登记表，不写某一家的名字；不认识的程序不加钩子、不能带 `--prompt`、状态为 `unknown`、按默认步骤停。
 - 加一家：加 `<种类>.rs`、在 `ADAPTERS` 登记一行。适配器往 agent 状态目录写文件的（如 pi 的 `hook_pi.ts`），文件名还要加进 `state::FILES`：agent 名字检查和清理都靠它，加进去后同名的 agent 名字不再合法（测试会查漏）。新事件名要用到共用状态机（如 codex 的 `Interrupt`）时，改 `events.rs`，它是 v1 事件格式的一部分。
-- 技能位置（R4）：按位置登记（`skills.rs` 的 `TARGETS`：`claude` 是 `$CLAUDE_CONFIG_DIR` 或 `~/.claude`，`codex` 是几家共用的 `~/.agents`），各家适配器声明自己读哪些位置（claude 读 `claude`；codex、pi 读 `codex`；omp 两个都读）。R3 时位置挂在 claude、codex 两家上，pi、omp 报没有，不符合事实。`--target codex` 的名字沿用，没改公开用法。
-- `corral integration status`（R4）由登记表生成，给前端（paddock Settings）列出各家：程序、版本、钩子怎么接（现在都是 `launch`）、技能装没装；格式见 `docs/CONTRACT.md`。
+- 技能位置（R4）：按位置登记（`skills.rs` 的 `TARGETS`：`claude` 是 `$CLAUDE_CONFIG_DIR` 或 `~/.claude`，`codex` 是几家共用的 `~/.agents`），各家适配器声明自己读哪些位置（claude 读 `claude`；codex、pi 读 `codex`；omp 两个都读）。R3 时位置挂在 claude、codex 两家上，pi、omp 报没有，不符合事实。`--target codex` 的名字沿用，没改公开用法。R8 加 `gemini`：`~/.gemini/config`，agy 只从这里读用户级技能；在项目里 agy 读 `.agents`，所以 `gemini` 没有项目位置（`--project` 带 `--target gemini` 报 `usage`，`all` 带 `--project` 时跳过它）。agy 读 `gemini`。用户 10-14 选“两份都装”：corral 和 corral-dispatch 两份技能都多装这一处。
+- `corral integration status`（R4）由登记表生成，给前端（paddock Settings）列出各家：程序、版本、钩子怎么接（`launch`；amp、agy 是 `global`）、技能装没装；格式见 `docs/CONTRACT.md`。
 - 共用、不归某一家的：钩子写事件（`__hook`）、`.runtime/helper`、v1／v2 事件格式和读取、pi／omp 共有的原始事件翻译（`events/raw.rs`）。
 - 全局配置：到 R3 为止，钩子只随 corral 启动的那个 agent 生效（启动参数或状态目录里的文件），不写任何全局配置。用户 10-14 同意放宽，条件：经用户确认才装；钩子不在 corral 启动的 agent 里就什么都不做；只动自己那块；原子写；能卸干净。R3 不改代码，留给以后装全局钩子那件。
 - 全局安装（R6，先给 amp）：不能在启动时挂钩子的 agent，适配器声明一个 `Global`（配置目录、文件、内容），`corral integration install|uninstall --agent <种类>` 经用户确认后原子写或删这一个文件，别的不动；那里已有不是 corral 写的东西（没有 `CORRAL_INTEGRATION = <n>` 版本号，或者那家配置目录及以下有符号链接；配置根目录本身是链接不算，常见于 dotfiles）就报 `foreign`、不动；用户确认后重新判断一次，变了就什么都不写，新建用硬链接、目标已有文件就失败。装上的文件只在 `CORRAL_EVENTS` 有值且 `CORRAL_KIND` 是它那家时才做事；`CORRAL_KIND`、`CORRAL_CWD` 只给这类 agent 设，现有四家的环境不变（`CORRAL_KIND` 挡住别的 agent 里跑的同种程序）。pen 还给这类 agent 设 `CORRAL_PEN_PID`，插件确认自己那个 agent 的父进程就是这个 pen，挡住 corral 管的 amp 里面直接再跑的 amp（环境全是继承的，R6 审查发现）。amp 装在 `$XDG_CONFIG_HOME/amp/plugins/corral.ts`（默认 `~/.config`），插件直接写 v1 事件，读事件和状态机不改；不挂 `tool.call`（要表态，可能绕过 amp 自己的权限）；只记顶层 thread（查不出是不是顶层时这次不记、下次再查）；amp 打开或切回一个 thread 时重新报会话开始，后台别的 thread 的事件不抢主会话；amp 不支持 `--prompt`。真实 amp 实测后：插件一加载就报会话开始（占位 id），corral 才肯 send 第一句；amp 还在加载时会跳过那一轮的 `agent.start`，插件从 thread 最后一条用户消息或这一轮结束时补记输入；插件接口在等批准时仍报 `running`，所以适配器可以声明「标题说在等用户」（`title_blocked`，amp 是 `◆ Input needed` 开头），状态为 working／idle 时报成 blocked，只对声明了的适配器生效（用户 10-14 选的做法，读屏兜底之前的最小一步）。amp 只能用 R6 及以后的 corral 操作，旧版 corral 启动的 amp 要重开，见 CONTRACT。用户 10-14 定：先 amp，然后读屏兜底，再 agy；桌面版 Amp 可能也加载这个插件，用户接受，由 paddock 在 Settings 里讲清楚。来历：`docs/调研/R5-agy与amp接入、全局安装和读屏兜底.md`、`docs/任务/R6-接入amp.md`。
 - 读屏兜底（R7，给 agy 这类钩子报不全的 agent 用）：适配器可以声明读屏规则（`screen_rules`，默认没有；一条规则看屏幕最下面 n 行非空的或整屏，「都要有」「不能有」哪些字；行指屏幕行，长行折成几行就算几行）。只有声明了规则的那家，pen 才用 `vt100` 常驻一份屏幕、喂输出、跟着改大小，并在它的内部状态回复里给出屏幕文字（`screen`，兼容新增）；别家的 pen 不建屏幕、不多花开销。读屏不能拖垮 pen（R7 审查发现 vt100 0.16.2 在缩窄截断宽字符时会 panic，未闭合的 OSC 会无限占内存）：解析器 panic 就丢掉这份屏幕、退回钩子的状态，pen 和 agent 照常；OSC、DCS 等控制字符串（不画字，标题另有 `terminal.rs` 跟踪）在喂给 vt100 之前就丢掉。命令行算状态时（`status`、`wait`、`send` 的空闲检查、提醒都经过这一处），钩子报 working／idle 而屏幕命中规则，就报 `blocked`；别的状态以钩子为准。每次按当前屏幕现算，不锁存：提示框没了就回到钩子的状态。和 R6 的标题规则合在同一处（`agents::waits_on_terminal`）。`corral upgrade` 的快照不带屏幕，新 pen 从输出环（512 KB）按当前大小重放，是近似：期间改过大小或提示早已滚出输出环时会和原屏幕不同，直到 agent 重绘；新版命令行碰到没有 `screen` 的旧 pen 就不读屏。这一件只建机制，没有哪家声明规则；规则只判 `blocked`，agy 的规则和是否加 `state_source` 在接 agy 时按真实画面定（用户 10-14）。
+- 接入 agy（R8，Google Antigravity 的命令行版）：agy 不能为一次运行挂钩子，走全局安装。
+  - `Global` 扩成可以装一个目录：`path` 加 `files`。
+    - 目录里只有 corral 的文件才算 corral 的；写到一半留下的 `.corral-*.tmp` 普通文件不算，卸载时一起删，删不掉目录就给警告。
+    - 判断时记下每个文件在不在，写的时候照判断来：判断为没有的只用硬链接新建，期间冒出了文件就失败，不覆盖（R8 审查发现原先按写时有没有来定，会覆盖竞争中出现的别人的文件，amp 也是）。
+    - 每个文件各自原子写；按次序写，让 agent 认出插件的 `plugin.json` 最后写，卸的时候它先删，空了再删目录。
+    - amp 照旧一个文件。
+  - 插件是 `~/.gemini/config/plugins/corral/`，里面只有 `plugin.json` 和 `hooks.json`。
+    - 只挂 `SessionStart`、`PreInvocation`、`PostToolUse`、`Stop` 四个只观察的事件。
+    - 不挂 `PreToolUse`：它要表态，出错会拦下工具。
+  - 每条钩子是一行 shell：`CORRAL_KIND` 是 agy、`$CORRAL_HELPER` 可执行，才 exec `"$CORRAL_HELPER" __hook agy:<事件>`；否则 `echo {}`。agy 要求每个钩子都输出 JSON。
+  - `CORRAL_HELPER` 由 pen 给 agy 设（R8 审查发现）：命名空间的 `.runtime/helper` 只在 `corral upgrade` 时切换，部署新版后、升级之前它还指着不认识 `agy:` 入口的旧版，新开的 agy 会一直 `starting`。所以共享 helper 正好是启动它的这份 corral 时用 helper（之后随 upgrade 走，和别家一样），否则直接用这份 corral 程序本身（这个 agy 就一直用它，清理旧版本时要算上）。不替用户切共享 helper。
+  - `__hook <种类>:<事件>` 是全局安装的钩子共用的入口：
+    - 查 `CORRAL_EVENTS`、`CORRAL_KIND`，以及钩子的父进程（agy）的父进程是不是 `CORRAL_PEN_PID`；
+    - 再交给适配器的 `hook` 翻译成 v1 事件；
+    - 记不记都输出 `{}`。
+  - 翻译：
+    - `SessionStart` → 会话开始。
+    - `PreInvocation` 里 `invocationNum` 为 0（一轮的第一次调模型）→ `UserPromptSubmit`，提示词取 transcript 里最后一条用户输入的 `<USER_REQUEST>` 正文；取不到就不写提示词。
+    - `PostToolUse` → 工具。
+    - `Stop` 按 `terminationReason`：用户取消 → `Interrupt`；出错 → `StopFailure`；别的 → `Stop`，回复取 transcript 里最后一条用户输入之后、最后一段非空的模型文字。
+    - `session_id` 用 `conversationId`。
+  - 和 amp 一样直接出 v1 事件，状态机不改。任务里原写走 pi／omp 的 v2 原始事件，实现时改成这样，更简单。
+  - 真实 agy 摸底（10-14，用户在场，真实 HOME，用临时探针插件，用完删掉）：
+    - 钩子继承 agy 的环境；钩子的父进程是 agy，祖父是 pen。
+    - 钩子同步执行，会挡住 agy，默认超时 30 秒（corral 设 10 秒）。
+    - `SessionStart` 只在第一句话送进去时才触发，所以 agy 必须带 `--prompt`，不带就一直 `starting`。corral 用一个参数 `--prompt-interactive=<首句>` 传进去，首句以 `-` 开头也不会被当成选项。
+    - agy 不设终端标题。批准框最下面一行是 `↑/↓ Navigate · tab Amend · ctrl+g edit/expand command`；信任目录、登录对话框是 `Navigate · enter Confirm`。所以读屏规则是：最下面 4 行非空的里同时有 `↑/↓ Navigate` 和 `tab Amend` 两个按键提示（R8 审查：只要两个词的话，回复正文提到它们就会误判）。这是 R7 机制第一次用上。不加 `state_source`（用户 10-14）。
+    - HUP 一次就停干净，连同它起的 MCP 子进程。停止步骤：HUP 等 3 秒，再 TERM 等 3 秒。
+    - 登录令牌在系统钥匙串里（go-keyring），临时 HOME 隔不开，用户改选在真实 HOME 实测。
+    - `agy plugin validate` 认 corral 的插件目录。
+  - `integration status` 的 agy 一项多报 `install.enabled`（用户 10-14 同意）：只读 agy 的 `config.json` 里 `plugins.corral.enabled`，不写。
+  - 派遣：点名才派，用默认模式、不分档；派出去干活带 `--dangerously-skip-permissions`（用户 10-14）。
+  - 钩子的开销（R8 审查）：环境不全（`CORRAL_EVENTS`、`CORRAL_KIND`、`CORRAL_PEN_PID`、`CORRAL_INSTANCE`、`CORRAL_CWD` 缺一个）时什么都不读；钩子输入最多读 16 MiB；transcript 逐行读，只解析用户输入和模型文字这两种行，只留这一轮要的。128 MiB 的 transcript 一次钩子约 30 ms、峰值内存约 3 MB（原先整份解析，审查测到约 346 MiB）。
+  - 已知限制：
+    - agy 有子 agent（`invoke_subagent`、浏览器子 agent），它们的会话会不会触发 `SessionStart` 钩子没有核实。如果会，子会话会被当成主会话（和 Claude Code 的 `/clear` 一样，最近一次会话开始成为主会话），之后主会话的事件不再算，状态可能偏。没有改成「只认第一个会话」，因为 agy 有 `/clear`（在同一进程里开新对话），那样会跟丢。遇到再按真实情况改。
+    - 钩子的 shell 里 `exec` 失败（helper 可执行但跑不起来）时不会再走 `echo {}`，agy 拿不到 JSON。helper 是 corral 自己的程序或指向它的链接（原子替换），正常不会出现；为它改掉 `exec` 会多一层 shell，要连父进程检查一起改，这次不做。
+  - 来历：`docs/任务/R8-接入agy.md`。

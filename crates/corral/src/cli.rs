@@ -405,9 +405,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "after" => Some("NAME [--request-id ID]"),
         "upgrade" | "recover" => Some("[--all|NAME] [--exe PATH]"),
         "ls" | "guide" => Some(""),
-        "install-skills" => {
-            Some("[--target all|claude|codex] [--project DIR] [--remove] [--dry-run] [--yes]")
-        }
+        "install-skills" => Some(
+            "[--target all|claude|codex|gemini] [--project DIR] [--remove] [--dry-run] [--yes]",
+        ),
         "integration" => Some(
             "status | install --agent KIND [--dry-run] [--yes] | uninstall --agent KIND [--dry-run] [--yes]",
         ),

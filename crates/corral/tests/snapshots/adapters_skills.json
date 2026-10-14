@@ -14,6 +14,11 @@
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
           "status": "create"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
+          "status": "create"
         }
       ],
       "ok": true,
@@ -38,6 +43,11 @@
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
           "status": "create"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
+          "status": "create"
         }
       ],
       "ok": true,
@@ -61,6 +71,11 @@
         {
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
           "status": "create"
         }
       ],
@@ -109,6 +124,11 @@
         {
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "absent"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
           "status": "absent"
         }
       ],
@@ -358,6 +378,11 @@
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
           "status": "create"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
+          "status": "create"
         }
       ],
       "ok": true,
@@ -382,6 +407,11 @@
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
           "status": "create"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
+          "status": "create"
         }
       ],
       "ok": true,
@@ -405,6 +435,11 @@
         {
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "create"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
           "status": "create"
         }
       ],
@@ -453,6 +488,11 @@
         {
           "agent": "codex",
           "path": "<ROOT>/.agents/skills/corral/SKILL.md",
+          "status": "absent"
+        },
+        {
+          "agent": "gemini",
+          "path": "<ROOT>/.gemini/config/skills/corral/SKILL.md",
           "status": "absent"
         }
       ],

@@ -25,6 +25,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod agy;
 mod amp;
 mod claude;
 mod codex;
@@ -38,6 +39,7 @@ static ADAPTERS: &[&dyn Adapter] = &[
     &pi::Pi,
     &omp::Omp,
     &amp::Amp,
+    &agy::Agy,
 ];
 
 pub(crate) trait Adapter: Sync {
@@ -54,6 +56,16 @@ pub(crate) trait Adapter: Sync {
     /// Whether `corral start --prompt` can pass a first prompt on the command line.
     fn prompt(&self) -> bool {
         true
+    }
+    /// The arguments that pass the first prompt, after the user's own: by default after `--`, so
+    /// options taking several values cannot swallow it and it may start with `-`.
+    fn prompt_args(&self, prompt: &str) -> Vec<String> {
+        vec!["--".into(), prompt.into()]
+    }
+    /// The events to record for `event` of a hook installed globally (`__hook <kind>:<event>`),
+    /// given the hook's input; `hooks` adds the fields every event has.
+    fn hook(&self, _event: &str, _input: &Value) -> Vec<Value> {
+        vec![]
     }
     /// Whether the terminal title says the agent waits for the user while its hooks say it works or
     /// is idle; for agents whose hooks cannot report that.
@@ -87,16 +99,21 @@ pub(crate) trait Adapter: Sync {
     }
 }
 
-/// A hook file installed into an agent's own config directory, because the agent cannot load one
-/// for a single run.
+/// A hook file, or a directory of them, installed into an agent's own config directory, because
+/// the agent cannot load hooks for a single run.
 pub(crate) struct Global {
-    /// The agent's config directory, given HOME. corral leaves the file alone if anything from the
+    /// The agent's config directory, given HOME. corral leaves its files alone if anything from a
     /// file up to this directory is a symbolic link.
     pub dir: fn(&Path) -> PathBuf,
-    /// The file's path inside `dir`.
-    pub file: &'static str,
-    /// What corral writes; it names its version as `CORRAL_INTEGRATION = <n>`.
-    pub body: &'static str,
+    /// What corral installs inside `dir`: one file, or a directory holding only `files`.
+    pub path: &'static str,
+    /// Each file's path inside `path` (empty when `path` is the file) and what corral writes there;
+    /// every file names its version as `CORRAL_INTEGRATION = <n>`. Installed in this order.
+    pub files: &'static [(&'static str, &'static str)],
+    /// Whether the agent has the installed hooks switched on, given HOME, when it says so.
+    pub enabled: Option<fn(&Path) -> Option<bool>>,
+    /// The files run `__hook <kind>:<event>` through `$CORRAL_HELPER`, which the pen then sets.
+    pub helper: bool,
 }
 
 /// What an adapter needs to build its hook arguments.
@@ -152,17 +169,39 @@ pub fn known(kind: &str) -> bool {
 }
 /// Extra environment for an agent whose hooks are a global file: they act only when
 /// `CORRAL_KIND` names their agent and the agent's parent is the pen `CORRAL_PEN_PID` (an agent
-/// started inside it inherits the rest), and report the agent's directory as `CORRAL_CWD`.
-/// Called in the pen.
+/// started inside it inherits the rest), and report the agent's directory as `CORRAL_CWD`; files
+/// that record through corral run `CORRAL_HELPER`. Called in the pen.
 pub fn env(program: &str, cwd: &str) -> Vec<(String, String)> {
-    match find(&kind(program)).filter(|a| a.global().is_some()) {
-        Some(a) => vec![
-            ("CORRAL_KIND".into(), a.kind().into()),
-            ("CORRAL_CWD".into(), cwd.into()),
-            ("CORRAL_PEN_PID".into(), std::process::id().to_string()),
-        ],
-        None => vec![],
+    let Some((a, g)) = find(&kind(program)).and_then(|a| Some((a, a.global()?))) else {
+        return vec![];
+    };
+    let mut env = vec![
+        ("CORRAL_KIND".into(), a.kind().into()),
+        ("CORRAL_CWD".into(), cwd.into()),
+        ("CORRAL_PEN_PID".into(), std::process::id().to_string()),
+    ];
+    if g.helper {
+        env.push(("CORRAL_HELPER".into(), helper()));
     }
+    env
+}
+/// The program a global hook file runs: the namespace's helper when it is this corral, so the
+/// agent's hooks follow `corral upgrade` like the others; otherwise this corral itself, since
+/// a helper left by an older corral may not know the hook (the helper only moves on upgrade).
+fn helper() -> String {
+    let exe = crate::executable().ok();
+    let link = std::path::absolute(crate::state::home())
+        .map(|h| h.join(".runtime/helper"))
+        .ok();
+    let resolved = |p: &Option<PathBuf>| p.as_ref().and_then(|p| std::fs::canonicalize(p).ok());
+    let chosen = if resolved(&link).is_some() && resolved(&link) == resolved(&exe) {
+        link
+    } else {
+        exe
+    };
+    chosen
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 pub fn quit_steps(kind: &str) -> Value {
     match find(kind) {
@@ -172,8 +211,7 @@ pub fn quit_steps(kind: &str) -> Value {
     }
 }
 /// The command line the pen starts: the program, its hook arguments, the user's arguments and
-/// the first prompt after `--`, so options taking several values cannot swallow it and it may
-/// start with `-`.
+/// the first prompt.
 pub fn argv(argv: &[String], dir: &Path, prompt: Option<&str>) -> Result<Vec<String>> {
     let mut out = vec![argv[0].clone()];
     let exe = crate::hooks::helper(&crate::executable()?, false)?;
@@ -187,7 +225,10 @@ pub fn argv(argv: &[String], dir: &Path, prompt: Option<&str>) -> Result<Vec<Str
     }
     out.extend_from_slice(&argv[1..]);
     if let Some(p) = prompt {
-        out.extend(["--".into(), p.into()]);
+        match find(&kind(&argv[0])) {
+            Some(a) => out.extend(a.prompt_args(p)),
+            None => out.extend(["--".into(), p.into()]),
+        }
     }
     Ok(out)
 }
@@ -261,9 +302,9 @@ mod tests {
         for state in ["blocked", "starting", "unknown", "stopped"] {
             assert!(!waits_on_terminal(&Screened, state, "", asking));
         }
-        // The agents corral knows read no screen; only amp reads its title.
+        // Only agy reads its screen (R8), only amp its title.
         for a in all() {
-            assert!(!reads_screen(a.kind()), "{}", a.kind());
+            assert_eq!(reads_screen(a.kind()), a.kind() == "agy", "{}", a.kind());
             assert!(!waits_on_terminal(a, "working", "", asking), "{}", a.kind());
             assert_eq!(
                 waits_on_terminal(a, "working", "◆ Input needed: x", None),

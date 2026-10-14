@@ -442,8 +442,9 @@ fn amp_starts_bare_and_reads_the_events_its_plugin_writes() {
 }
 
 #[test]
-fn no_agent_corral_knows_gets_a_screen() {
-    // R7: a pen keeps a screen only for an adapter with screen rules, and none has any yet.
+fn agents_without_screen_rules_get_no_screen() {
+    // R7: a pen keeps a screen only for an adapter with screen rules; of these, none has any (agy,
+    // which has, is checked in its own test).
     use std::io::{BufRead, BufReader, Write};
     let lab = Lab::new();
     for kind in ["claude", "codex", "pi", "omp", "amp", "other"] {
@@ -473,4 +474,467 @@ fn no_agent_corral_knows_gets_a_screen() {
         assert_eq!(reply["ok"], true, "{reply}");
         assert!(reply.get("screen").is_none(), "{kind}: {reply}");
     }
+}
+
+/// agy (R8) records through `__hook agy:<event>`, run by the plugin `integration install` writes.
+/// Its hook input carries no prompt or reply; both come from the transcript it names.
+#[test]
+fn agy_hooks_translate_its_events_only_for_the_agy_its_pen_started() {
+    let lab = Lab::new();
+    let events = lab.root.path().join("events");
+    let transcript = lab.root.path().join("transcript.jsonl");
+    let steps = [
+        json!({"type":"USER_INPUT","content":"<USER_REQUEST>\nfirst\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nnow\n</ADDITIONAL_METADATA>"}),
+        json!({"type":"PLANNER_RESPONSE","content":"old reply"}),
+        json!({"type":"USER_INPUT","content":"<USER_REQUEST>\n  second\n  line\n</USER_REQUEST>"}),
+        json!({"type":"PLANNER_RESPONSE","content":"looking"}),
+        json!({"type":"TOOL_RESULT","content":"ls output"}),
+        json!({"type":"PLANNER_RESPONSE","content":"the answer"}),
+        json!({"type":"PLANNER_RESPONSE","content":""}),
+    ];
+    let write = |steps: &[Value]| {
+        let text: String = steps.iter().map(|s| format!("{s}\n")).collect();
+        fs::write(&transcript, text).unwrap();
+    };
+    write(&steps);
+    // The hook runs as the agent's child, so the pen is its grandparent: here the test process
+    // plays the agent and its parent the pen.
+    let pen = unsafe { libc::getppid() }.to_string();
+    let none: Vec<Value> = vec![];
+    let hook = |event: &str, input: Value, env: &[(&str, &str)]| -> Vec<Value> {
+        let _ = fs::remove_file(&events);
+        let mut c = Command::new(&lab.core);
+        c.args(["__hook", event])
+            .env_clear()
+            .env("CORRAL_EVENTS", &events)
+            .env("CORRAL_INSTANCE", "i-1")
+            .env("CORRAL_KIND", "agy")
+            .env("CORRAL_CWD", "/work")
+            .env("CORRAL_PEN_PID", &pen)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped());
+        for (k, v) in env {
+            if v.is_empty() {
+                c.env_remove(k);
+            } else {
+                c.env(k, v);
+            }
+        }
+        let mut child = c.spawn().unwrap();
+        use std::io::Write;
+        write!(child.stdin.take().unwrap(), "{input}").unwrap();
+        let o = child.wait_with_output().unwrap();
+        assert!(o.status.success(), "{event}");
+        // agy needs JSON on stdout from every hook.
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "{}\n", "{event}");
+        fs::read_to_string(&events)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| {
+                let mut v: Value = serde_json::from_str(l).unwrap();
+                assert!(v["t"].is_f64(), "{v}");
+                v.as_object_mut().unwrap().remove("t");
+                v
+            })
+            .collect()
+    };
+    let input = |extra: Value| {
+        let mut v =
+            json!({"conversationId":"c-1","transcriptPath":transcript,"workspacePaths":["/work"]});
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+    let record = |fields: Value| {
+        let mut v =
+            json!({"v":1,"inst":"i-1","cwd":"/work","session_id":"c-1","has_transcript":true});
+        v.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        vec![v]
+    };
+
+    assert_eq!(
+        hook("agy:SessionStart", input(json!({})), &[]),
+        record(json!({"ev":"SessionStart","source":"startup"}))
+    );
+    // Only the first model call of a turn starts it.
+    assert_eq!(
+        hook(
+            "agy:PreInvocation",
+            input(json!({"invocationNum":0,"initialNumSteps":2})),
+            &[]
+        ),
+        record(json!({"ev":"UserPromptSubmit","prompt":"second\n  line"}))
+    );
+    assert_eq!(
+        hook("agy:PreInvocation", input(json!({"invocationNum":1})), &[]),
+        none
+    );
+    assert_eq!(
+        hook(
+            "agy:PostToolUse",
+            input(json!({"toolCall":{"name":"run_command","args":{}}})),
+            &[]
+        ),
+        record(json!({"ev":"PostToolUse","tool_name":"run_command"}))
+    );
+    // The reply is the last text since the user's last input.
+    assert_eq!(
+        hook(
+            "agy:Stop",
+            input(json!({"terminationReason":"NO_TOOL_CALL","fullyIdle":true})),
+            &[]
+        ),
+        record(json!({"ev":"Stop","last_assistant_message":"the answer"}))
+    );
+    assert_eq!(
+        hook(
+            "agy:Stop",
+            input(json!({"terminationReason":"USER_CANCELED"})),
+            &[]
+        ),
+        record(json!({"ev":"Interrupt"}))
+    );
+    assert_eq!(
+        hook("agy:Stop", input(json!({"terminationReason":"ERROR"})), &[]),
+        record(json!({"ev":"StopFailure"}))
+    );
+    // A turn that has not answered yet has no reply, and an older one is not taken for it.
+    write(&steps[..3]);
+    assert_eq!(
+        hook(
+            "agy:Stop",
+            input(json!({"terminationReason":"NO_TOOL_CALL"})),
+            &[]
+        ),
+        record(json!({"ev":"Stop","last_assistant_message":null}))
+    );
+    // Without a transcript there is no prompt, rather than an empty or made-up one.
+    let missing = json!({"conversationId":"c-1","transcriptPath":lab.root.path().join("none"),"invocationNum":0});
+    assert_eq!(
+        hook("agy:PreInvocation", missing, &[]),
+        record(json!({"ev":"UserPromptSubmit"}))
+    );
+    assert_eq!(
+        hook("agy:PostInvocation", input(json!({"invocationNum":0})), &[]),
+        none
+    );
+
+    // Anywhere but the agy its pen started, the hook only answers.
+    let stop = input(json!({"terminationReason":"NO_TOOL_CALL"}));
+    for env in [
+        &[("CORRAL_KIND", "amp")][..],
+        &[("CORRAL_KIND", "")],
+        &[("CORRAL_PEN_PID", "1")],
+        &[("CORRAL_PEN_PID", "")],
+        &[("CORRAL_EVENTS", "")],
+        &[("CORRAL_INSTANCE", "")],
+        &[("CORRAL_CWD", "")],
+    ] {
+        assert_eq!(hook("agy:Stop", stop.clone(), env), none, "{env:?}");
+        assert!(!events.exists(), "{env:?}");
+    }
+    assert_eq!(hook("nope:Stop", stop.clone(), &[]), none);
+    assert_eq!(hook("amp:Stop", stop, &[("CORRAL_KIND", "amp")]), none);
+}
+
+/// A fake agy that runs the commands of the plugin corral installs, the way agy runs hooks: as its
+/// own children, with its environment.
+const FAKE_AGY: &str = r#"#!/bin/sh
+env > "$CORRAL_EVENTS.env"
+hook() { sh -c "$(cat "$LAB/cmd.$1")" < "$LAB/in.$1" >> "$LAB/out"; }
+prompt() {
+  printf '{"type":"USER_INPUT","content":"<USER_REQUEST>\\n%s\\n</USER_REQUEST>"}\n' "$1" >> "$LAB/transcript"
+  hook PreInvocation
+}
+printf '%s\0' "$0" "$@" > "$CORRAL_EVENTS.args"
+# Like agy, it starts the session with the first prompt.
+case $1 in --prompt-interactive=*) hook SessionStart; prompt "${1#--prompt-interactive=}" ;; esac
+while IFS= read -r line; do
+  case $line in
+  ask) printf 'Run ls?\n> Allow\n  Deny\n\342\206\221/\342\206\223 Navigate \302\267 tab Amend \302\267 ctrl+g edit\n' ;;
+  tool) printf 'ran\nls\nok\ndone\n'; hook PostToolUse ;;
+  nested) (hook Stop; :) ;;
+  stop) hook Stop ;;
+  *) prompt "$line" ;;
+  esac
+done
+"#;
+
+/// Installs the plugin in the lab's HOME, writes the commands and inputs `FAKE_AGY` runs, and starts
+/// it as `name` with `prompt`. Returns its state directory and the fake's.
+fn start_agy(lab: &Lab, name: &str, prompt: &str) -> (PathBuf, PathBuf) {
+    let root = lab.root.path();
+    let dir = root.join("pens").join(name);
+    let state_dir = root.join("agy");
+    fs::create_dir(&state_dir).unwrap();
+    let o = lab.result(
+        lab.cmd()
+            .args(["integration", "install", "--agent", "agy", "--yes"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(o["out"]["written"], true, "{o}");
+    let hooks: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(".gemini/config/plugins/corral/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    let transcript = state_dir.join("transcript");
+    for (event, command, input) in [
+        (
+            "SessionStart",
+            &hooks["corral"]["SessionStart"][0]["command"],
+            json!({}),
+        ),
+        (
+            "PreInvocation",
+            &hooks["corral"]["PreInvocation"][0]["command"],
+            json!({"invocationNum":0}),
+        ),
+        (
+            "PostToolUse",
+            &hooks["corral"]["PostToolUse"][0]["hooks"][0]["command"],
+            json!({"toolCall":{"name":"run_command"}}),
+        ),
+        (
+            "Stop",
+            &hooks["corral"]["Stop"][0]["command"],
+            json!({"terminationReason":"NO_TOOL_CALL"}),
+        ),
+    ] {
+        fs::write(
+            state_dir.join(format!("cmd.{event}")),
+            command.as_str().unwrap(),
+        )
+        .unwrap();
+        let mut input = input;
+        input["conversationId"] = json!("c-1");
+        input["transcriptPath"] = json!(transcript);
+        fs::write(state_dir.join(format!("in.{event}")), input.to_string()).unwrap();
+    }
+    let path = root.join("bin/agy");
+    fs::write(&path, FAKE_AGY).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let o = lab.result(
+        lab.cmd()
+            .args(["start", name, "--cwd", "/tmp", "--env"])
+            .arg(format!("PATH={}:/usr/bin:/bin", root.join("bin").display()))
+            .arg("--env")
+            .arg(format!("LAB={}", state_dir.display()))
+            .args(["--prompt", prompt, "--", "agy"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(o["code"], 0, "{o}");
+    lab.names.borrow_mut().push(name.into());
+    let end = Instant::now() + Duration::from_secs(5);
+    while !dir.join("events.args").exists() {
+        assert!(Instant::now() < end, "agy never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    (dir, state_dir)
+}
+
+#[test]
+fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
+    use std::io::{BufRead, BufReader, Write};
+    let lab = Lab::new();
+    let root = lab.root.path();
+    let (dir, state_dir) = start_agy(&lab, "lab/agy", "-v and more");
+    let transcript = state_dir.join("transcript");
+    // The first prompt goes in one argument, so it cannot be taken for an option.
+    assert_eq!(
+        fs::read(dir.join("events.args")).unwrap(),
+        format!(
+            "{}/bin/agy\0--prompt-interactive=-v and more\0",
+            root.display()
+        )
+        .into_bytes()
+    );
+    let env = fs::read_to_string(dir.join("events.env")).unwrap();
+    // Its hooks run the namespace's helper, which is this corral.
+    let helper = format!("CORRAL_HELPER={}/pens/.runtime/helper", root.display());
+    for line in ["CORRAL_KIND=agy", "CORRAL_CWD=/tmp", &helper] {
+        assert!(env.lines().any(|l| l == line), "{env}");
+    }
+    let status =
+        || lab.result(lab.cmd().args(["status", "lab/agy"]).output().unwrap())["out"].clone();
+    let pen = format!("CORRAL_PEN_PID={}", status()["pen_pid"]);
+    assert!(env.lines().any(|l| l == pen), "{env}");
+    // Its pen keeps a screen.
+    let mut s = std::os::unix::net::UnixStream::connect(dir.join("sock")).unwrap();
+    writeln!(s, "{}", json!({"proto":1,"op":"status"})).unwrap();
+    let mut line = String::new();
+    BufReader::new(&s).read_line(&mut line).unwrap();
+    let reply: Value = serde_json::from_str(&line).unwrap();
+    assert!(reply["screen"].is_string(), "{reply}");
+
+    let keys = |text: &str| {
+        let o = lab
+            .cmd()
+            .args(["keys", "lab/agy", &format!("text:{text}"), "enter"])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    };
+    let wait = |want: &str| {
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            let s = status();
+            if s["state"] == want {
+                return s;
+            }
+            assert!(Instant::now() < end, "never became {want}: {s}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let answered = || {
+        fs::read_to_string(state_dir.join("out"))
+            .unwrap_or_default()
+            .lines()
+            .inspect(|l| assert_eq!(*l, "{}"))
+            .count()
+    };
+    let reply = |text: &str| {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(&transcript)
+            .unwrap();
+        writeln!(f, "{}", json!({"type":"PLANNER_RESPONSE","content":text})).unwrap();
+        keys("stop");
+        wait("idle");
+        let o = lab.result(lab.cmd().args(["reply", "lab/agy"]).output().unwrap());
+        assert_eq!(o["out"]["text"], text, "{o}");
+    };
+    // The prompt the hook reports is the one corral passed: its digest matches.
+    let s = wait("working");
+    assert_eq!(s["last_input_source"], "send", "{s}");
+    reply("hello");
+    // What send types reaches the transcript, and the hook reports it as the prompt.
+    let sent = lab.result(
+        lab.cmd()
+            .args(["send", "lab/agy", "list the files"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(sent["out"]["confirmed"], true, "{sent}");
+    let s = wait("working");
+    assert_eq!(s["last_input_source"], "send", "{s}");
+    // Only its screen shows that agy waits for approval.
+    keys("ask");
+    wait("blocked");
+    // The approval leaves the screen before the tool reports.
+    keys("tool");
+    let end = Instant::now() + Duration::from_secs(10);
+    while status()["last_tool"] != "run_command" {
+        assert!(Instant::now() < end, "the tool never reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(status()["state"], "working");
+    // A hook of an agy started inside this one records nothing.
+    let before = fs::read(dir.join("events")).unwrap();
+    let count = answered();
+    keys("nested");
+    let end = Instant::now() + Duration::from_secs(5);
+    while answered() == count {
+        assert!(Instant::now() < end, "the nested hook never ran");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(fs::read(dir.join("events")).unwrap(), before);
+    assert_eq!(status()["state"], "working");
+    reply("three files");
+
+    let stopped = lab.result(
+        lab.cmd()
+            .args(["stop", "lab/agy", "--timeout", "20"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        (&stopped["out"]["ok"], &stopped["out"]["stopped_by"]),
+        (&json!(true), &json!("SIGHUP"))
+    );
+}
+
+#[test]
+fn agy_reads_corral_skills_from_its_own_config() {
+    let lab = Lab::new();
+    let project = lab.root.path().join("project");
+    fs::create_dir(&project).unwrap();
+    let run =
+        |args: &[&str]| lab.result(lab.cmd().arg("install-skills").args(args).output().unwrap());
+    let o = run(&["--target", "gemini", "--yes"]);
+    assert_eq!(
+        o["out"]["items"],
+        json!([{"agent":"gemini","path":"<ROOT>/.gemini/config/skills/corral/SKILL.md","status":"create"}])
+    );
+    assert_eq!(
+        fs::read_to_string(
+            lab.root
+                .path()
+                .join(".gemini/config/skills/corral/SKILL.md")
+        )
+        .unwrap(),
+        include_str!("../resources/SKILL.md")
+    );
+    // In a project agy reads `.agents`, the codex place, so gemini has none there.
+    let project = project.to_str().unwrap();
+    let o = run(&["--target", "gemini", "--project", project, "--dry-run"]);
+    assert_eq!(
+        (&o["code"], &o["out"]["error"]),
+        (&json!(1), &json!("usage"))
+    );
+    let o = run(&["--project", project, "--dry-run"]);
+    let agents: Vec<_> = o["out"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["agent"].clone())
+        .collect();
+    assert_eq!(agents, [json!("claude"), json!("codex")]);
+    let o = run(&["--target", "gemini", "--remove", "--yes"]);
+    assert_eq!(o["out"]["items"][0]["status"], "remove");
+    assert!(
+        !lab.root
+            .path()
+            .join(".gemini/config/skills/corral")
+            .exists()
+    );
+}
+
+/// The helper only moves on `corral upgrade`, so after a new corral is installed it may still be
+/// an older one that does not know agy's hooks (R8 review): those run the corral that started agy.
+#[test]
+fn agy_hooks_do_not_use_a_helper_left_by_an_older_corral() {
+    let lab = Lab::new();
+    let root = lab.root.path();
+    let old = root.join("bin/old-corral");
+    fs::write(&old, "#!/bin/sh\ntouch \"$CORRAL_EVENTS.old\"\n").unwrap();
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::create_dir_all(root.join("pens/.runtime")).unwrap();
+    std::os::unix::fs::symlink(&old, root.join("pens/.runtime/helper")).unwrap();
+    let (dir, _) = start_agy(&lab, "lab/agy", "hello");
+    let env = fs::read_to_string(dir.join("events.env")).unwrap();
+    let core = fs::canonicalize(&lab.core).unwrap();
+    let line = format!("CORRAL_HELPER={}", core.display());
+    assert!(env.lines().any(|l| l == line), "{env}");
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let s = lab.result(lab.cmd().args(["status", "lab/agy"]).output().unwrap());
+        if s["out"]["state"] == "working" {
+            break;
+        }
+        assert!(Instant::now() < end, "the hooks never reported: {s}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!dir.join("events.old").exists());
+    // The helper itself is left alone.
+    assert_eq!(
+        fs::read_link(root.join("pens/.runtime/helper")).unwrap(),
+        old
+    );
 }
