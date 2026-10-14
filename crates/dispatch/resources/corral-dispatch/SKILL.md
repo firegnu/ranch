@@ -184,7 +184,7 @@ echo "<摘要>" | ranch dispatch route
   corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 --label effort=high --label model=gpt-6-astra --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- codex --yolo -m gpt-6-astra -c 'model_reasoning_effort="high"'
   ```
 
-  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- amp`，马上用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
+  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- amp`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
 
 - 本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn（工作接续记忆）：它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
 
@@ -201,7 +201,7 @@ echo "<摘要>" | ranch dispatch route
   | amp | `amp`（没有免确认的启动参数，要不要确认看用户自己的 amp 设置；卡在确认上时状态是 `blocked`，请用户去点） |
 
   免确认也就没有安全网：能约束它的只剩任务文件里「不要做」那几条，所以那一节要写全。免确认跳不过「是否信任这个目录」的框，见下一条。
-- 开完运行 `corral wait <名字> --timeout 60`，不要用 sleep 等。60 秒到了状态还是 `starting`，就是卡在「是否信任这个目录」这类对话框上（新项目、新仓库第一次开时常见）。这时请用户在另一个终端窗口运行 `corral attach <名字>`，或者在看板里选中它去点。不要替它点，也不要让用户在你这里用 `!` 运行。卡在启动中时，提醒不会来，不要干等。
+- 开完运行 `corral wait <名字> --timeout 60`，不要用 sleep 等。60 秒到了状态还是 `starting`，就是卡在「是否信任这个目录」这类对话框上（新项目、新仓库第一次开时常见；amp 还可能是 corral 的插件没装好，见 corral 技能）。这时请用户在另一个终端窗口运行 `corral attach <名字>`，或者在看板里选中它去点。不要替它点，也不要让用户在你这里用 `!` 运行。卡在启动中时，提醒不会来，不要干等。
 - 写代码都是长任务：按 corral 技能「长任务」一节挂提醒，交出去就结束这一轮。
 - 告诉用户：开了谁、哪家哪一档、在哪个 worktree、做什么、做完怎么通知。
 - 开出来的 agent 默认不关；写代码的 agent 活到它那个 worktree 被清掉为止（第 7 节）。

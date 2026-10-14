@@ -181,20 +181,35 @@ pub fn install(kind: &str, remove: bool, dry: bool, yes: bool) -> Result<Value> 
         if !["y", "yes"].contains(&line.trim().to_lowercase().as_str()) {
             return Err(Error::new(1, "declined", "nothing written"));
         }
+        // The file may have changed while the user answered.
+        if plan(&g, &home, remove)?.1 != status {
+            return Err(Error::new(
+                1,
+                "changed",
+                format!(
+                    "{} changed while waiting for confirmation; nothing written",
+                    path.display()
+                ),
+            ));
+        }
     }
     if remove {
         fs::remove_file(&path)?;
     } else {
         let parent = path.parent().unwrap();
         fs::create_dir_all(parent)?;
-        // Written beside the target under a name the agent does not load, then renamed over it.
+        // Written beside the target under a name the agent does not load, then moved over corral's
+        // own file, or linked where there was none, which fails if a file has appeared there.
         let temp = parent.join(format!(".corral-{}.tmp", uuid::Uuid::new_v4()));
         let written = fs::OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&temp)
             .and_then(|mut f| f.write_all(g.body.as_bytes()))
-            .and_then(|()| fs::rename(&temp, &path));
+            .and_then(|()| match status {
+                "create" => fs::hard_link(&temp, &path).and_then(|()| fs::remove_file(&temp)),
+                _ => fs::rename(&temp, &path),
+            });
         if let Err(e) = written {
             let _ = fs::remove_file(&temp);
             return Err(e.into());

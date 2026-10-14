@@ -47,11 +47,12 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
   - `create`：没装，前端显示 Install。
   - `same`：装的就是这个 corral 带的内容，前端显示 Uninstall。
   - `overwrite`：装的是 corral 的旧版或被改过，装会覆盖，前端显示 Update。
-  - `foreign`：那里有不归 corral 的东西（同名但不是 corral 写的文件、路径上的符号链接、同名目录），装、卸都不动它，前端只显示说明。
+  - `foreign`：那里有不归 corral 的东西（同名但不是 corral 写的文件、同名目录，或者那家配置目录及以下是符号链接，amp 是 `amp`、`amp/plugins` 和文件本身；配置根目录 `~/.config` 或 `$XDG_CONFIG_HOME` 本身是链接不算），装、卸都不动它，前端只显示说明。
 - `install.version`：装着的文件里写的版本号（`CORRAL_INTEGRATION = <n>`），没装或不是 corral 的为 `null`。版本号只在插件内容变了时加一，不跟 corral 的版本走。
 - 装上后，只有之后启动的 agent 才会加载；已经开着的要重开。
-- 装上的文件只在 corral 启动的那家 agent 里起作用（看环境变量 `CORRAL_EVENTS` 和 `CORRAL_KIND`），用户自己开的、别的程序里跑的都什么都不做。amp 的桌面版可能也会加载它，同样什么都不做；但每个加载了它的 amp 会多一个闲置的插件进程，前端要讲清楚。
-- `hooks` 为 `"global"` 的 agent 不支持 `corral start --prompt`（报 `usage`），要启动后再发第一句。amp 一起来就报 `idle`，start 完马上 `send` 就行。
+- 装上的文件只在 corral 启动的那家 agent 里起作用（看环境变量 `CORRAL_EVENTS`、`CORRAL_KIND`，并确认它那个 agent 进程的父进程就是 `CORRAL_PEN_PID` 指的 pen），用户自己开的、别的程序里跑的、corral 管的 amp 里面再直接运行的 amp（环境是继承来的）都什么都不做。amp 的桌面版可能也会加载它，同样什么都不做；但每个加载了它的 amp 会多一个闲置的插件进程，前端要讲清楚。
+- `hooks` 为 `"global"` 的 agent 不支持 `corral start --prompt`（报 `usage`），要启动后再发第一句。start 返回时插件不一定加载好了：先 `corral wait <名字>` 等到 `idle` 再 `send`。状态一直是 `starting`，可能是插件没装、没加载成功，或者 amp 是装插件之前开的（要重开）。
+- amp 要用 R6 及以后的 corral 操作。旧版 corral 不认识 amp：`status` 报 `unknown`，`wait` 返回 `unknown`，`send` 不检查是否空闲。旧版 corral 启动的 amp 没有 `CORRAL_KIND` 等变量，插件不工作，新版看它一直是 `starting`；`corral upgrade` 只换 pen，补不上已经在跑的 amp 的环境，要经用户同意重新启动。这和现有四家「不升级 pen 也能用新版命令」是两回事。
 - amp 的插件报不出「等批准」：corral 看 amp 设的终端标题（以 `◆ Input needed` 开头）把 `working`／`idle` 报成 `blocked`（`status`、`wait` 一样）。
 
 ## `corral integration install|uninstall`（R6）

@@ -131,12 +131,15 @@ pub fn known(kind: &str) -> bool {
     find(kind).is_some()
 }
 /// Extra environment for an agent whose hooks are a global file: they act only when
-/// `CORRAL_KIND` names their agent, and report the agent's directory as `CORRAL_CWD`.
+/// `CORRAL_KIND` names their agent and the agent's parent is the pen `CORRAL_PEN_PID` (an agent
+/// started inside it inherits the rest), and report the agent's directory as `CORRAL_CWD`.
+/// Called in the pen.
 pub fn env(program: &str, cwd: &str) -> Vec<(String, String)> {
     match find(&kind(program)).filter(|a| a.global().is_some()) {
         Some(a) => vec![
             ("CORRAL_KIND".into(), a.kind().into()),
             ("CORRAL_CWD".into(), cwd.into()),
+            ("CORRAL_PEN_PID".into(), std::process::id().to_string()),
         ],
         None => vec![],
     }

@@ -301,12 +301,18 @@ fn amp_starts_bare_and_reads_the_events_its_plugin_writes() {
             "CORRAL_HOME",
             "CORRAL_INSTANCE",
             "CORRAL_KIND",
-            "CORRAL_NAME"
+            "CORRAL_NAME",
+            "CORRAL_PEN_PID"
         ]
     );
     let text = fs::read_to_string(dir.join("events.env")).unwrap();
     assert!(text.lines().any(|l| l == "CORRAL_KIND=amp"), "{text}");
     assert!(text.lines().any(|l| l == "CORRAL_CWD=/tmp"), "{text}");
+    // The plugin checks that its amp is a child of this pen.
+    let o = lab.cmd().args(["status", "lab/amp"]).output().unwrap();
+    let s: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let pen = format!("CORRAL_PEN_PID={}", s["pen_pid"]);
+    assert!(text.lines().any(|l| l == pen), "{text}");
     // Agents whose hooks come with their start get neither.
     assert_eq!(run("lab/claude", "claude", None)["code"], 0);
     let mut names = env("lab/claude");

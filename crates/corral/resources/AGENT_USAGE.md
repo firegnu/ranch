@@ -17,7 +17,7 @@ corral reply <名字>
 - `start` 输出里的 `name` 就是之后要用的名字（`--unique` 会补后缀，如 `demo/ask-3`）。
 - 第一句话**必须**用 `--prompt` 带上；新开的 agent 不能用 `send` 送第一句。amp 例外，见下。
 - 换成 Codex：`-- codex --yolo`（在 Codex 沙箱里 corral 会直接拒绝，见下）。换成 pi：`-- pi`。换成 omp：`-- omp --approval-mode yolo`。
-- 换成 amp：`-- amp`，不能带 `--prompt`（会退回 1）：start 完马上 `corral send <名字> "<你的问题>"` 送第一句，再 wait。amp 靠装在它配置目录里的 corral 插件报状态；没装时状态一直是 `starting`、send 退回 7，告诉人运行 `corral integration install --agent amp`，不要自己装。
+- 换成 amp：`-- amp`，不能带 `--prompt`（会退回 1）：start 完先 `corral wait <名字> --timeout 60` 等到 `idle`，再 `corral send <名字> "<你的问题>"` 送第一句，然后 wait。amp 靠装在它配置目录里的 corral 插件报状态；一直是 `starting`，可能是插件没装、没加载成功，或者卡在对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent amp`，装完要重开这个 amp），不要自己装。
 - `--env CAIRN_DISABLE=1` 让临时委派的 agent 不用 cairn（工作接续记忆）：它开在同一个目录，会把它的停点存到你这条工作线上。没装 cairn 时这个变量不起作用，照写即可，不要删。人要开一个以后自己长期对话的 agent，直接 `corral start <名字> --cwd <目录> -- claude`，不带这个变量。
 - `reply` 的 `text` 是回复原文，多段文字和代码块原样保留。
 
