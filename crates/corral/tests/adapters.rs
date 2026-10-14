@@ -440,3 +440,37 @@ fn amp_starts_bare_and_reads_the_events_its_plugin_writes() {
         (&json!(true), &json!("SIGHUP"))
     );
 }
+
+#[test]
+fn no_agent_corral_knows_gets_a_screen() {
+    // R7: a pen keeps a screen only for an adapter with screen rules, and none has any yet.
+    use std::io::{BufRead, BufReader, Write};
+    let lab = Lab::new();
+    for kind in ["claude", "codex", "pi", "omp", "amp", "other"] {
+        let path = lab.root.path().join("bin").join(kind);
+        fs::write(&path, "#!/bin/sh\nprintf 'Allow?\\n'\nexec /bin/cat\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        let name = format!("lab/{kind}");
+        let o = lab.result(
+            lab.cmd()
+                .args(["start", &name, "--cwd", "/tmp", "--env"])
+                .arg(format!(
+                    "PATH={}:/usr/bin:/bin",
+                    lab.root.path().join("bin").display()
+                ))
+                .args(["--", kind])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(o["code"], 0, "{o}");
+        lab.names.borrow_mut().push(name.clone());
+        let sock = lab.root.path().join("pens").join(&name).join("sock");
+        let mut s = std::os::unix::net::UnixStream::connect(sock).unwrap();
+        writeln!(s, "{}", json!({"proto":1,"op":"status"})).unwrap();
+        let mut line = String::new();
+        BufReader::new(&s).read_line(&mut line).unwrap();
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert!(reply.get("screen").is_none(), "{kind}: {reply}");
+    }
+}
