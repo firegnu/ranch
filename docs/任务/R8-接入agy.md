@@ -94,4 +94,6 @@
 
 核对（10-14）：agy 用 go-keyring 把登录令牌存在 macOS 系统钥匙串（程序里 `cli/backend/auth/keyring.go`、`KeyringTokenStorage`），临时 HOME 隔不开登录。主控问用户，用户改选：“真实 HOME，像测 amp 那样”（用现有的登录和真实的 `~/.gemini`，插件装进 `~/.gemini/config/plugins/corral/`，用户在场）。摸底先在临时 HOME 里试（不重新登录），能用就不往真实 `~/.gemini` 放东西。
 
+技能（10-14）：agy 只从 `~/.gemini/config/skills` 读全局技能（`.agents/skills` 只在项目目录里读）。主控问用户，用户选“两份都装”：`corral install-skills` 和 `ranch dispatch install-skills` 都多装 `~/.gemini/config/skills`。
+
 ## 完成记录
