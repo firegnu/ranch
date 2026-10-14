@@ -92,4 +92,6 @@
 4. 派遣：agy 点名才派，默认模式、不分档；派出去干活带 `--dangerously-skip-permissions`。
 5. 不加 `state_source`。
 
+核对（10-14）：agy 用 go-keyring 把登录令牌存在 macOS 系统钥匙串（程序里 `cli/backend/auth/keyring.go`、`KeyringTokenStorage`），临时 HOME 隔不开登录。主控问用户，用户改选：“真实 HOME，像测 amp 那样”（用现有的登录和真实的 `~/.gemini`，插件装进 `~/.gemini/config/plugins/corral/`，用户在场）。摸底先在临时 HOME 里试（不重新登录），能用就不往真实 `~/.gemini` 放东西。
+
 ## 完成记录
