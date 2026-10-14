@@ -141,6 +141,13 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             } else {
                 snap["state"].clone()
             };
+        // An agent whose hooks cannot report a pending approval may show it in the title.
+        if matches!(public["state"].as_str(), Some("working" | "idle"))
+            && agents::find(m["kind"].as_str().unwrap_or(""))
+                .is_some_and(|a| a.title_blocked(st["title"].as_str().unwrap_or("")))
+        {
+            public["state"] = json!("blocked");
+        }
         if public["state"] == snap["state"] {
             public["state_started"] = snap["state_started"].clone();
         }
@@ -397,7 +404,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "install-skills" => {
             Some("[--target all|claude|codex] [--project DIR] [--remove] [--dry-run] [--yes]")
         }
-        "integration" => Some("status"),
+        "integration" => Some(
+            "status | install --agent KIND [--dry-run] [--yes] | uninstall --agent KIND [--dry-run] [--yes]",
+        ),
         _ => None,
     };
     if let Some(usage) = help
@@ -435,6 +444,22 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             p.has("--dry-run"),
             p.has("--yes"),
             p.get("--project"),
+        )?));
+    }
+    if op == "integration"
+        && matches!(
+            args.get(1).map(String::as_str),
+            Some("install" | "uninstall")
+        )
+    {
+        let p = Args::parse(&args[1..], &["--dry-run", "--yes"], &["--agent"])?;
+        p.count(1)?;
+        let agent = p.get("--agent").ok_or_else(|| usage("missing --agent"))?;
+        return Ok(Some(crate::integration::install(
+            agent,
+            p.words[0] == "uninstall",
+            p.has("--dry-run"),
+            p.has("--yes"),
         )?));
     }
     if op == "integration" {
@@ -518,8 +543,14 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                 return Err(Error::new(1, "bad_cwd", "no such directory").with("cwd", json!(cwd)));
             }
             let argv = &args[sep + 1..];
-            if parsed.has("--prompt") && !agents::known(&agents::kind(&argv[0])) {
-                return Err(usage("--prompt requires a recognized agent"));
+            if parsed.has("--prompt") {
+                match agents::find(&agents::kind(&argv[0])) {
+                    None => return Err(usage("--prompt requires a recognized agent")),
+                    Some(a) if !a.prompt() => {
+                        return Err(usage(format!("{} takes no --prompt", a.kind())));
+                    }
+                    Some(_) => {}
+                }
             }
             pen::start(
                 json!({"name":name,"unique":parsed.has("--unique"),"cwd":cwd,"argv":argv,"prompt":parsed.get("--prompt"),"env":parsed.pairs("--env",false)?,"labels":parsed.pairs("--label",true)?}),

@@ -22,7 +22,7 @@ fn base(target: &str, home: &Path, project: Option<&Path>) -> PathBuf {
         (_, None) => home.join(".agents"),
     }
 }
-fn linked(path: &Path, base: &Path) -> bool {
+pub(crate) fn linked(path: &Path, base: &Path) -> bool {
     let mut p = Some(path);
     while let Some(q) = p {
         if fs::symlink_metadata(q).is_ok_and(|m| m.file_type().is_symlink()) {

@@ -234,3 +234,209 @@ fn skills_install_where_they_did() {
     );
     snapshot("adapters_skills.json", &cases);
 }
+
+/// amp (R6) is new, so it is checked directly rather than against the R3 snapshots.
+#[test]
+fn amp_starts_bare_and_reads_the_events_its_plugin_writes() {
+    let lab = Lab::new();
+    // Records its environment as well as its argv.
+    let fake = "#!/bin/sh\nenv > \"$CORRAL_EVENTS.env\"\nprintf '%s\\0' \"$0\" \"$@\" > \"$CORRAL_EVENTS.args\"\nexec /bin/cat\n";
+    for name in ["amp", "claude"] {
+        let path = lab.root.path().join("bin").join(name);
+        fs::write(&path, fake).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let env = |name: &str| -> Vec<String> {
+        let text =
+            fs::read_to_string(lab.root.path().join("pens").join(name).join("events.env")).unwrap();
+        text.lines()
+            .filter(|l| l.starts_with("CORRAL_"))
+            .map(|l| l.split('=').next().unwrap().to_owned())
+            .collect()
+    };
+    let run = |name: &str, program: &str, prompt: Option<&str>| {
+        let mut c = lab.cmd();
+        c.args(["start", name, "--cwd", "/tmp", "--env"])
+            .arg(format!(
+                "PATH={}:/usr/bin:/bin",
+                lab.root.path().join("bin").display()
+            ));
+        if let Some(p) = prompt {
+            c.args(["--prompt", p]);
+        }
+        let o = lab.result(c.arg("--").arg(program).output().unwrap());
+        if o["code"] == 0 {
+            lab.names.borrow_mut().push(name.to_owned());
+            let args = lab.root.path().join("pens").join(name).join("events.args");
+            let end = Instant::now() + Duration::from_secs(5);
+            while !args.exists() {
+                assert!(Instant::now() < end, "{name} never started its program");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        o
+    };
+
+    let o = run("lab/amp-prompt", "amp", Some("hi"));
+    assert_eq!(
+        o,
+        json!({"code":1,"out":{"ok":false,"error":"usage","message":"amp takes no --prompt"}})
+    );
+
+    assert_eq!(run("lab/amp", "amp", None)["code"], 0);
+    let dir = lab.root.path().join("pens/lab/amp");
+    let args = fs::read(dir.join("events.args")).unwrap();
+    assert_eq!(
+        args,
+        format!("{}/bin/amp\0", lab.root.path().display()).into_bytes()
+    );
+    let mut names = env("lab/amp");
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "CORRAL_CWD",
+            "CORRAL_EVENTS",
+            "CORRAL_HOME",
+            "CORRAL_INSTANCE",
+            "CORRAL_KIND",
+            "CORRAL_NAME",
+            "CORRAL_PEN_PID"
+        ]
+    );
+    let text = fs::read_to_string(dir.join("events.env")).unwrap();
+    assert!(text.lines().any(|l| l == "CORRAL_KIND=amp"), "{text}");
+    assert!(text.lines().any(|l| l == "CORRAL_CWD=/tmp"), "{text}");
+    // The plugin checks that its amp is a child of this pen.
+    let o = lab.cmd().args(["status", "lab/amp"]).output().unwrap();
+    let s: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let pen = format!("CORRAL_PEN_PID={}", s["pen_pid"]);
+    assert!(text.lines().any(|l| l == pen), "{text}");
+    // Agents whose hooks come with their start get neither.
+    assert_eq!(run("lab/claude", "claude", None)["code"], 0);
+    let mut names = env("lab/claude");
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "CORRAL_EVENTS",
+            "CORRAL_HOME",
+            "CORRAL_INSTANCE",
+            "CORRAL_NAME"
+        ]
+    );
+
+    // The lines the plugin writes, in the order a turn with one approval produces them.
+    let inst = text
+        .lines()
+        .find_map(|l| l.strip_prefix("CORRAL_INSTANCE="))
+        .unwrap()
+        .to_owned();
+    let state = |events: &[Value]| {
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join("events"))
+            .unwrap();
+        for e in events {
+            let mut e = e.clone();
+            for (k, v) in [
+                ("v", json!(1)),
+                ("inst", json!(inst)),
+                ("session_id", json!("T-main")),
+                ("cwd", json!("/tmp")),
+                ("has_transcript", json!(true)),
+                ("version", json!(1)),
+            ] {
+                if e.get(k).is_none() {
+                    e[k] = v;
+                }
+            }
+            use std::io::Write;
+            writeln!(f, "{e}").unwrap();
+        }
+        let s = lab.result(lab.cmd().args(["status", "lab/amp"]).output().unwrap());
+        (s["out"]["state"].clone(), s["out"]["kind"].clone())
+    };
+    assert_eq!(
+        state(&[json!({"t":1.0,"ev":"SessionStart","source":"startup"})]),
+        (json!("idle"), json!("amp"))
+    );
+    assert_eq!(
+        state(&[json!({"t":2.0,"ev":"UserPromptSubmit","prompt":"hello"})]).0,
+        "working"
+    );
+    assert_eq!(
+        state(&[json!({"t":3.0,"ev":"Notification","notification_type":"permission_prompt"})]).0,
+        "blocked"
+    );
+    assert_eq!(state(&[json!({"t":4.0,"ev":"PostToolUse"})]).0, "working");
+    assert_eq!(
+        state(&[json!({"t":5.0,"ev":"PostToolUse","tool_name":"Bash"})]).0,
+        "working"
+    );
+    // amp shows a pending approval only in the terminal title; the fake echoes it back.
+    let title = |t: &str| {
+        let keys = [format!("text:\x1b]0;{t}\x07"), "enter".into()];
+        let o = lab
+            .cmd()
+            .args(["keys", "lab/amp"])
+            .args(&keys)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+        let end = Instant::now() + Duration::from_secs(5);
+        loop {
+            let s = lab.result(lab.cmd().args(["status", "lab/amp"]).output().unwrap());
+            if s["out"]["title"] == t {
+                return s["out"]["state"].clone();
+            }
+            assert!(Instant::now() < end, "title never became {t}: {s}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    assert_eq!(
+        title("◆ Input needed: Create a file - amp - /tmp"),
+        "blocked"
+    );
+    assert_eq!(title("Create a file - amp - /tmp"), "working");
+    // A subagent's thread never became the main session, so it changes nothing.
+    assert_eq!(
+        state(&[json!({"t":5.5,"ev":"Stop","session_id":"T-sub","last_assistant_message":"sub"})])
+            .0,
+        "working"
+    );
+    assert_eq!(
+        state(&[json!({"t":6.0,"ev":"Stop","last_assistant_message":"done here"})]).0,
+        "idle"
+    );
+    let reply = lab.result(lab.cmd().args(["reply", "lab/amp"]).output().unwrap());
+    assert_eq!(reply["out"]["text"], "done here", "{reply}");
+    // A turn whose start amp did not report still shows its approval in the title.
+    assert_eq!(title("◆ Input needed: Next - amp - /tmp"), "blocked");
+    assert_eq!(title("Next - amp - /tmp"), "idle");
+    assert_eq!(
+        state(&[json!({"t":7.0,"ev":"UserPromptSubmit","prompt":"again"})]).0,
+        "working"
+    );
+    assert_eq!(state(&[json!({"t":8.0,"ev":"Interrupt"})]).0, "idle");
+    assert_eq!(
+        state(&[
+            json!({"t":9.0,"ev":"UserPromptSubmit","prompt":"x"}),
+            json!({"t":10.0,"ev":"StopFailure"})
+        ])
+        .0,
+        "idle"
+    );
+
+    let stopped = lab.result(
+        lab.cmd()
+            .args(["stop", "lab/amp", "--timeout", "20"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(
+        (&stopped["out"]["ok"], &stopped["out"]["stopped_by"]),
+        (&json!(true), &json!("SIGHUP"))
+    );
+}
