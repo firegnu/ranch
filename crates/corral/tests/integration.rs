@@ -485,10 +485,10 @@ fn installs_and_removes_only_the_agy_plugin_directory() {
         (&json!("overwrite"), &json!(true))
     );
     assert_eq!(lab.files(), expected);
-    // A temporary file corral left behind does not make the directory someone else's.
+    // A temporary file an interrupted install left does not make the directory someone else's,
+    // and uninstalling removes it with the rest.
     lab.write(".gemini/config/plugins/corral/.corral-x.tmp", "");
     assert_eq!(lab.agy()["install"]["status"], "same");
-    fs::remove_file(dir.join(".corral-x.tmp")).unwrap();
 
     let (code, v) = lab.json(&["integration", "uninstall", "--agent", "agy"]);
     assert_eq!(
@@ -507,6 +507,14 @@ fn installs_and_removes_only_the_agy_plugin_directory() {
     );
     let (_, v) = lab.json(&["integration", "uninstall", "--agent", "agy", "--yes"]);
     assert_eq!(v["status"], "absent");
+    // Only a leftover temporary file is still corral's to remove.
+    lab.write(".gemini/config/plugins/corral/.corral-y.tmp", "");
+    let (_, v) = lab.json(&["integration", "uninstall", "--agent", "agy", "--yes"]);
+    assert_eq!(
+        (&v["status"], &v["warnings"]),
+        (&json!("remove"), &json!([]))
+    );
+    assert_eq!(lab.files(), untouched);
 }
 
 #[test]
@@ -539,6 +547,13 @@ fn leaves_a_plugin_directory_corral_does_not_own_in_place() {
     lab.write(".gemini/config/plugins/corral/notes.md", "mine\n");
     check("an extra file");
     fs::remove_file(dir.join("notes.md")).unwrap();
+    // Names like corral's temporary files that are not one.
+    lab.write(".gemini/config/plugins/corral/.corral-notes", "");
+    check("a file named like corral's");
+    fs::remove_file(dir.join(".corral-notes")).unwrap();
+    fs::create_dir(dir.join(".corral-x.tmp")).unwrap();
+    check("a directory named like a temporary file");
+    fs::remove_dir(dir.join(".corral-x.tmp")).unwrap();
     // One of corral's names without corral's version mark.
     fs::write(dir.join("plugin.json"), "{\"name\":\"corral\"}\n").unwrap();
     check("a file without the mark");

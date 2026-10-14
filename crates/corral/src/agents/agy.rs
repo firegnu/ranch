@@ -27,11 +27,12 @@ impl Adapter for Agy {
     fn prompt_args(&self, prompt: &str) -> Vec<String> {
         vec![format!("--prompt-interactive={prompt}")]
     }
-    /// No hook says agy asks for approval; its prompt ends with `↑/↓ Navigate · tab Amend`.
+    /// No hook says agy asks for approval; its prompt ends with `↑/↓ Navigate · tab Amend · …`.
+    /// Both key hints, not just the words, so a reply mentioning them does not match.
     fn screen_rules(&self) -> &'static [Rule] {
         &[Rule {
             rows: 4,
-            all: &["Navigate", "Amend"],
+            all: &["↑/↓ Navigate", "tab Amend"],
             none: &[],
         }]
     }
@@ -48,6 +49,7 @@ impl Adapter for Agy {
                 ),
             ],
             enabled: Some(enabled),
+            helper: true,
         })
     }
     /// agy's hook input has no prompt or reply; both come from its transcript.
@@ -57,12 +59,8 @@ impl Adapter for Agy {
             // The first model call of a turn.
             "PreInvocation" if input["invocationNum"] == 0 => {
                 let mut e = json!({"ev":"UserPromptSubmit"});
-                if let Some(s) = transcript(input)
-                    .iter()
-                    .rev()
-                    .find(|s| s["type"] == "USER_INPUT")
-                {
-                    e["prompt"] = json!(request(s["content"].as_str().unwrap_or("")));
+                if let Some(prompt) = turn(input).0 {
+                    e["prompt"] = json!(prompt);
                 }
                 e
             }
@@ -73,7 +71,7 @@ impl Adapter for Agy {
             "Stop" => match input["terminationReason"].as_str() {
                 Some("USER_CANCELED") => json!({"ev":"Interrupt"}),
                 Some("ERROR") => json!({"ev":"StopFailure"}),
-                _ => json!({"ev":"Stop","last_assistant_message":reply(&transcript(input))}),
+                _ => json!({"ev":"Stop","last_assistant_message":turn(input).1}),
             },
             _ => return vec![],
         };
@@ -100,17 +98,36 @@ fn enabled(home: &Path) -> Option<bool> {
     }
 }
 
-/// The steps of the transcript the hook names, oldest first.
-fn transcript(input: &Value) -> Vec<Value> {
-    input["transcriptPath"]
+/// The user's last input in the transcript the hook names, and the last text the model gave
+/// since. Read line by line, parsing only the steps that can be either, so a long conversation
+/// costs time but not memory.
+fn turn(input: &Value) -> (Option<String>, Option<String>) {
+    use std::io::BufRead;
+    let Some(file) = input["transcriptPath"]
         .as_str()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|t| {
-            t.lines()
-                .filter_map(|l| serde_json::from_str(l).ok())
-                .collect()
-        })
-        .unwrap_or_default()
+        .and_then(|p| std::fs::File::open(p).ok())
+    else {
+        return (None, None);
+    };
+    let (mut prompt, mut reply) = (None, None);
+    for line in std::io::BufReader::new(file).lines().map_while(|l| l.ok()) {
+        if !line.contains("USER_INPUT") && !line.contains("PLANNER_RESPONSE") {
+            continue;
+        }
+        let Ok(step) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let content = step["content"].as_str().unwrap_or("");
+        match step["type"].as_str() {
+            Some("USER_INPUT") => {
+                prompt = Some(request(content).to_owned());
+                reply = None;
+            }
+            Some("PLANNER_RESPONSE") if !content.is_empty() => reply = Some(content.to_owned()),
+            _ => {}
+        }
+    }
+    (prompt, reply)
 }
 
 /// What the user typed: a user step wraps it in `<USER_REQUEST>` beside metadata.
@@ -122,18 +139,6 @@ fn request(content: &str) -> &str {
         .trim()
 }
 
-/// The last text the model gave since the user's last input.
-fn reply(steps: &[Value]) -> Option<String> {
-    steps
-        .iter()
-        .rev()
-        .take_while(|s| s["type"] != "USER_INPUT")
-        .find(|s| {
-            s["type"] == "PLANNER_RESPONSE" && s["content"].as_str().is_some_and(|c| !c.is_empty())
-        })
-        .and_then(|s| s["content"].as_str().map(str::to_owned))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,7 +146,8 @@ mod tests {
     #[test]
     fn only_an_approval_prompt_reads_as_waiting() {
         let rules = Agy.screen_rules();
-        let approval = "● Run command\n  ls -la\n\n Allow this command?\n > Allow once\n   Deny\n\n ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\n\n";
+        // As agy 1.3.5 showed it in the real run (R8).
+        let approval = "Requesting permission for:\n   ls -la\nRun this command?\n> 1. Yes, run command\n  2. Yes, and always allow in this conversation for commands that start with 'ls'\n  3. Yes, and always allow for commands that start with 'ls' (Persist to settings.json)\n  4. No, cancel\n  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command\nesc to cancel                    Gemini 3.8 Flash · high\n\n";
         assert!(crate::screen::matches(rules, approval));
         // Dialogs that also navigate with the arrows wait for the user too, but not for approval:
         // trusting a folder and signing in.
@@ -150,5 +156,8 @@ mod tests {
         // Once answered, the prompt scrolls out of the last rows.
         let after = format!("{approval}ran ls\ntotal 8\nfile a\nfile b\n");
         assert!(!crate::screen::matches(rules, &after));
+        // A reply that only mentions the words.
+        let prose = "The API lets you Navigate and Amend records.\n> \n";
+        assert!(!crate::screen::matches(rules, prose));
     }
 }

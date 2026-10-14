@@ -630,6 +630,8 @@ fn agy_hooks_translate_its_events_only_for_the_agy_its_pen_started() {
         &[("CORRAL_PEN_PID", "1")],
         &[("CORRAL_PEN_PID", "")],
         &[("CORRAL_EVENTS", "")],
+        &[("CORRAL_INSTANCE", "")],
+        &[("CORRAL_CWD", "")],
     ] {
         assert_eq!(hook("agy:Stop", stop.clone(), env), none, "{env:?}");
         assert!(!events.exists(), "{env:?}");
@@ -661,12 +663,11 @@ while IFS= read -r line; do
 done
 "#;
 
-#[test]
-fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
-    use std::io::{BufRead, BufReader, Write};
-    let lab = Lab::new();
+/// Installs the plugin in the lab's HOME, writes the commands and inputs `FAKE_AGY` runs, and starts
+/// it as `name` with `prompt`. Returns its state directory and the fake's.
+fn start_agy(lab: &Lab, name: &str, prompt: &str) -> (PathBuf, PathBuf) {
     let root = lab.root.path();
-    let dir = root.join("pens/lab/agy");
+    let dir = root.join("pens").join(name);
     let state_dir = root.join("agy");
     fs::create_dir(&state_dir).unwrap();
     let o = lab.result(
@@ -719,22 +720,32 @@ fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
 
     let o = lab.result(
         lab.cmd()
-            .args(["start", "lab/agy", "--cwd", "/tmp", "--env"])
+            .args(["start", name, "--cwd", "/tmp", "--env"])
             .arg(format!("PATH={}:/usr/bin:/bin", root.join("bin").display()))
             .arg("--env")
             .arg(format!("LAB={}", state_dir.display()))
-            .args(["--prompt", "-v and more", "--", "agy"])
+            .args(["--prompt", prompt, "--", "agy"])
             .output()
             .unwrap(),
     );
     assert_eq!(o["code"], 0, "{o}");
-    lab.names.borrow_mut().push("lab/agy".into());
+    lab.names.borrow_mut().push(name.into());
     let end = Instant::now() + Duration::from_secs(5);
     while !dir.join("events.args").exists() {
         assert!(Instant::now() < end, "agy never started");
         std::thread::sleep(Duration::from_millis(20));
     }
     std::thread::sleep(Duration::from_millis(50));
+    (dir, state_dir)
+}
+
+#[test]
+fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
+    use std::io::{BufRead, BufReader, Write};
+    let lab = Lab::new();
+    let root = lab.root.path();
+    let (dir, state_dir) = start_agy(&lab, "lab/agy", "-v and more");
+    let transcript = state_dir.join("transcript");
     // The first prompt goes in one argument, so it cannot be taken for an option.
     assert_eq!(
         fs::read(dir.join("events.args")).unwrap(),
@@ -745,7 +756,9 @@ fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
         .into_bytes()
     );
     let env = fs::read_to_string(dir.join("events.env")).unwrap();
-    for line in ["CORRAL_KIND=agy", "CORRAL_CWD=/tmp"] {
+    // Its hooks run the namespace's helper, which is this corral.
+    let helper = format!("CORRAL_HELPER={}/pens/.runtime/helper", root.display());
+    for line in ["CORRAL_KIND=agy", "CORRAL_CWD=/tmp", &helper] {
         assert!(env.lines().any(|l| l == line), "{env}");
     }
     let status =
@@ -890,5 +903,38 @@ fn agy_reads_corral_skills_from_its_own_config() {
             .path()
             .join(".gemini/config/skills/corral")
             .exists()
+    );
+}
+
+/// The helper only moves on `corral upgrade`, so after a new corral is installed it may still be
+/// an older one that does not know agy's hooks (R8 review): those run the corral that started agy.
+#[test]
+fn agy_hooks_do_not_use_a_helper_left_by_an_older_corral() {
+    let lab = Lab::new();
+    let root = lab.root.path();
+    let old = root.join("bin/old-corral");
+    fs::write(&old, "#!/bin/sh\ntouch \"$CORRAL_EVENTS.old\"\n").unwrap();
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::create_dir_all(root.join("pens/.runtime")).unwrap();
+    std::os::unix::fs::symlink(&old, root.join("pens/.runtime/helper")).unwrap();
+    let (dir, _) = start_agy(&lab, "lab/agy", "hello");
+    let env = fs::read_to_string(dir.join("events.env")).unwrap();
+    let core = fs::canonicalize(&lab.core).unwrap();
+    let line = format!("CORRAL_HELPER={}", core.display());
+    assert!(env.lines().any(|l| l == line), "{env}");
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let s = lab.result(lab.cmd().args(["status", "lab/agy"]).output().unwrap());
+        if s["out"]["state"] == "working" {
+            break;
+        }
+        assert!(Instant::now() < end, "the hooks never reported: {s}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!dir.join("events.old").exists());
+    // The helper itself is left alone.
+    assert_eq!(
+        fs::read_link(root.join("pens/.runtime/helper")).unwrap(),
+        old
     );
 }

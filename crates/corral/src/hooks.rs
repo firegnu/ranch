@@ -82,15 +82,18 @@ pub(crate) fn helper(target: &Path, switch: bool) -> crate::Result<std::path::Pa
 /// in the agent corral started, whose parent is the pen, not in one started inside it with the
 /// same environment. The hook runs as the agent's child.
 fn global(kind: &str, event: &str) -> crate::Result<()> {
-    let mut bytes = Vec::new();
-    std::io::stdin().read_to_end(&mut bytes)?;
     let (Some(path), Some(adapter)) =
         (std::env::var_os("CORRAL_EVENTS"), crate::agents::find(kind))
     else {
         return Ok(());
     };
-    let pen = std::env::var("CORRAL_PEN_PID").unwrap_or_default();
-    if std::env::var("CORRAL_KIND").ok().as_deref() != Some(kind) || pen.is_empty() {
+    let var = |name| std::env::var(name).unwrap_or_default();
+    let pen = var("CORRAL_PEN_PID");
+    if var("CORRAL_KIND") != kind
+        || [&pen, &var("CORRAL_INSTANCE"), &var("CORRAL_CWD")]
+            .iter()
+            .any(|v| v.is_empty())
+    {
         return Ok(());
     }
     let agent = unsafe { libc::getppid() };
@@ -100,6 +103,9 @@ fn global(kind: &str, event: &str) -> crate::Result<()> {
     if String::from_utf8_lossy(&parent.stdout).trim() != pen {
         return Ok(());
     }
+    // Hook input is a small JSON object; anything past the limit is not read.
+    let mut bytes = Vec::new();
+    std::io::stdin().take(16 << 20).read_to_end(&mut bytes)?;
     let input: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     let mut f = OpenOptions::new()
         .append(true)

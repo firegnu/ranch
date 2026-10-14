@@ -37,6 +37,7 @@ impl Adapter for Amp {
             path: "plugins/corral.ts",
             files: &[("", include_str!("../../resources/amp_plugin.ts"))],
             enabled: None,
+            helper: false,
         })
     }
 }

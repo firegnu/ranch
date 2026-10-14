@@ -112,6 +112,8 @@ pub(crate) struct Global {
     pub files: &'static [(&'static str, &'static str)],
     /// Whether the agent has the installed hooks switched on, given HOME, when it says so.
     pub enabled: Option<fn(&Path) -> Option<bool>>,
+    /// The files run `__hook <kind>:<event>` through `$CORRAL_HELPER`, which the pen then sets.
+    pub helper: bool,
 }
 
 /// What an adapter needs to build its hook arguments.
@@ -167,17 +169,39 @@ pub fn known(kind: &str) -> bool {
 }
 /// Extra environment for an agent whose hooks are a global file: they act only when
 /// `CORRAL_KIND` names their agent and the agent's parent is the pen `CORRAL_PEN_PID` (an agent
-/// started inside it inherits the rest), and report the agent's directory as `CORRAL_CWD`.
-/// Called in the pen.
+/// started inside it inherits the rest), and report the agent's directory as `CORRAL_CWD`; files
+/// that record through corral run `CORRAL_HELPER`. Called in the pen.
 pub fn env(program: &str, cwd: &str) -> Vec<(String, String)> {
-    match find(&kind(program)).filter(|a| a.global().is_some()) {
-        Some(a) => vec![
-            ("CORRAL_KIND".into(), a.kind().into()),
-            ("CORRAL_CWD".into(), cwd.into()),
-            ("CORRAL_PEN_PID".into(), std::process::id().to_string()),
-        ],
-        None => vec![],
+    let Some((a, g)) = find(&kind(program)).and_then(|a| Some((a, a.global()?))) else {
+        return vec![];
+    };
+    let mut env = vec![
+        ("CORRAL_KIND".into(), a.kind().into()),
+        ("CORRAL_CWD".into(), cwd.into()),
+        ("CORRAL_PEN_PID".into(), std::process::id().to_string()),
+    ];
+    if g.helper {
+        env.push(("CORRAL_HELPER".into(), helper()));
     }
+    env
+}
+/// The program a global hook file runs: the namespace's helper when it is this corral, so the
+/// agent's hooks follow `corral upgrade` like the others; otherwise this corral itself, since
+/// a helper left by an older corral may not know the hook (the helper only moves on upgrade).
+fn helper() -> String {
+    let exe = crate::executable().ok();
+    let link = std::path::absolute(crate::state::home())
+        .map(|h| h.join(".runtime/helper"))
+        .ok();
+    let resolved = |p: &Option<PathBuf>| p.as_ref().and_then(|p| std::fs::canonicalize(p).ok());
+    let chosen = if resolved(&link).is_some() && resolved(&link) == resolved(&exe) {
+        link
+    } else {
+        exe
+    };
+    chosen
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 pub fn quit_steps(kind: &str) -> Value {
     match find(kind) {

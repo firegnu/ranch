@@ -56,7 +56,7 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
   - `foreign`：那里有不归 corral 的东西，装、卸都不动它，前端只显示说明。包括：
     - 同名但不是 corral 写的文件（没有版本号）；
     - 该是文件的地方是目录，或该是目录的地方是文件；
-    - agy 的插件目录里有 corral 那两个文件以外的东西（corral 自己的临时文件 `.corral-*` 不算）；
+    - agy 的插件目录里有 corral 那两个文件以外的东西（corral 写到一半留下的临时文件 `.corral-*.tmp` 不算，卸载时一起删）；
     - 那家配置目录及以下有符号链接：amp 是 `amp`、`amp/plugins` 和文件本身，agy 是 `~/.gemini/config`、`plugins`、`plugins/corral` 和里面的文件。再往上的目录（`~/.config`、`$XDG_CONFIG_HOME`、`~/.gemini`）本身是链接不算。
 - `install.version`：装着的文件里写的版本号（`CORRAL_INTEGRATION = <n>`），没装或不是 corral 的为 `null`。目录里有几个文件时取第一个在的文件里的。版本号只在插件内容变了时加一，不跟 corral 的版本走。
 - `install.enabled`（R8 起，只有 agy 有）：这家 agent 自己是不是开着 corral 的插件。
@@ -82,9 +82,10 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
   - 旧版 corral 不认识它们：`status` 报 `unknown`，`wait` 返回 `unknown`，`send` 不检查是否空闲。
   - 旧版 corral 启动的 amp／agy 没有 `CORRAL_KIND` 等变量，插件不工作，新版看它一直是 `starting`。
   - `corral upgrade` 只换 pen，补不上已经在跑的 agent 的环境，要经用户同意重新启动。这和现有四家「不升级 pen 也能用新版命令」是两回事。
+  - agy 的钩子不依赖共享 helper 先切到新版：部署新版 corral 后，不用先 `corral upgrade` 就能开 agy（那个 agy 的钩子用启动它的那份 corral）。
 - 插件报不出「等批准」时，corral 看终端，在钩子报 `working`／`idle` 时报成 `blocked`（`status`、`wait` 一样）：
   - amp 看它设的终端标题（以 `◆ Input needed` 开头）。
-  - agy 不设标题，corral 读屏：屏幕最下面 4 行非空的里同时有 `Navigate` 和 `Amend` 时，就是在等批准（agy 的批准框最下面是 `↑/↓ Navigate · tab Amend · …`）。
+  - agy 不设标题，corral 读屏：屏幕最下面 4 行非空的里同时有 `↑/↓ Navigate` 和 `tab Amend` 这两个按键提示时，就是在等批准（agy 的批准框最下面是 `↑/↓ Navigate · tab Amend · …`；回复正文里只出现这两个词不算）。
   - 每次按当前屏幕现算，批准框没了就回到钩子的状态。信任目录、登录这类对话框不算。
   - 不说明状态是钩子报的还是读屏推测的（用户 10-14 定，不加 `state_source`）。
 
@@ -96,7 +97,7 @@ corral integration uninstall --agent <kind> [--dry-run] [--yes]
 ```
 
 - 只对 `hooks` 为 `"global"` 的 agent；对别的种类、不认识的种类、缺 `--agent`、多余参数都报 `usage`，退出码 1。
-- 只写或删 `install.path` 那一个文件，或者那个目录和里面 corral 的文件，别的都不动（上一级目录不删）。每个文件的写都是原子的：同目录下先写临时文件再改名。目录里有几个文件时按次序写，最后写让 agent 认出插件的那个（agy 是 `plugin.json`），卸的时候它先删。
+- 只写或删 `install.path` 那一个文件，或者那个目录和里面 corral 的文件，别的都不动（上一级目录不删）。每个文件的写都是原子的：同目录下先写临时文件再改名。目录里有几个文件时按次序写，最后写让 agent 认出插件的那个（agy 是 `plugin.json`），卸的时候它先删。计划里没有的文件只新建、不覆盖：判断之后那里冒出了别人的文件，就报错、不动它（已经写好的 corral 文件留着，再判断时整个目录算 `foreign`）。卸载删不掉目录时（比如期间有人放进了别的文件），`written` 仍为 `true`，`warnings` 里说明目录留下了。
 - `--dry-run`：只报会怎样，不写。
 - 不带 `--yes`：终端里会问用户；不在终端里（前端调）报 `confirmation_required`，不写。前端要先让用户确认，再带 `--yes` 调。
 - 输出一行 JSON：

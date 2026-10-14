@@ -120,3 +120,89 @@
 **卸载**：
 - `integration uninstall --agent agy --yes` 删了两个文件和 `corral` 目录，`agy plugin list` 显示 “No plugins installed.”。
 - 安装时建出来的空 `plugins` 目录卸载不删（照约定只删 corral 自己那块），主控用 `rmdir` 删掉，恢复成原来没有 `plugins` 的样子。
+
+### 做了什么
+- **全局安装扩成可以装一个目录**（`Global` 加 `files`、`enabled`、`helper`）：
+  - 目录里只能有 corral 的文件；
+  - 每个文件原子写，`plugin.json` 最后写、先删；
+  - 写入照判断时的结果来，判断为没有的只新建；
+  - 卸载时清掉写到一半留下的 `.corral-*.tmp`。
+  - amp 照旧一个文件。
+- **agy 适配器**（`agents/agy.rs`）：
+  - 首句用 `--prompt-interactive=<首句>`；
+  - 停止步骤 HUP 3 秒、TERM 3 秒；
+  - 技能位置 `gemini`；
+  - 读屏规则：最下面 4 行非空的里同时有 `↑/↓ Navigate`、`tab Amend`；
+  - 插件目录装在 `~/.gemini/config/plugins/corral/`；
+  - `install.enabled` 读 agy 的 `config.json`；
+  - 钩子翻译成 v1 事件，提示词和回复从 transcript 逐行取。
+- **插件**（`resources/agy_hooks.json`、`agy_plugin.json`）：挂 SessionStart、PreInvocation、PostToolUse、Stop。每条钩子在 corral 启动的 agy 里 exec `"$CORRAL_HELPER" __hook agy:<事件>`，否则 `echo {}`。
+- **`__hook <种类>:<事件>`**（`hooks.rs`）：
+  - 环境齐全（`CORRAL_EVENTS`、`KIND`、`PEN_PID`、`INSTANCE`、`CWD`）、agy 的父进程是 pen，才读输入（最多 16 MiB）并记录；
+  - 无论记不记都输出 `{}`。
+- **pen 给用 helper 的那家设 `CORRAL_HELPER`**：共享 helper 正好是这份 corral 时用 helper，否则用这份 corral 本身。
+- **技能多一个 `gemini` 位置**（`~/.gemini/config/skills`）：
+  - `corral install-skills` 和 `ranch dispatch install-skills` 都认；
+  - 带 `--project` 时 `gemini` 报 `usage`，`all` 跳过它。
+- **文字**：
+  - CONTRACT、DESIGN §7、corral README；
+  - corral 技能、`corral guide`、corral-dispatch：agy 必带 `--prompt`，点名才派，派出去带 `--dangerously-skip-permissions`，卡在 `starting` 怎么查。
+
+### 验证了什么
+- `cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 全过。指定已部署的 `0e5bd19` 跑兼容测试（`CORRAL_COMPAT_BIN=… --test compat -- --ignored`）3 项也过。
+- **现有四家和 amp 不变**：
+  - R3 快照只多出 `all` 里的 gemini 一项（有意的改动，按用户“两份都装”，快照已重生成）；
+  - R6 amp 测试、R7 读屏测试照旧通过。审查改动中途把 `CORRAL_HELPER` 也设给了 amp，被 R6 的 amp 测试当场抓住，已改成只给 agy。
+- **合成测试**（隔离的 HOME、CORRAL_HOME，假 agy 照真插件里的命令跑钩子）：
+  - 钩子翻译：首次调模型才算一轮开始；提示词和回复不取上一轮；取消记成中断、出错记成失败；取不到就不写。
+  - 环境不全、种类不对、父进程不是 pen、在 agy 里再起的 agy：什么都不记，始终回 `{}`。
+  - 带 `--prompt` 的一轮：`send` 确认，等批准判 `blocked`，工具，回复，HUP 停止。
+  - 旧 helper 留在命名空间里时，新启动的 agy 照样能记。
+  - 插件目录：装、更新、补文件、卸干净，`enabled` 三种值；各种 `foreign` 不动；判断后冒出的文件不覆盖；留下的临时文件卸载时清掉。
+  - gemini 技能。
+  - 读屏规则用真实一轮抓到的批准框：信任对话框、提示滚走、正文提到这两个词，都不算等批准。
+- **临时改坏代码自查**：分别去掉父进程检查、helper 回退、按判断写入、`CORRAL_INSTANCE` 检查，对应测试都会失败。
+- **资源**：128 MiB 的 transcript 一次钩子约 30 ms、峰值内存约 3 MB（release）。
+- **真实一轮**：见上节，三项都过。
+- **Codex 交叉审查**：见 `R8-审查.md`，共 7 条（必须改 2，建议改 5），处理见下。
+
+### 审查意见怎么处理的
+1. **（必须改）判断为新建的文件，写时冒出来会被覆盖**：属实（amp 也是）。改成写入照判断时的结果，新建只用硬链接；补了单元测试（amp 和 agy 的最后一个文件）。
+2. **（必须改）共享 helper 还是旧版时，新开的 agy 一直 `starting`**：属实（helper 只在 `corral upgrade` 时切）。pen 给 agy 设 `CORRAL_HELPER`，插件改用它；不替用户切共享 helper。补了回归测试。
+3. **（建议改）同一进程里别的会话会抢主会话**：
+   - 没改代码。agy 有子 agent，它们会不会触发 `SessionStart` 没法离线核实。agy 也有 `/clear`，改成「只认第一个会话」会跟丢。
+   - 和 Claude Code 一样，最近一次会话开始成为主会话。写进 DESIGN 的已知限制，遇到再按真实情况改。
+4. **（建议改）transcript 每次整份读**：改成逐行读，只解析两种行、只留这一轮要的；先查环境再读输入，输入最多 16 MiB。
+5. **（建议改）环境不全仍会记；exec 失败没有 `{}`**：
+   - 前一半改了：`CORRAL_INSTANCE`、`CORRAL_CWD` 也必须有，补了用例。
+   - 后一半没改：helper 是 corral 自己的程序或原子替换的链接，正常不会 exec 失败。去掉 `exec` 会多一层 shell，要连父进程检查一起改。写进已知限制。
+6. **（建议改）正文里出现两个词就判 `blocked`**：规则改成两个按键提示，补了反例。
+7. **（建议改）留下的临时文件让卸载不干净**：卸载时清掉 corral 自己的 `.corral-*.tmp` 普通文件，删不掉目录就给警告。名字像但不是的（`.corral-notes`、名为 `.corral-x.tmp` 的目录）仍算 `foreign`。
+
+### 拿主意的地方
+- **事件**：和 amp 一样翻译成 v1 事件，没走任务里写的 pi／omp 的 v2 原始事件，状态机不改。
+- **首句**：用 `--prompt-interactive=<首句>` 一个参数，没用 `-i "<首句>"`，首句以 `-` 开头也不会被当成选项。
+- **取不到时**：提示词取不到时不写（原先会被记成字符串 `"None"`）；工具名取不到时不写。
+- **`CORRAL_HELPER`**：只给 `Global.helper` 为真的那家设，amp 的环境不变。
+- **卸载**：只删 corral 的文件和 `plugins/corral`，上一级 `plugins` 不删（和 amp 一样）。真实一轮里这个空目录是主控用 `rmdir` 删的。
+
+### 没做的事
+- agy 子 agent 的会话会不会触发钩子、会不会抢主会话，没有实测（见审查第 3 条）。
+- Antigravity IDE 会不会加载这个插件没有核对（不碰 IDE）。加载了也只是每个事件多跑一次 `sh`、回 `{}`。
+- 钩子 shell 里 `exec` 失败的保底（见审查第 5 条）。
+- macOS 上多线程同时起 `corral start` 时，管道描述符会漏进常驻的 pen，使调用方等不到输出结束。`protocol` 测试偶尔卡住就是这个原因，和这件无关，另开一件修（pen 启动时关掉继承来的多余描述符）。
+- 不加 `state_source`（用户 10-14）。
+- **摸底留在用户 `~/.gemini` 里的东西，没清，等用户定**：
+  - agy 信任列表里的测试目录 `/private/tmp/r8agy.Vg4v/work`；
+  - 测试对话记录 `~/.gemini/antigravity-cli/brain/dc7a4646-…`，以及真实一轮的两次对话记录。
+
+### 对 paddock 的影响（兼容新增，paddock 在自己的任务里接）
+- `integration status` 多一项 agy：`hooks:"global"`，`install` 多一个 `enabled` 字段（只有 agy 有）。`install.path` 是目录。
+- `integration install|uninstall --agent agy`。卸载可能带 `warnings`（目录没删掉）。
+- 技能位置多了 `gemini`：Settings 照 `skills` 列表画就行；装用 `corral install-skills --target gemini --yes`。
+- New Agent 可以选 agy，而且**必须带 Prompt**（和 amp 相反）。
+- Settings 要讲清楚：
+  - 插件装在 agy 的配置目录，只在 corral 启动的 agy 里起作用；
+  - Antigravity IDE 可能也会加载，什么都不做；
+  - 停用时（`enabled:false`）提示 `agy plugin enable corral`。
+- 状态 `blocked` 可能来自读屏，不另外标出（不加 `state_source`）。
