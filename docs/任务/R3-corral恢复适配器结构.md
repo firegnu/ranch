@@ -79,3 +79,20 @@
 - 设计文档：现在就记（结构 + 放宽全局配置的决定）。
 
 ## 完成记录
+
+- 做了什么：
+  - `0cf7e2d` 先在旧代码上钉快照（只加测试和快照文件）：`crates/corral/tests/adapters.rs` 走公开命令，四家和不认识的程序（`other`、`claude-code`）各自的启动命令（不带参数、带用户参数和 `--`、带 `--prompt`、空 `--prompt`、按 PATH 找的裸名字）、写进状态目录的钩子文件及权限、`status` 的 kind／state、`stop` 的退出码和停在哪一步，以及 `install-skills` 各 target、`--project`、`CLAUDE_CONFIG_DIR`、`--remove`、非法 target、不存在的项目目录；`src/adapter_snapshot.rs` 钉认不认得、停止步骤、`state::FILES`；`src/events/raw.rs` 的测试把 pi／omp 各特例和共有路径的事件串逐条喂给翻译，记下每步后的完整状态。快照在 `crates/corral/tests/snapshots/`。
+  - `8f6eb04` 重构：`crates/corral/src/agents/`（`mod.rs` 接口 `Adapter`、登记表 `ADAPTERS`、`find`／`kind`／`known`／`quit_steps`／`argv`；`claude.rs`、`codex.rs`、`pi.rs`、`omp.rs`），带回 Python 版的理由注释。`hooks.rs` 只留 `run`、`helper`；`pen.rs`、`cli.rs`、`skills.rs`、`events/raw.rs` 改查登记表。
+  - `docs/DESIGN.md` §7：结构、加一家要做什么、用户 10-14 放宽全局配置的决定和条件（这件不改代码）。
+- 验证了什么：
+  - 快照文件自 `0cf7e2d` 起未改（`git diff 0cf7e2d -- crates/corral/tests/snapshots` 为空），重构后全部快照照旧通过。
+  - 反向检查快照有没有用：逐个故意改坏（pi 退出原因、omp `ask`、omp 没界面、codex Interrupt 超时、claude 停止等待、默认停止步骤、codex 技能目录、claude `--project` 目录、首句前的 `--`、按程序名找适配器、pi 不收原始事件、codex 停止步骤），每一处都有快照报错，改回后通过。
+  - `git diff --check`；`cargo test --all-targets`（protocol、compat、lifecycle、pause、upgrade 等原有测试不改断言，全过）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 都过。
+  - 真实 agent：用本分支编的 corral 副本、隔离的 CORRAL_HOME（不切 `~/.local/bin/corral`，不碰用户的 agent），依次开 `ranch/test-claude`、`test-codex`、`test-pi`、`test-omp`（`--label role=test`，`--env CAIRN_DISABLE=1`）：`--prompt` 问一句、`wait` 到 idle、`reply` 拿到 `pong`；`send` 第二句确认送达、`wait` 到 idle、`reply` 拿到 `ping`；`stop` 停干净（claude、omp 由 SIGHUP 停，pi 由 SIGHUP 停、退出码 0，codex 由两次 Ctrl-C 停、退出码 0）。之后查过没有残留进程，临时目录已删。
+- 拿主意的地方：
+  - 接口按「问适配器」写，而不是把整段翻译搬进每家：pi、omp 原始事件翻译大部分相同，留在 `events/raw.rs`，分家的四处（收不收原始事件、omp 没界面的忽略、omp `ask` 算等回答、pi 只有 quit 才算结束）改成适配器方法，默认值就是不分家的行为。
+  - 技能位置进适配器（claude、codex 有，pi、omp 没有），`--target` 认的值由登记表来，仍是 `all|claude|codex`。
+  - `state::FILES` 不由登记表拼：它也管 agent 名字合不合法，是公开行为；保持原样，单元测试查每家写的文件都在里面。
+  - 种类（程序文件名）三处算法统一成 `agents::kind`。`pen.rs` 原来对没有文件名的路径会 panic，现在得到空字符串；这种路径（以 `..` 结尾或 `/`）是目录，启动程序那一步就已失败，到不了这里，行为不变。
+  - 实测要用短路径：scratchpad 路径太长，Unix socket 放不下，改在 `/tmp/r3.XXXX`（和测试一样），用完删除。
+- 没做的事：交叉审查（用户 10-14 定不要）；`crates/dispatch/src/skills.rs` 里同样的两个技能位置（另一个包，不引用 corral-core）；部署（要用户在场）。
