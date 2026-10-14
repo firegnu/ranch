@@ -59,11 +59,8 @@
   - paddock 同时起好几个 agent 时理论上也会碰上。
   - 修法：pen 启动时（`pen.rs` 起 pen 的 `pre_exec`）关掉 0、1、2 以外继承来的描述符。
   - 不在 R8 里改，等用户定。
-- agy 的已知限制（DESIGN §7「接入 agy」）：
+- agy 的已知限制（DESIGN §7「接入 agy」；用户 10-14：“主要是想通过agy加进来读屏幕的能力，agy很少用。”所以不主动追）：
   - 子 agent 的会话会不会触发钩子、抢主会话，没实测；
   - 钩子 shell 里 `exec` 失败时不回 `{}`；
   - Antigravity IDE 会不会加载插件，没核对。
-- R8 摸底留在用户 `~/.gemini` 里、还没清的东西，等用户定：
-  - agy 信任列表里的 `/private/tmp/r8agy.Vg4v/work`（目录已删）；
-  - `~/.gemini/antigravity-cli/brain/` 下的两份测试对话：摸底的 `dc7a4646-…`、真实一轮的 `42d1db0b-…`。
 - paddock 的 `docs/DESIGN.md` §3“Saddle 保底”和决策表还写着“只保证 Saddle 和运行时对得上、不兼容时写需求给 Saddle 适配”；ranch 这边已按用户 10-07“保底规矩放松吧，Saddle 不用再写影响了”改了 AGENTS.md 和 DESIGN §2，paddock 那边要不要跟着改，在 paddock 自己的任务里做。
