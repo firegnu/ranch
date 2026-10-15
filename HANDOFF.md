@@ -1,69 +1,37 @@
 # 交接
 
-## 现在在哪（2026-10-15）
+2026-10-15 起本文件只记项目级的账：现状、下一步、悬着。每次会话做了什么、用户怎么说的，由 cairn 的接续摘要记，新会话开局自动注入；更早的会话经过在 git 历史里（`git log -- HANDOFF.md`）。
 
-- 10-15 本会话（ranch/main）：没改代码、没部署。① DESIGN §5 划掉「插件协议的共享方式」，注明由 §7 适配器结构取代（用户 10-15）。② 用户从 paddock Integrations 装上 agy 插件、测过能用，见「下一步」第 1 条。新接一家 agent 的做法：在 `crates/corral/src/agents/` 加适配器、登记进 `ADAPTERS`；不能启动时挂钩子的走 `Global` 全局安装（同 amp、agy），先写调研或任务文件给用户看。
+## 现在在哪
 
-- R8 接入 agy 已合并、推送、收尾（`docs/任务/R8-接入agy.md`，交叉审查 `R8-审查.md`，设计 DESIGN §7「接入 agy」，格式 CONTRACT）。
-  - 做了什么：
-    - 全局安装可以装一个目录：agy 的插件 `~/.gemini/config/plugins/corral/`。
-    - `__hook agy:<事件>` 把 agy 的钩子翻译成 v1 事件，提示词和回复从 transcript 逐行取。
-    - 读屏判等批准（R7 的机制第一次用上）。
-    - `integration status` 多报 `install.enabled`。
-    - 技能多一个 `gemini` 位置，corral 和 corral-dispatch 两份都装。
-    - 技能里 agy 必带 `--prompt`、点名才派。
-  - 验证：
-    - 现有四家和 amp 不变（R3 快照只多 `all` 里的 gemini）。
-    - 真实一轮在用户真实 HOME 跑过：working→idle、回复对、`send` 确认、批准判 blocked 再继续、HUP 停干净。插件用完已卸，空的 `plugins` 目录也删了。
-    - 审查后改的插件命令（用 `CORRAL_HELPER`）只在合成测试里跑过，部署后装插件时可以再真跑一轮。
-  - 已部署（10-14 21:15，用户在普通终端里跑，R7 一起带上）：
-    - 两个链接指向 `versions/f86d1c2/bin/`，两条 `install-skills` 已跑（gemini 位置新装）。
-    - 之后所有 agent 空闲时用户跑了 `corral upgrade --all`：paddock/main、ranch/main complete，pen 原地换成 `f86d1c2`；`~/.corral/.runtime/helper` 切到 `f86d1c2`；已不在的 agent 只有旧提醒记录，结为 complete（两条 not_delivered）。主控核对：两个 agent 的 `exe` 都是 `f86d1c2`、升级状态 none，进程表里的 corral 只有 `f86d1c2`。
-    - 主控核对：`integration status` 六家技能都是 same，amp 插件 same，agy 插件 create（没装，`enabled:true`）；两条 install-skills 的 dry-run 全是 same。
-    - agy 插件装不装由用户定（`corral integration install --agent agy`，或以后从 paddock Settings 点）。
-  - 退回：切回 `versions/0e5bd19/bin/`。
-  - 对 paddock 的影响（兼容新增）写在任务文件完成记录末尾。10-14 用户让主控直接发给 paddock/main，请它接入 agy：发了 CONTRACT 和完成记录的位置、六条要点、用户原话“主要是想通过agy加进来读屏幕的能力，agy很少用”，让它先写任务文件给用户看。corral 回报这条消息和 paddock 输入框里的草稿合并送出（`merged_with_draft:true`），已提醒用户去看一眼。
-
-- R7 读屏兜底已合并、推送、收尾（`docs/任务/R7-读屏兜底.md`，交叉审查 `R7-审查.md`，设计 DESIGN §7「读屏兜底」）：适配器可声明读屏规则，只有声明了的那家 pen 才用 vt100 维护屏幕，命令行在 working／idle 而屏幕命中时报 blocked。这一件没有哪家声明规则，现有四家和 amp 行为不变；公开输出不变，paddock 不用动。审查后加了保护：vt100 panic 只丢掉屏幕，控制字符串不进解析器。已打包 `versions/3b7d113/`，没单独部署，随 R8 的 `f86d1c2` 一起部署了。退回：切回 `versions/0e5bd19/bin/`。
-
-- R6 接入 amp 已合并、推送、收尾（`docs/任务/R6-接入amp.md`，交叉审查 `R6-审查.md`，设计 DESIGN §7，格式 CONTRACT）：全局安装框架（`corral integration install|uninstall --agent amp`）、amp 适配器和插件（`~/.config/amp/plugins/corral.ts`）、终端标题判等批准、技能里 amp 点名才派。已部署（10-14 19:01 用户在普通终端里跑）：两个链接指向 `versions/0e5bd19/bin/`，两条 `install-skills` 已跑，`corral upgrade --all` 已跑（paddock/main、ranch/main complete，pen 原地换成 `0e5bd19`；`~/.corral/.runtime/helper` 也是 `0e5bd19`；已不在的 agent 只有旧提醒记录，结为 complete）。主控核对：`integration status` 五家技能都是 same、amp 插件 same；两条 install-skills 的 dry-run 全是 same；进程表里的 corral 只有 `0e5bd19`；开 `ranch/test-claude` 问一句拿到回复、stop 干净。插件已经在用户同意下装进真实的 `~/.config/amp/plugins/corral.ts`，就是最终内容（`integration status` 为 same），留不留由用户定。退回：切回 `versions/653c5b2/bin/`。已回报 paddock/main（10-14，用户要它接着做 paddock 这边的集成）。
-
-- R5 调研已合并、推送、收尾（`docs/任务/R5-agy与amp接入调研.md`，报告 `docs/调研/R5-agy与amp接入、全局安装和读屏兜底.md`）：只出报告，没改代码、没改 DESIGN，不用部署。结论：agy、amp 都只能走全局安装（agy 插件目录 `~/.gemini/config/plugins/corral/`，amp 系统插件 `~/.config/amp/plugins/corral.ts`）；amp 能报全，agy 缺「等批准」要读屏补；读屏建议放 pen 里用 vt100。建议次序 ① 全局安装框架 + agy → ② amp → ③ 读屏。用户 10-14 已定第六节，见任务文件末尾；等用户来讨论后再立任务。
-
-- R4 已合并、推送、收尾（`docs/任务/R4-corral-integration-status.md`）：新增只读命令 `corral integration status`（给 paddock P5-94 Settings 用，格式在新建的 `docs/CONTRACT.md`）；技能位置改成按位置登记（pi 读 `~/.agents`，omp 两个都读），`install-skills` 行为不变。已部署（10-14 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/653c5b2/bin/`；技能内容没变（dry-run 全是 same），pen、钩子、启动命令没变，没跑 `install-skills`、没 `corral upgrade --all`（在跑的 agent 的 pen 仍是 `7b761e7`，和 `653c5b2` 的 pen 代码相同）。主控部署后跑 `corral integration status`，四家路径、版本、技能状态都对。退回：切回 `versions/7b761e7/bin/`。已回报 paddock/main（合并提交 `b0e3b6f`、格式见 `docs/CONTRACT.md`、没有 `--json`）。
-
-- R3 已合并、推送、收尾（`docs/任务/R3-corral恢复适配器结构.md`，设计 `docs/DESIGN.md` §7）：corral 恢复一家一个适配器（`crates/corral/src/agents/`），行为不变，靠 `crates/corral/tests/snapshots/` 里在旧代码上钉的快照保证；四家真实 agent 实测过。已部署（10-14 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/7b761e7/bin/`；技能内容与已装的相同（dry-run 全是 same），没跑 `install-skills`；之后用户又跑了 `corral upgrade --all`（10-14，所有 agent 都空闲时）：6 个在跑的 agent（cairn、client-demo、global-mesh、jb-generator、paddock、ranch 的 main）全部 complete，pen 原地换成 `7b761e7`，agent 进程没重启；`.runtime/helper` 切到 `7b761e7`；已不在的 agent（jb-finetune/codex-1、owlet/main、ranch/review-pause-1、saddle/main）只有旧提醒记录，结为 complete（其中两条 not_delivered）。主控核对：各 agent `exe` 都是 `7b761e7`、升级状态 none，进程表里没有别的版本的 corral 进程。部署后主控用新版读了现有 agent 的状态（正常），开 `ranch/test-claude` 问两句、拿到回复、`stop` 由 SIGHUP 停干净。退回：链接切回 `versions/d55defb/bin/`。用户 10-14 定的「全局配置可以放宽」已记进 DESIGN §7，代码留给以后装全局钩子那件。
-
-- R2 已合并、推送、收尾（`docs/任务/R2-派活agent不用cairn.md`）：corral-dispatch、corral 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（用户拿 owlet 试点 cairn）。只改技能文字，corral 程序行为与 `5c5540c` 相同。已部署（10-08 16:27 用户在普通终端里跑）：`~/.local/bin/corral`、`~/.local/bin/ranch` 都指向 `versions/d55defb/bin/`，两条 `install-skills` 已跑，主控核对 `~/.claude`、`~/.agents` 下的技能与仓库逐字节一致；没做 `corral upgrade --all`（程序代码与 `5c5540c` 相同）。正在跑的主控重开后才读到新技能。
-
-- R1 corral pause／resume 已合并、推送、收尾、部署（任务和两轮交叉审查：`docs/任务/R1-corral暂停与继续.md`、`R1-审查.md`；设计 `docs/DESIGN.md` §6）。10-07 17:46 用户在场按 §6 部署：打包 `5c5540c`，用户切链接、`corral upgrade --all`（cairn/main、paddock/main、ranch/main 均 complete，两条指向已不在 agent 的旧提醒结束为 not_delivered）、`corral install-skills`；主控用 `ps` 核对没有旧版 wait／`__after` 进程（只剩一个 17:45 起的旧版 `corral attach paddock/main`，只转发不判状态）。暂停可用。
-
-- 第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。
+- 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R8 都已合并、推送、收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy 都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
-  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/f86d1c2/bin/`（10-14 21:15 起；旧版 `3b7d113`、`0e5bd19`、`653c5b2`、`7b761e7`、`d55defb`、`5c5540c`、`d771c10`、`df46247` 目录保留，不删；`corral upgrade --all` 后，在跑的 agent 的 pen 和 `~/.corral/.runtime/helper` 都是 `f86d1c2`）
+  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/f86d1c2/bin/`（R8，10-14 21:15 起）；之后 `corral upgrade --all` 过，`~/.corral/.runtime/helper` 也是 `f86d1c2`。退回：切回 `versions/0e5bd19/bin/`。旧版本目录都保留，不删。
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/` 下。
-  - agy 插件 10-15 由用户从 paddock Integrations 装上（`~/.gemini/config/plugins/corral/`，`integration status` 为 same、`enabled:true`）；amp 插件装在 `~/.config/amp/plugins/corral.ts`。
-- Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。任务和完成记录在 paddock：`../paddock/docs/任务/M2-ranch与corral.md`、`M3-dispatch进ranch.md`。
+  - 全局插件：amp 装在 `~/.config/amp/plugins/corral.ts`（10-14 用户同意后装）；agy 装在 `~/.gemini/config/plugins/corral/`（10-15 用户从 paddock Integrations 装，测过能用）。两个 `integration status` 都是 same。
+- corral 和 corral-dispatch 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（R2）；cairn 只留给用户直接对话的主控。
+- 没有进行中的活，没有任务 worktree 和分支；`../ranch-worktrees/` 下只有编译目录 `.target/main`。
+- 前端：Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。paddock 已接完 R1（P5-33）、R4（P5-94）、R6（P5-98）、R8（P5-88），进度看 paddock 的 HANDOFF。
 - 远程：`origin` = `github.com/firegnu/ranch`（public，不加许可证）。`.gitleaks.toml` 只放行 ureq 的公开测试私钥。
+
+## 用户交代、一直沿用的
+
+- Saddle 基本不用了，不跟新功能（10-07：“saddle我基本不用了”）。
+- agy 很少用，接它主要是为了读屏，它的已知限制不主动追（10-14：“主要是想通过agy加进来读屏幕的能力，agy很少用。”）。
+- 部署（切链接、`install-skills`、`corral upgrade --all`、装全局插件）由用户在普通终端里跑，主控事后核对。
 
 ## 下一步
 
-1. ~~paddock 接 agy~~：paddock P5-88 已合并安装（`../paddock/docs/任务/P5-88-集成agy.md`）。10-15 用户从 paddock Integrations 装上 agy 插件（paddock 调的是 `corral integration install --agent agy`，插件内容在 corral 里），说在 paddock 那边测过、能工作；主控核对 `integration status` 的 agy 插件为 same。用审查后插件命令（`CORRAL_HELPER`）的真实 agy 跑的就是这一轮，主控没另跑。
-2. paddock 接 R6：Settings 里装／卸 amp 插件、New Agent 支持 amp（在 paddock 自己的任务里做）。
-3. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修 macOS 上 pen 继承多余描述符的问题（见「悬着」第一条）。动手前再给用户看、定验收。
-4. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
-5. paddock 开工 P5-33（界面接 pause／resume）。
-6. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
-7. 草稿任务 `docs/任务/R10-在Linux远端装ranch.md`（paddock/main 以 ranch 主控身份 10-15 起草，给 paddock P5-90 远程 agent 用）：10-15 交接时还没提交，等用户看过、定验收。里面写了实测机器的情况，推到公开仓库前先核对没有私人信息。
+1. 草稿任务 `docs/任务/R10-在Linux远端装ranch.md`（paddock/main 以 ranch 主控身份 10-15 起草，给 paddock P5-90 远程 agent 用）：还没提交，等用户看过、定验收、远端目录和部署方式。里面写了实测机器的情况，推到公开仓库前先核对没有私人信息。
+2. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修「悬着」第一条。动手前再给用户看、定验收。
 
 ## 悬着
 
 - macOS 上多个线程同时起 `corral start` 时，某一次的输出管道可能漏进另一个常驻的 pen（Rust 标准库在 macOS 上建管道和设 close-on-exec 分两步），调用方等不到输出结束，卡住不返回。
   - `protocol.rs` 的 `concurrent_unique_starts_and_listing_preserve_live_locks` 偶尔卡住就是这个（R8 期间抓到现场：一个 pen 开着测试进程的管道）。
   - paddock 同时起好几个 agent 时理论上也会碰上。
-  - 修法：pen 启动时（`pen.rs` 起 pen 的 `pre_exec`）关掉 0、1、2 以外继承来的描述符。
-  - 已记成草稿任务 R9，找时间再做。
-- agy 的已知限制（DESIGN §7「接入 agy」；用户 10-14：“主要是想通过agy加进来读屏幕的能力，agy很少用。”所以不主动追）：
+  - 修法：pen 启动时（`pen.rs` 起 pen 的 `pre_exec`）关掉 0、1、2 以外继承来的描述符。即草稿任务 R9。
+- agy 的已知限制（DESIGN §7「接入 agy」，不主动追）：
   - 子 agent 的会话会不会触发钩子、抢主会话，没实测；
   - 钩子 shell 里 `exec` 失败时不回 `{}`；
   - Antigravity IDE 会不会加载插件，没核对。

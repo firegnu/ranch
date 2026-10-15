@@ -7,7 +7,7 @@ ranch 是 corral 等“每台机器、每个用户只能有一份”的运行时
 ## 先读
 
 - `docs/DESIGN.md`：范围、与两个前端的关系、安装方式、兼容规矩、步骤。
-- `HANDOFF.md`：现在在哪、下一步、悬着什么。
+- `HANDOFF.md`：项目级的账：现状、下一步、悬着什么。上次会话停在哪、说过什么，由 cairn 开局注入。
 - 来历和用户原话在 paddock 仓库：`../paddock/docs/背景与决策记录.md` §6g–§6j，`../paddock/docs/DESIGN.md` §2、§3。
 
 ## 规矩
@@ -36,4 +36,4 @@ ranch 是 corral 等“每台机器、每个用户只能有一份”的运行时
 - 合并前自查，在任务文件末尾写「完成记录」：做了什么、验证了什么、拿主意的地方、没做的事。
 - 合并：本地合并进 main，推送到 `origin`（`github.com/firegnu/ranch`，public，不加许可证）。推送前用 gitleaks、trufflehog 查，确认没有密钥、截图和私人数据。
 - 收尾记号：一件活合并完、worktree、分支和编译子目录清干净后，在 main 上补一条空提交，首行写「收尾: 」加一句话说明这件活。
-- 收尾之后更新 `HANDOFF.md`。设计和理由进 `docs/DESIGN.md`。
+- 收尾之后，或者项目级的事有变化时，更新 `HANDOFF.md`：现状（装的版本、开着的 agent 和 worktree）、下一步、悬着什么（新增的加上，了结的删掉）。不写会话经过（做了什么、用户怎么说的），那部分交给 cairn 的接续摘要（2026-10-15 起）。设计和理由进 `docs/DESIGN.md`。
