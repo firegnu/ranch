@@ -1,6 +1,6 @@
 # 交接
 
-## 现在在哪（2026-10-14）
+## 现在在哪（2026-10-15）
 
 - R8 接入 agy 已合并、推送、收尾（`docs/任务/R8-接入agy.md`，交叉审查 `R8-审查.md`，设计 DESIGN §7「接入 agy」，格式 CONTRACT）。
   - 做了什么：
@@ -40,13 +40,13 @@
 - 安装：
   - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/f86d1c2/bin/`（10-14 21:15 起；旧版 `3b7d113`、`0e5bd19`、`653c5b2`、`7b761e7`、`d55defb`、`5c5540c`、`d771c10`、`df46247` 目录保留，不删；`corral upgrade --all` 后，在跑的 agent 的 pen 和 `~/.corral/.runtime/helper` 都是 `f86d1c2`）
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/` 下。
-  - agy 插件没装（`~/.gemini/config/plugins` 不存在）；amp 插件装在 `~/.config/amp/plugins/corral.ts`。
+  - agy 插件 10-15 由用户从 paddock Integrations 装上（`~/.gemini/config/plugins/corral/`，`integration status` 为 same、`enabled:true`）；amp 插件装在 `~/.config/amp/plugins/corral.ts`。
 - Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。任务和完成记录在 paddock：`../paddock/docs/任务/M2-ranch与corral.md`、`M3-dispatch进ranch.md`。
 - 远程：`origin` = `github.com/firegnu/ranch`（public，不加许可证）。`.gitleaks.toml` 只放行 ureq 的公开测试私钥。
 
 ## 下一步
 
-1. paddock 接 agy（已于 10-14 发给 paddock/main，它会先写任务文件给用户看；在 paddock 自己的任务里做）。它问到 ranch 的事，主控接着答。用户日后要在真实环境装 agy 插件时，主控可以再跑一轮真实 agy：审查后改的插件命令（`CORRAL_HELPER`）只在合成测试里跑过。
+1. ~~paddock 接 agy~~：paddock P5-88 已合并安装（`../paddock/docs/任务/P5-88-集成agy.md`）。10-15 用户从 paddock Integrations 装上 agy 插件（paddock 调的是 `corral integration install --agent agy`，插件内容在 corral 里），说在 paddock 那边测过、能工作；主控核对 `integration status` 的 agy 插件为 same。用审查后插件命令（`CORRAL_HELPER`）的真实 agy 跑的就是这一轮，主控没另跑。
 2. paddock 接 R6：Settings 里装／卸 amp 插件、New Agent 支持 amp（在 paddock 自己的任务里做）。
 3. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修 macOS 上 pen 继承多余描述符的问题（见「悬着」第一条）。动手前再给用户看、定验收。
 4. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
