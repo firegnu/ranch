@@ -2,6 +2,8 @@
 
 ## 现在在哪（2026-10-15）
 
+- 10-15 本会话（ranch/main）：没改代码、没部署。① DESIGN §5 划掉「插件协议的共享方式」，注明由 §7 适配器结构取代（用户 10-15）。② 用户从 paddock Integrations 装上 agy 插件、测过能用，见「下一步」第 1 条。新接一家 agent 的做法：在 `crates/corral/src/agents/` 加适配器、登记进 `ADAPTERS`；不能启动时挂钩子的走 `Global` 全局安装（同 amp、agy），先写调研或任务文件给用户看。
+
 - R8 接入 agy 已合并、推送、收尾（`docs/任务/R8-接入agy.md`，交叉审查 `R8-审查.md`，设计 DESIGN §7「接入 agy」，格式 CONTRACT）。
   - 做了什么：
     - 全局安装可以装一个目录：agy 的插件 `~/.gemini/config/plugins/corral/`。
@@ -52,6 +54,7 @@
 4. paddock 接 P5-94 的 Settings 页（按 `docs/CONTRACT.md` 读 `corral integration status`）。
 5. paddock 开工 P5-33（界面接 pause／resume）。
 6. ~~Saddle 要不要跟暂停~~：不跟。用户 10-07：“saddle我基本不用了”。
+7. 草稿任务 `docs/任务/R10-在Linux远端装ranch.md`（paddock/main 以 ranch 主控身份 10-15 起草，给 paddock P5-90 远程 agent 用）：10-15 交接时还没提交，等用户看过、定验收。里面写了实测机器的情况，推到公开仓库前先核对没有私人信息。
 
 ## 悬着
 
