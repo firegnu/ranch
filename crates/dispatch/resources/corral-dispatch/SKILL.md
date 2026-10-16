@@ -182,13 +182,14 @@ echo "<摘要>" | ranch dispatch route
 - 名字用 AGENTS.md 规定的前缀，`--cwd` 指向它的 worktree，agent 命令后面带上这一档的参数。第一句话很短，只让它去读文件：
 
   ```sh
-  corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 --label effort=high --label model=gpt-6-astra --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- codex --yolo -m gpt-6-astra -c 'model_reasoning_effort="high"'
+  corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 --label effort=high --label model=gpt-6-astra --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort="high"'
   ```
 
   派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- amp`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
   派给 agy 照上面的样子带 `--prompt`（agy 不带它就一直是 `starting`），不带 `--label`，最后换成 `-- agy --dangerously-skip-permissions`。
 
 - 本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn（工作接续记忆）：它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
+  派给 Codex 时同理再带 `--disable memories`（下表已写上）：关掉这个会话的 Codex 记忆（等于 `-c features.memories=false`，不改全局配置）。`~/.codex/memories/` 是跨项目的，会把别的项目、工作上的内容带进来，旧约定也会和任务文件打架。
 
 - 用 `--label` 记下这一档的强度和模型：`effort=<medium / high / xhigh>`、`model=<模型名>`，和后面 agent 命令里的参数一致。看板靠它显示每个 agent 的档位；pi、omp、amp、agy 不分档，不带。
 
@@ -197,7 +198,7 @@ echo "<摘要>" | ranch dispatch route
   | agent | agent 命令 |
   |---|---|
   | Claude Code | `claude --dangerously-skip-permissions` |
-  | Codex | `codex --yolo` |
+  | Codex | `codex --yolo --disable memories` |
   | pi | `pi`（本来就没有权限框） |
   | omp | `omp --approval-mode yolo` |
   | amp | `amp`（没有免确认的启动参数，要不要确认看用户自己的 amp 设置；卡在确认上时状态是 `blocked`，请用户去点） |
