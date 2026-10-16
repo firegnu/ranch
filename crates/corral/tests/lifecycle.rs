@@ -106,7 +106,7 @@ fn terminal_attach_detaches_without_stopping_agent() {
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut size,
+                &raw mut size,
             )
         },
         0

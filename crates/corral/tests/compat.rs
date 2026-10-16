@@ -271,7 +271,7 @@ fn both_attach_clients_resize_and_detach_from_both_pens() {
                         &mut s,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
-                        &mut size,
+                        &raw mut size,
                     )
                 },
                 0
