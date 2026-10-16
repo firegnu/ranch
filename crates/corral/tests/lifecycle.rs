@@ -1,4 +1,5 @@
 // From Saddle `crates/corral-core/tests/lifecycle.rs` at commit `a31dea2`, unchanged.
+mod common;
 use serde_json::Value;
 use std::process::{Command, Output};
 struct Lab {
@@ -9,7 +10,7 @@ impl Lab {
     fn new() -> Self {
         let root = tempfile::tempdir_in("/tmp").unwrap();
         let core = root.path().join("corral");
-        std::fs::copy(env!("CARGO_BIN_EXE_corral"), &core).unwrap();
+        common::copy_exe(env!("CARGO_BIN_EXE_corral"), &core);
         Self { root, core }
     }
     fn run(&self, args: &[&str]) -> Output {

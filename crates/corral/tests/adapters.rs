@@ -1,6 +1,7 @@
 //! Per-agent behaviour seen through the public CLI, pinned by snapshots taken before the adapter
 //! refactor (R3). The snapshot files must not change; regenerate only with CORRAL_WRITE_SNAPSHOTS=1
 //! on code whose behaviour is meant to change.
+mod common;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -37,7 +38,7 @@ impl Lab {
     fn new() -> Self {
         let root = tempfile::tempdir_in("/tmp").unwrap();
         let core = root.path().join("corral");
-        fs::copy(env!("CARGO_BIN_EXE_corral"), &core).unwrap();
+        common::copy_exe(env!("CARGO_BIN_EXE_corral"), &core);
         fs::create_dir(root.path().join("bin")).unwrap();
         Self {
             root,

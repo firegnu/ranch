@@ -1,4 +1,5 @@
 // From Saddle `crates/corral-core/tests/upgrade.rs` at commit `a31dea2`, unchanged.
+mod common;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -22,7 +23,7 @@ impl Lab {
         let new = root.path().join("v2/corral");
         for p in [&old, &new] {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
-            fs::copy(env!("CARGO_BIN_EXE_corral"), p).unwrap();
+            common::copy_exe(env!("CARGO_BIN_EXE_corral"), p);
         }
         Self {
             root,
