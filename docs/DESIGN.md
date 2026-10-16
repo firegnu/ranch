@@ -22,6 +22,17 @@
 - 打包工具（Rust）生成不可变版本目录 `~/.local/share/ranch/versions/<ranch 提交>/`：`bin/corral`、`bin/ranch`、`share/corral/`（随程序的资源和设计文档）、`BUILD.txt`（提交、目标平台、工作区是否干净、校验和）。目录已存在就拒绝；只生成目录，不切链接、不装技能。
 - 切换 `~/.local/bin/corral`、`~/.local/bin/ranch` 和安装技能（`corral install-skills`、`ranch dispatch install-skills`）是单独的部署操作，用户在场时做。已在运行的 agent 由启动它的那份 corral 管理；要换过来用 `corral upgrade`（用户 10-05 定：第 1 步切换时不做）。
 
+### 在另一台机器（Linux）上装和升级（R10，10-16）
+
+用户的远端多半是 Linux 或 VPS，ssh 能连上。macOS（aarch64）和 Linux（x86_64）都编得过、测得过；Linux 上的实测机器用 pi、omp 走过 start、钩子状态、send、reply、wait、pause/resume、经 ssh 的 attach、stop。
+
+- **装**：在那台机器上取 ranch 的代码，`cargo run -p ranch-package` 打出版本目录（`BUILD.txt` 的目标是那台机器的平台）；用户在场时切 `~/.local/bin/corral`、`~/.local/bin/ranch` 的链接，跑 `corral install-skills`、`ranch dispatch install-skills`。和本机同一套规矩。
+- **升级**：同上，再加 `corral upgrade --all`，把在跑的 agent 换到新版本。
+- **代码怎么过去**：远端仓库设 `receive.denyCurrentBranch updateInstead`，本机用 `git push <host>:<目录> <分支>` 直接推过去，不经 GitHub。
+- **前端不装、不升级远端**：那是用户在场时的部署操作。前端只读远端的状态（连不连得上、corral 在哪、`--version`）。
+- **corral 不需要在非交互 ssh 的 PATH 里**：`~/.local/bin` 常常只在交互登录 shell 的 PATH 里。前端第一次连上时找一次（先 `command -v corral`，找不到试 `$HOME/.local/bin/corral`），看 `corral --version` 的 `contract` 是不是 `"1"`，记下绝对路径，以后直接用这个路径调。agent 程序（如装在 nvm 目录里的 pi）也不必在那个 PATH 里：corral 开 agent 时用 `$SHELL -l -i` 重建登录环境。
+- **attach**：`ssh -tt -e none <host> <corral 绝对路径> attach <名字>`。`-tt` 是因为 `corral attach` 要求两头都是终端；`-e none` 关掉 ssh 的 `~` 转义，免得行首打 `~.` 断开。本机这头必须是真终端，窗口大小随 ssh 送过去；本机不是终端时远端拿到的是 0×0，agent 画不出东西。
+
 ## 4. 步骤
 
 1. **corral**（任务：`../paddock/docs/任务/M2-ranch与corral.md`）：迁入、打包工具、切换 `~/.local/bin/corral`；Saddle 侧改成用 ranch 的 corral（需求交 Saddle 主控）。做到 Saddle 和 paddock 都能用为止（用户 10-05：“先把corral从saddle中拉出去，直到saddle能够和新的corral一块工作”）。
