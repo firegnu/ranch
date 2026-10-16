@@ -6,10 +6,10 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R8 都已合并、推送、收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy 都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
-  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/c4bf688/bin/`（10-16 起，corral-dispatch 技能里派出去的 Codex 加 `--disable memories`；corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：切回 `versions/f86d1c2/bin/`。旧版本目录都保留，不删。
+  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/14fb8d9/bin/`（10-16 起，corral 和 corral-dispatch 两个技能开出去的 Codex 都加 `--disable memories`；corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：切回 `versions/c4bf688/bin/`（只有 dispatch 那边关记忆）或 `versions/f86d1c2/bin/`。旧版本目录都保留，不删。
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/` 下。
   - 全局插件：amp 装在 `~/.config/amp/plugins/corral.ts`（10-14 用户同意后装）；agy 装在 `~/.gemini/config/plugins/corral/`（10-15 用户从 paddock Integrations 装，测过能用）。两个 `integration status` 都是 same。
-- corral 和 corral-dispatch 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（R2）；cairn 只留给用户直接对话的主控。
+- corral 和 corral-dispatch 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（R2）；cairn 只留给用户直接对话的主控。开出去的 Codex 还带 `--disable memories`，不读跨项目的 Codex 记忆（用户 10-16）。
 - 没有进行中的活，没有任务 worktree 和分支；`../ranch-worktrees/` 下只有编译目录 `.target/main`。
 - 前端：Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。paddock 已接完 R1（P5-33）、R4（P5-94）、R6（P5-98）、R8（P5-88），进度看 paddock 的 HANDOFF。
 - 远程：`origin` = `github.com/firegnu/ranch`（public，不加许可证）。`.gitleaks.toml` 只放行 ureq 的公开测试私钥。
