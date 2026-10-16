@@ -639,7 +639,8 @@ fn environment_is_rebuilt_then_overridden_without_parent_identity_leaks() {
             "--",
             "/bin/sh",
             "-c",
-            "/usr/bin/env > \"$1\"; exec /bin/cat",
+            // Rename into place: the redirect creates the file before env writes it.
+            "/usr/bin/env > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; exec /bin/cat",
             "fixture",
             target.to_str().unwrap(),
         ])
