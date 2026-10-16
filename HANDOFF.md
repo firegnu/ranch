@@ -12,7 +12,7 @@
   - 全局插件：amp 装在 `~/.config/amp/plugins/corral.ts`（10-14 用户同意后装）；agy 装在 `~/.gemini/config/plugins/corral/`（10-15 用户从 paddock Integrations 装，测过能用）。两个 `integration status` 都是 same。
 - corral 和 corral-dispatch 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（R2）；cairn 只留给用户直接对话的主控。开出去的 Codex 还带 `--disable memories`，不读跨项目的 Codex 记忆（用户 10-16）。
 - 没有进行中的活，没有任务 worktree 和分支；`../ranch-worktrees/` 下只有编译目录 `.target/main`。
-- 前端：Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。paddock 已接完 R1（P5-33）、R4（P5-94）、R6（P5-98）、R8（P5-88），进度看 paddock 的 HANDOFF。
+- 前端：Saddle（`dedf26a` 起）和 paddock 都只调用 `corral`、`ranch` 命令。paddock 已接完 R1（P5-33）、R4（P5-94）、R6（P5-98）、R8（P5-88），R10 之后接了远程机器上的 agent（P5-90 甲，10-16 合并），进度看 paddock 的 HANDOFF。
 - 远程：`origin` = `github.com/firegnu/ranch`（public，不加许可证）。`.gitleaks.toml` 只放行 ureq 的公开测试私钥。
 
 ## 用户交代、一直沿用的
@@ -23,9 +23,8 @@
 
 ## 下一步
 
-1. paddock 接着做 P5-90（远程 agent 的「甲」层）：R10 装好了，由 paddock/main 请用户跑它的实测清单 4–5。ranch 这边没有要做的。
-2. 草稿任务 `docs/任务/R11-路由模型升到jev-1.14.0.md`（用户 10-16）：先查 1.14.0 改了什么，动手前给用户看、定验收。
-3. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修「悬着」第一条。动手前再给用户看、定验收。
+1. 草稿任务 `docs/任务/R11-路由模型升到jev-1.14.0.md`（用户 10-16）：先查 1.14.0 改了什么，动手前给用户看、定验收。
+2. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修「悬着」第一条。动手前再给用户看、定验收。
 
 ## 悬着
 
