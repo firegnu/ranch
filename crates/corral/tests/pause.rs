@@ -1,4 +1,5 @@
 //! Pause and resume: the agent's whole tree stops and continues; other commands respect it.
+mod common;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -20,7 +21,7 @@ impl Lab {
         let root = tempfile::tempdir_in("/tmp").unwrap();
         let core = root.path().join("v1/corral");
         fs::create_dir_all(core.parent().unwrap()).unwrap();
-        fs::copy(env!("CARGO_BIN_EXE_corral"), &core).unwrap();
+        common::copy_exe(env!("CARGO_BIN_EXE_corral"), &core);
         Self {
             root,
             core,
@@ -315,7 +316,7 @@ fn pause_survives_an_upgrade() {
     lab.json(&["pause", "test/a"]);
     let new = lab.root.path().join("v2/corral");
     fs::create_dir_all(new.parent().unwrap()).unwrap();
-    fs::copy(env!("CARGO_BIN_EXE_corral"), &new).unwrap();
+    common::copy_exe(env!("CARGO_BIN_EXE_corral"), &new);
     let up = lab.json(&["upgrade", "test/a", "--exe", new.to_str().unwrap()]);
     assert_eq!(up["result"], "complete", "{up}");
     let status = lab.json(&["status", "test/a"]);
@@ -450,7 +451,7 @@ fn hold_continues_what_it_froze_once_the_agent_is_gone() {
     fs::write(&meta, m.to_string()).unwrap();
     let new = lab.root.path().join("v2/corral");
     fs::create_dir_all(new.parent().unwrap()).unwrap();
-    fs::copy(env!("CARGO_BIN_EXE_corral"), &new).unwrap();
+    common::copy_exe(env!("CARGO_BIN_EXE_corral"), &new);
     // The upgrade command itself takes a while to give up on Hold; it is not waited for.
     let mut upgrade = Command::new(&lab.core)
         .args(["upgrade", "test/a", "--exe", new.to_str().unwrap()])

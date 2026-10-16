@@ -1,5 +1,6 @@
 // From Saddle `crates/corral-core/tests/protocol.rs` at commit `a31dea2`, unchanged.
 //! Public CLI and v1 pen transport, using only isolated synthetic agents.
+mod common;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -17,7 +18,7 @@ impl Lab {
     fn new() -> Self {
         let root = tempfile::tempdir_in("/tmp").unwrap();
         let core = root.path().join("corral");
-        fs::copy(env!("CARGO_BIN_EXE_corral"), &core).unwrap();
+        common::copy_exe(env!("CARGO_BIN_EXE_corral"), &core);
         Self { root, core }
     }
     fn cmd(&self) -> Command {
@@ -469,7 +470,7 @@ fn injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved() 
     );
     assert!(!hook.contains("python"));
     let next = lab.root.path().join("next-corral");
-    fs::copy(&lab.core, &next).unwrap();
+    common::copy_exe(&lab.core, &next);
     assert_eq!(
         lab.json(&["upgrade", "lab/main", "--exe", next.to_str().unwrap()])["result"],
         "complete"
@@ -639,7 +640,8 @@ fn environment_is_rebuilt_then_overridden_without_parent_identity_leaks() {
             "--",
             "/bin/sh",
             "-c",
-            "/usr/bin/env > \"$1\"; exec /bin/cat",
+            // Rename into place: the redirect creates the file before env writes it.
+            "/usr/bin/env > \"$1.tmp\"; mv \"$1.tmp\" \"$1\"; exec /bin/cat",
             "fixture",
             target.to_str().unwrap(),
         ])

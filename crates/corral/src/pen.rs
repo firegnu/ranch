@@ -799,7 +799,8 @@ pub fn worker() -> i32 {
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut size,
+                // A raw pointer: macOS takes `*mut winsize`, Linux `*const winsize`.
+                &raw mut size,
             )
         } < 0
         {

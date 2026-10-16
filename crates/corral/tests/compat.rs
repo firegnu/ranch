@@ -1,5 +1,6 @@
 // From Saddle `crates/corral-core/tests/compat.rs` at commit `a31dea2`, unchanged.
 //! Explicit, external baseline comparison. Not needed to build or run the Rust product.
+mod common;
 use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
@@ -114,7 +115,7 @@ fn alternating_clients_share_v1_events_cursor_and_confirmed_sends() {
             .into(),
     };
     let staged = lab.root.path().join("corral");
-    fs::copy(env!("CARGO_BIN_EXE_corral"), &staged).unwrap();
+    common::copy_exe(env!("CARGO_BIN_EXE_corral"), &staged);
     let new = staged.as_path();
     let fake = lab.root.path().join("claude");
     fs::write(&fake, "#!/bin/sh\nexec /bin/cat\n").unwrap();
@@ -242,7 +243,7 @@ fn both_attach_clients_resize_and_detach_from_both_pens() {
             .into(),
     };
     let new = lab.root.path().join("corral");
-    fs::copy(env!("CARGO_BIN_EXE_corral"), &new).unwrap();
+    common::copy_exe(env!("CARGO_BIN_EXE_corral"), &new);
     for (starter, name) in [(&*lab.old, "mix/old"), (new.as_path(), "mix/new")] {
         let started = lab.json(
             starter,
@@ -270,7 +271,7 @@ fn both_attach_clients_resize_and_detach_from_both_pens() {
                         &mut s,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
-                        &mut size,
+                        &raw mut size,
                     )
                 },
                 0

@@ -51,3 +51,28 @@
 
 ## 对 paddock 的影响
 - 只加 Linux 支持和文档，不改公开约定，paddock 不用动；装好后 paddock 接着做 P5-90。
+
+## 完成记录
+
+2026-10-16，ranch/main。
+
+- **做了什么**：
+  - 在实测机器上（rustc 1.97，x86_64-unknown-linux-gnu）跑 test、clippy，修了 Linux 上不过的三处，都在测试和 clippy 层面，corral 行为不变：
+    1. `protocol.rs` 的环境测试只等文件出现就读，shell 重定向先建文件、`env` 后写，Linux 上每次读到空文件。改成写临时文件再 mv。
+    2. 测试进程多线程，一个线程 `fs::copy` 出 corral 时开着写句柄，别的线程正好 fork，子进程 exec 前一直带着它，执行刚复制的程序报 ETXTBSY（Text file busy）；lifecycle 4 个测试因此失败。加 `tests/common/mod.rs` 的 `copy_exe`，用 `cp` 子进程复制，6 个测试文件 10 处都换成它。
+    3. clippy：`S_IFMT` 在 macOS 是 u16、Linux 是 u32，`as u32` 在 Linux 上多余，只在那一行放行并注明；`openpty` 的 winsize 参数 macOS 是 `*mut`、Linux 是 `*const`，`pen.rs` 和两个测试里改传 `&raw mut`。
+  - 在实测机器上打包 `versions/53fe6fc/`，用户在场部署（链接、两份技能）。
+  - DESIGN §3 加「在另一台机器（Linux）上装和升级」。
+- **验证了什么**：
+  - Linux：`cargo test --all-targets` 104 个全过（修完后连跑 5 遍），clippy、fmt 过；`BUILD.txt` 目标 `x86_64-unknown-linux-gnu`、工作区干净；`corral --version` contract 是 1；两份技能 dry-run 都是 same。
+  - macOS：104 个全过，clippy、fmt 过。
+  - 实测（从本机经非交互 ssh、用 corral 绝对路径调；pi、omp 都不在那个 PATH 里，照样起得来）：pi、omp 各走一遍 start、状态 idle→working→idle、send 回 confirmed、reply 拿到原文、wait 返回 idle；pause 时进程状态 T、3 秒无新输出、send 被拒（退出码 10），resume 后接着数完；经 `ssh -tt -e none` attach 看得到画面、打的字进了输入框（`corral read` 读得到）、Ctrl-] 退出，退出后 `attached` 回到 0。名字 80 个字符（套接字路径 107）能起，81 个（108）报 `path_too_long` 退出码 1。`integration status` 正常；`ranch dispatch route` 在没设 key 时按约定回 `ok:false`、退出码 1。测试 agent 都停了，临时目录删了。
+- **拿主意的地方**：
+  - ETXTBSY 的修法选了 `cp` 子进程复制，没选失败重试：前者从根上不让测试进程持有写句柄，后者要在每个执行程序的地方加重试。
+  - 远端仓库设 `receive.denyCurrentBranch updateInstead`，本机推任务分支时远端工作区跟着更新。
+  - 远端装 clippy、rustfmt（`rustup component add`）先问过用户。
+- **没做的事**：
+  - paddock 的实测清单 4–5（拖窗口改大小、断网）照约定留给 paddock/main。
+  - 用管道喂输入、本机这头不是终端时，远端 pty 是 0×0，agent 画不出东西；paddock 用的是真终端，没深究，写进了 DESIGN。
+  - 远端没设 `TYPESAFE_API_KEY`，没测真实路由。
+  - 实测机器的 `~/Develop/ranch/target/` 下留着测试日志和编译产物，没删。

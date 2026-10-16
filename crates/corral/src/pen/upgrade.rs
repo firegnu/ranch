@@ -106,6 +106,7 @@ impl Descriptor {
         let actual = descriptor(self.fd)?;
         // Socket permission bits can change when its peer disconnects on macOS;
         // the resource identity is its device, inode and file type.
+        #[allow(clippy::unnecessary_cast)] // mode_t is u16 on macOS, u32 on Linux.
         let kind = libc::S_IFMT as u32;
         if (self.dev, self.ino, self.mode & kind) != (actual.dev, actual.ino, actual.mode & kind) {
             return Err(failure(format!(
