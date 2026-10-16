@@ -4,10 +4,11 @@
 
 ## 现在在哪
 
-- 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R8 都已合并、推送、收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy 都在 §7），公开格式在 `docs/CONTRACT.md`。
+- 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R8、R10 都已合并、推送、收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy 都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
   - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/8299e39/bin/`（10-16 起：两个技能开出去的 Codex 都加 `--disable memories`；corral-dispatch 的完成记录和回复多写「踩过的坑」。corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：切回 `versions/14fb8d9/bin/`（没有「踩过的坑」）或 `versions/f86d1c2/bin/`。旧版本目录都保留，不删。
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/` 下。
+  - 用户的 Linux 实测机器（主机名不进仓库）：代码在 `~/Develop/ranch`（远端仓库设了 `receive.denyCurrentBranch updateInstead`，本机 `git push` 过去），装的是 `versions/53fe6fc/`（R10 分支上的提交，10-16 用户部署），两份技能都装了，没有在跑的 agent。那台机器上只用 pi、omp，任何情况下不跑 Claude Code、Codex，pi、omp 不委派活（用户 10-15，暂时的）。
   - 全局插件：amp 装在 `~/.config/amp/plugins/corral.ts`（10-14 用户同意后装）；agy 装在 `~/.gemini/config/plugins/corral/`（10-15 用户从 paddock Integrations 装，测过能用）。两个 `integration status` 都是 same。
 - corral 和 corral-dispatch 技能开出去的 agent 带 `--env CAIRN_DISABLE=1`，不用 cairn（R2）；cairn 只留给用户直接对话的主控。开出去的 Codex 还带 `--disable memories`，不读跨项目的 Codex 记忆（用户 10-16）。
 - 没有进行中的活，没有任务 worktree 和分支；`../ranch-worktrees/` 下只有编译目录 `.target/main`。
@@ -22,8 +23,9 @@
 
 ## 下一步
 
-1. 草稿任务 `docs/任务/R10-在Linux远端装ranch.md`（paddock/main 以 ranch 主控身份 10-15 起草，给 paddock P5-90 远程 agent 用）：还没提交，等用户看过、定验收、远端目录和部署方式。里面写了实测机器的情况，推到公开仓库前先核对没有私人信息。
-2. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修「悬着」第一条。动手前再给用户看、定验收。
+1. paddock 接着做 P5-90（远程 agent 的「甲」层）：R10 装好了，由 paddock/main 请用户跑它的实测清单 4–5。ranch 这边没有要做的。
+2. 草稿任务 `docs/任务/R11-路由模型升到jev-1.14.0.md`（用户 10-16）：先查 1.14.0 改了什么，动手前给用户看、定验收。
+3. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修「悬着」第一条。动手前再给用户看、定验收。
 
 ## 悬着
 
@@ -31,6 +33,7 @@
   - `protocol.rs` 的 `concurrent_unique_starts_and_listing_preserve_live_locks` 偶尔卡住就是这个（R8 期间抓到现场：一个 pen 开着测试进程的管道）。
   - paddock 同时起好几个 agent 时理论上也会碰上。
   - 修法：pen 启动时（`pen.rs` 起 pen 的 `pre_exec`）关掉 0、1、2 以外继承来的描述符。即草稿任务 R9。
+- paddock 10-16 提的两件可选的事，都改公开约定，「甲」层不依赖，做不做用户还没定：`corral ls` 带上 status 的字段（或 `status --all`），远端每轮刷新从两次调用减到一次；`corral --version` 带构建号，前端能看出远端比本机旧。
 - agy 的已知限制（DESIGN §7「接入 agy」，不主动追）：
   - 子 agent 的会话会不会触发钩子、抢主会话，没实测；
   - 钩子 shell 里 `exec` 失败时不回 `{}`；
