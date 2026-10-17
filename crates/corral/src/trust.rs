@@ -5,12 +5,17 @@
 //!
 //! What corral added is recorded next to the agent's HOME, in `<HOME>/.corral/.runtime/trust.json`,
 //! so every corral that writes the same list (whatever its `CORRAL_HOME`) shares one record and one
-//! lock (`trust.lock`), and corral only ever removes its own entries. The record is written before
-//! a directory goes into the list and after it comes out, so an interrupted change leaves at worst
-//! a record of a directory that is not listed, never a listed directory nobody owns.
+//! lock (`trust.lock`). An entry is recorded as pending before its directory goes into the list and
+//! confirmed after; a pending entry left by an interrupted add is dropped without touching the list,
+//! so corral never takes out a directory it is not sure it added (at worst one stays listed). An
+//! entry leaves the record only after its directory left the list, or the list is gone.
 //!
-//! The agent writes its list without corral's lock. Before replacing the file corral reads it
-//! again and starts over if it changed; what changes in between those two steps would be lost.
+//! The list only holds paths: a directory the user trusts again while corral's agent runs in it
+//! is taken out when that agent exits.
+//!
+//! The agent writes its list without corral's lock. Before replacing the file corral checks it is
+//! still the same file with the same text and starts over if not; what changes in between that
+//! check and the replacement would be lost (the user accepted this, 10-17).
 use crate::{Error, Result, state};
 use serde_json::{Value, json};
 use std::{
@@ -122,19 +127,25 @@ fn alive(entry: &Value) -> bool {
 /// Changes the list under `key` in the JSON object file `file`: `change` gets the listed
 /// directories and returns the new list, or `None` to leave it. Leaves the file alone, returning
 /// `false`, when it is missing, a symbolic link, not a JSON object, or `key` holds anything but
-/// strings. Starts over when the file changes while corral writes it; `meanwhile` runs in that
-/// gap, for tests.
+/// strings. Starts over when the file is replaced or changes while corral writes it; `meanwhile`
+/// runs in that gap, for tests.
 fn update(
     file: &Path,
     key: &str,
     mut change: impl FnMut(&[String]) -> Option<Vec<String>>,
     meanwhile: &dyn Fn(),
 ) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let identity = || {
+        fs::symlink_metadata(file)
+            .ok()
+            .filter(|m| m.file_type().is_file())
+            .map(|m| (m.dev(), m.ino()))
+    };
     for _ in 0..5 {
-        match fs::symlink_metadata(file) {
-            Ok(m) if m.file_type().is_file() => {}
-            _ => return Ok(false),
-        }
+        let Some(before) = identity() else {
+            return Ok(false);
+        };
         let Ok(text) = fs::read_to_string(file) else {
             return Ok(false);
         };
@@ -165,7 +176,9 @@ fn update(
             f.write_all(out.as_bytes())?;
             f.sync_all()?;
             meanwhile();
-            if fs::read_to_string(file).ok().as_deref() != Some(text.as_str()) {
+            if identity() != Some(before)
+                || fs::read_to_string(file).ok().as_deref() != Some(text.as_str())
+            {
                 return Ok(false);
             }
             fs::rename(&tmp, file)?;
@@ -182,7 +195,8 @@ fn update(
 }
 
 /// Takes the directory of a record entry out of its list, unless another entry still needs it.
-/// Only one copy goes: any other is not corral's.
+/// Only one copy goes: any other is not corral's. Fails when the list is there but cannot be read
+/// or written safely, so that the entry stays for the next time.
 fn untrust(entry: &Value, kept: &[Value]) -> Result<()> {
     let (Some(file), Some(key), Some(path)) = (
         entry["file"].as_str(),
@@ -193,30 +207,41 @@ fn untrust(entry: &Value, kept: &[Value]) -> Result<()> {
     };
     if kept
         .iter()
-        .any(|e| e["file"] == file && e["key"] == key && e["path"] == path)
+        .any(|e| e["file"] == file && e["key"] == key && e["path"] == path && e["pending"] != true)
     {
         return Ok(());
     }
+    let read = std::cell::Cell::new(false);
     let take = |paths: &[String]| {
+        read.set(true);
         let at = paths.iter().position(|p| p == path)?;
         let mut paths = paths.to_vec();
         paths.remove(at);
         Some(paths)
     };
-    update(Path::new(file), key, take, &|| {})?;
-    Ok(())
+    let file = Path::new(file);
+    let gone =
+        || fs::symlink_metadata(file).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
+    if update(file, key, take, &|| {})? || read.get() || gone() {
+        return Ok(());
+    }
+    Err(Error::new(
+        1,
+        "error",
+        format!("cannot safely change {}", file.display()),
+    ))
 }
 
 /// Takes out what record entries of agents that are gone, or of directories that are gone, put in;
-/// an entry whose change fails stays for the next time.
+/// an entry whose change fails stays for the next time. A pending entry is left by an add that was
+/// cut short (adds hold the lock): it is dropped, and its directory, if listed, stays.
 fn prune(store: &Path) -> Result<Vec<Value>> {
     let entries = read_record(store);
-    let (mut kept, stale): (Vec<Value>, Vec<Value>) = entries
-        .iter()
-        .cloned()
-        .partition(|e| alive(e) && Path::new(e["path"].as_str().unwrap_or("")).is_dir());
+    let (mut kept, stale): (Vec<Value>, Vec<Value>) = entries.iter().cloned().partition(|e| {
+        e["pending"] != true && alive(e) && Path::new(e["path"].as_str().unwrap_or("")).is_dir()
+    });
     for e in stale {
-        if untrust(&e, &kept).is_err() {
+        if e["pending"] != true && untrust(&e, &kept).is_err() {
             kept.push(e);
         }
     }
@@ -260,14 +285,18 @@ fn add_in(store: &Path, file: &Path, key: &str, cwd: &Path, owner: Value) -> Res
         paths.push(path.clone());
         Some(paths)
     };
-    // Recorded first: if adding is cut short, the record names a directory that is not listed.
+    // Recorded as pending first, confirmed after: if adding is cut short, `prune` drops the entry
+    // without taking out a directory the user may have listed.
+    entry["pending"] = json!(true);
     kept.push(entry);
     write_record(store, &kept)?;
     let added = update(file, key, add, &|| {});
-    if !matches!(added, Ok(true)) {
-        kept.pop();
-        write_record(store, &kept)?;
+    let mut entry = kept.pop().unwrap_or_default();
+    if matches!(added, Ok(true)) {
+        entry.as_object_mut().map(|e| e.remove("pending"));
+        kept.push(entry);
     }
+    write_record(store, &kept)?;
     added.map(|_| ())
 }
 
@@ -279,9 +308,12 @@ fn remove_in(store: &Path, instance: &str) -> Result<()> {
         return Ok(());
     }
     let mut failed = None;
-    // Out of the list first: if that fails, the record keeps the entry for the next `prune`.
+    // Out of the list first: if that fails, the record keeps the entry for the next `prune`. A
+    // pending entry (its add was cut short) goes without touching the list, as in `prune`.
     for e in mine {
-        if let Err(err) = untrust(&e, &kept) {
+        if e["pending"] != true
+            && let Err(err) = untrust(&e, &kept)
+        {
             kept.push(e);
             failed = Some(err);
         }
@@ -579,6 +611,94 @@ mod tests {
         let mut want = lab.original();
         want.extend(["/user-added".to_owned(), "/corral-added".to_owned()]);
         assert_eq!(lab.list(), want);
+    }
+
+    #[test]
+    fn an_add_cut_short_never_takes_out_a_listed_directory() {
+        let lab = Lab::new();
+        let work = lab.dir("work");
+        // The user trusts `work`; a pen recorded it as pending and died before it read the list.
+        fs::write(
+            &lab.file,
+            json!({ KEY: [lab.top.clone(), work.clone()] }).to_string(),
+        )
+        .unwrap();
+        let owner = json!({"root": lab.base.join("corral"), "name": "a/dead", "instance": "i1",
+                           "pen_pid": 999_999_999, "file": lab.file, "key": KEY,
+                           "path": work, "pending": true});
+        fs::create_dir_all(&lab.store).unwrap();
+        write_record(&lab.store, &[owner]).unwrap();
+        lab.add(&lab.dir("other"), "a/other", "i2");
+        assert!(lab.list().contains(&work.display().to_string()));
+        assert_eq!(read_record(&lab.store).len(), 1);
+        // A confirmed entry has no pending mark.
+        assert!(read_record(&lab.store)[0].get("pending").is_none());
+    }
+
+    #[test]
+    fn a_list_corral_cannot_read_keeps_the_record_until_it_can() {
+        let lab = Lab::new();
+        let work = lab.dir("work");
+        lab.add(&work, "a/dev", "i1");
+        let mode = fs::metadata(&lab.file).unwrap().permissions();
+        fs::set_permissions(&lab.file, fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(lab.remove("i1").is_err());
+        assert_eq!(read_record(&lab.store).len(), 1);
+        fs::set_permissions(&lab.file, mode).unwrap();
+        // Turned into a link: still kept, and the link is not replaced.
+        let target = lab.base.join("dotfiles.json");
+        fs::rename(&lab.file, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &lab.file).unwrap();
+        assert!(lab.remove("i1").is_err());
+        assert_eq!(read_record(&lab.store).len(), 1);
+        fs::remove_file(&lab.file).unwrap();
+        fs::rename(&target, &lab.file).unwrap();
+        lab.remove("i1").unwrap();
+        assert_eq!(lab.list(), lab.original());
+        assert!(read_record(&lab.store).is_empty());
+        // A list that is gone has nothing left to take out.
+        lab.add(&work, "a/dev", "i2");
+        fs::remove_file(&lab.file).unwrap();
+        lab.remove("i2").unwrap();
+        assert!(read_record(&lab.store).is_empty());
+    }
+
+    #[test]
+    fn a_file_replaced_while_corral_writes_is_not_overwritten() {
+        let lab = Lab::new();
+        let target = lab.base.join("dotfiles.json");
+        // Replaced by a link to the same text: the link stays.
+        let to_link = || {
+            if !fs::symlink_metadata(&lab.file).unwrap().is_symlink() {
+                fs::rename(&lab.file, &target).unwrap();
+                std::os::unix::fs::symlink(&target, &lab.file).unwrap();
+            }
+        };
+        let add = |paths: &[String]| {
+            let mut p = paths.to_vec();
+            p.push("/corral-added".into());
+            Some(p)
+        };
+        assert!(!update(&lab.file, KEY, add, &to_link).unwrap());
+        assert!(fs::symlink_metadata(&lab.file).unwrap().is_symlink());
+        assert!(
+            !fs::read_to_string(&target)
+                .unwrap()
+                .contains("corral-added")
+        );
+        // Replaced once by another file with the same text: corral starts over on the new one.
+        let lab = Lab::new();
+        let once = std::cell::Cell::new(true);
+        let replace = || {
+            if once.replace(false) {
+                let text = fs::read_to_string(&lab.file).unwrap();
+                let new = lab.base.join("new.json");
+                fs::write(&new, text).unwrap();
+                fs::rename(&new, &lab.file).unwrap();
+            }
+        };
+        assert!(update(&lab.file, KEY, add, &replace).unwrap());
+        assert!(lab.list().contains(&"/corral-added".to_owned()));
     }
 
     #[test]
