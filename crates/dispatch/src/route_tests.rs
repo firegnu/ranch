@@ -41,7 +41,7 @@ mod tests {
             serde_json::from_str::<Value>(include_str!("../tests/fixtures/request.json")).unwrap()
         );
         let request = String::from_utf8(sent[0].clone()).unwrap();
-        assert!(request.starts_with("{\"state\":{\"task_summary\":\"合成任务\"},\"model\":\"jev-1.13.0\",\"questions\":{\"tier\":"));
+        assert!(request.starts_with("{\"state\":{\"task_summary\":\"合成任务\"},\"model\":\"jev-1.14.0\",\"questions\":{\"tier\":"));
         assert!(
             request.find("cross_data_model").unwrap()
                 < request.find("cross_security_privacy").unwrap()
@@ -248,11 +248,12 @@ mod boundaries {
             assert_eq!(result.exit_code, 1);
         }
     }
+    // Questions and thresholds are still Corral 6923da1's; R12 changed only the model to jev-1.14.0.
     #[test]
     fn rules_fingerprint_is_pinned_to_original_constants() {
         assert_eq!(
             rules::fingerprint(),
-            "sha256:8d4ec37d101d7d6c69d48df828d488b91b68fe751a80c783b6f34911484388b0"
+            "sha256:8c0233a14b85796fc4972cd85189bb98217a8c413227238e94dff51fc79cd313"
         );
     }
 }

@@ -7,7 +7,7 @@ echo "<三五句任务摘要>" | ranch dispatch route
 ranch dispatch install-skills [--target all|claude|codex|gemini] [--dry-run] [--yes]
 ```
 
-`route` 从标准输入读任务摘要，用环境里的 `TYPESAFE_API_KEY` 请求 TypeSafe 的分类模型（`jev-1.13.0`），把建议的档位、要不要交叉审查、影响面写成 JSON 到 stdout，退出码 0；没有 key、摘要不是 UTF-8、调不通或回复不对时，stdout 是 `{"ok":false,"error":…}`，退出码 1。任务书不发出去，只发摘要。路由只给建议，主控按项目规则和当次授权做最终决定。`install-skills` 见 [技能说明](resources/corral-dispatch/README.md)。
+`route` 从标准输入读任务摘要，用环境里的 `TYPESAFE_API_KEY` 请求 TypeSafe 的分类模型（`jev-1.14.0`），把建议的档位、要不要交叉审查、影响面写成 JSON 到 stdout，退出码 0；没有 key、摘要不是 UTF-8、调不通或回复不对时，stdout 是 `{"ok":false,"error":…}`，退出码 1。任务书不发出去，只发摘要。路由只给建议，主控按项目规则和当次授权做最终决定。`install-skills` 见 [技能说明](resources/corral-dispatch/README.md)。
 
 ## 来源
 
