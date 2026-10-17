@@ -6,8 +6,8 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R10、R12、R13 都已合并、推送、收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
-  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/59705a4/bin/`（10-17 用户部署，R13：agy 状态兜底、corral 技能里 agy 免确认、pen 临时信任工作目录，部署后真实 agy 验收通过；技能三处都是 `same`；没跑 `corral upgrade --all`）。退回：两个链接切回 `versions/9b69e4d/bin/`，重跑 `corral install-skills`。上一版 9b69e4d（R12：corral-dispatch 技能换成分工表和新分档表，`ranch dispatch route` 用 jev-1.14.0；corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：两个链接切回 `versions/8299e39/bin/`，再跑 `ranch dispatch install-skills`。旧版本目录都保留，不删。
-  - R9 已打好 `versions/9683ab4/`（pen 和提醒进程启动时关掉继承来的描述符；只改内部实现，技能没变）。打包时主仓库有两个别人放的未跟踪文档（R14、R15 任务草稿），BUILD.txt 记成 `working-tree: modified`，程序和 9683ab4 的代码一致。未部署，见「下一步」。
+  - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/9683ab4/bin/`（10-17 用户部署，R9：pen 和提醒进程启动时关掉继承来的描述符；只改内部实现，技能没变，没重装；部署后起测试 agent 核对过，新 pen 只开着锁、日志、pty、socket，没有多余管道；没跑 `corral upgrade --all`，部署前起的 pen 还是旧版）。打包时主仓库有两个未跟踪的任务草稿（R14、R15），BUILD.txt 记成 `working-tree: modified`，程序和 9683ab4 的代码一致。退回：两个链接切回 `versions/59705a4/bin/`。
+  - 上一版 59705a4（R13：agy 状态兜底、corral 技能里 agy 免确认、pen 临时信任工作目录，部署后真实 agy 验收通过；技能三处都是 `same`）。退回到它之前：两个链接切回 `versions/9b69e4d/bin/`，重跑 `corral install-skills`。再上一版 9b69e4d（R12：corral-dispatch 技能换成分工表和新分档表，`ranch dispatch route` 用 jev-1.14.0；corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：两个链接切回 `versions/8299e39/bin/`，再跑 `ranch dispatch install-skills`。旧版本目录都保留，不删。
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/` 下。
   - 用户的 Linux 实测机器（主机名不进仓库）：代码在 `~/Develop/ranch`（远端仓库设了 `receive.denyCurrentBranch updateInstead`，本机 `git push` 过去），装的是 `versions/53fe6fc/`（R10 分支上的提交，10-16 用户部署），两份技能都装了，没有在跑的 agent。那台机器上只用 pi、omp，任何情况下不跑 Claude Code、Codex，pi、omp 不委派活（用户 10-15，暂时的）。
   - 全局插件：amp 装在 `~/.config/amp/plugins/corral.ts`（10-14 用户同意后装）；agy 装在 `~/.gemini/config/plugins/corral/`（10-15 用户从 paddock Integrations 装，测过能用）。两个 `integration status` 都是 same。
@@ -24,7 +24,7 @@
 
 ## 下一步
 
-1. 用户部署 R9（普通终端）：两个链接切到 `versions/9683ab4/bin/`；技能没变，不用重装。之后新开的 agent 的 pen 和新的提醒进程才是新版，在跑的不用动。退回：链接切回 `versions/59705a4/bin/`。
+1. 没有排定的活。主仓库有用户放的 R14（新版部署到 Linux 实测机器）、R15（接入自己的 cairn-dispatch 实现自举）两份未跟踪草稿，等用户说做哪件、怎么做；动手前先定「悬着」里要不要改走派活。
 
 ## 悬着
 
