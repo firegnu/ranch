@@ -38,5 +38,4 @@
   - 钩子 shell 里 `exec` 失败时不回 `{}`；
   - Antigravity IDE 会不会加载插件，没核对；
   - R13：agy 运行中自己保存设置（如点信任）会不会拿旧内容冲掉 corral 加删的条目，没实测；登录慢时首句抢跑没复现（10 次 0 次），送法没改。
-- agy 信任列表里还有 R13 测试留下的 5 条 `.agy-test-1`…`5`（目录已删）。主控去删被自动权限检查拦下，命令已给用户，用户删没删未核对。
 - paddock 的 `docs/DESIGN.md` §3“Saddle 保底”和决策表还写着“只保证 Saddle 和运行时对得上、不兼容时写需求给 Saddle 适配”；ranch 这边已按用户 10-07“保底规矩放松吧，Saddle 不用再写影响了”改了 AGENTS.md 和 DESIGN §2，paddock 那边要不要跟着改，在 paddock 自己的任务里做。
