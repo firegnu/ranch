@@ -23,6 +23,11 @@ impl Adapter for Agy {
     fn skill_targets(&self) -> &'static [&'static str] {
         &["gemini"]
     }
+    /// When agy logs in slowly it sends the first prompt before its hooks are attached, and the
+    /// session start is lost (R13).
+    fn adopts_session(&self) -> bool {
+        true
+    }
     /// One argument, so a prompt starting with `-` is not taken for an option.
     fn prompt_args(&self, prompt: &str) -> Vec<String> {
         vec![format!("--prompt-interactive={prompt}")]

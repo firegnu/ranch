@@ -103,3 +103,14 @@
     - agy 有子 agent（`invoke_subagent`、浏览器子 agent），它们的会话会不会触发 `SessionStart` 钩子没有核实。如果会，子会话会被当成主会话（和 Claude Code 的 `/clear` 一样，最近一次会话开始成为主会话），之后主会话的事件不再算，状态可能偏。没有改成「只认第一个会话」，因为 agy 有 `/clear`（在同一进程里开新对话），那样会跟丢。遇到再按真实情况改。
     - 钩子的 shell 里 `exec` 失败（helper 可执行但跑不起来）时不会再走 `echo {}`，agy 拿不到 JSON。helper 是 corral 自己的程序或指向它的链接（原子替换），正常不会出现；为它改掉 `exec` 会多一层 shell，要连父进程检查一起改，这次不做。
   - 来历：`docs/任务/R8-接入agy.md`。
+- agy 派活修整（R13，agy 1.4.0，用户 10-17）：
+  - 抢跑：一次真实派活里 agy 登录慢（11 秒，平时 5–6 秒），`--prompt-interactive` 的首句没等登录就送出，那一轮没挂上钩子和技能，`SessionStart` 丢了；钩子 6 分钟后才恢复，事件全积在 `pending`，状态一直 `starting`。10 次实测没复现，首句的送法不改。
+  - 状态兜底：适配器可以声明「认领会话」（`adopts_session`，只有 agy）。命令行读事件时，还没有主会话、`pending` 里有带 transcript、目录相同的会话，就把最早那条事件的会话当主会话，按时间补算它积压的事件（不先置为 idle）。之后照旧：再来的 `SessionStart` 仍按原规则换主会话。认领发生在读事件时，所以已经积压了事件的 agy，换上新版命令行就能恢复。别家不变。
+  - 信任目录：agy 只信任列表里的目录本身，不认上级目录；派活每件活一个新 worktree，每次都要人点「信任」。Claude Code 往上找上级目录，Codex 归到所属主仓库，都不弹。适配器可以声明信任列表（`Trust`：配置文件、里面的字符串数组字段；agy 是 `~/.gemini/antigravity-cli/settings.json` 的 `trustedWorkspaces`），pen 替它补上「上级目录信任过就算信任」：
+    - 启动 agent 之前：工作目录（规范化后）不在列表里、某个上级目录在列表里，就把它加进去，并记进 `$CORRAL_HOME/.runtime/trust.json`（文件、路径、agent 名字、实例）；上级目录都不在列表里就不加，照旧弹框。
+    - agent 退出后（pen 的主循环结束）：删掉这个实例记下的条目；还活着的别的实例记了同一路径的，列表里保留。
+    - 兜底：每次加之前，清掉记录里 agent 已经不在（`meta.json` 的实例对不上，或 `agent_pid` 已不存在）或目录已不存在的条目。
+    - 只删 corral 记下的，列表里原有的条目不动。文件不存在、不是 JSON 对象、字段存在却不是字符串数组时，什么都不写。原子写（同目录临时文件加改名），保留原文件权限；对象键会按字母重排（agy 自己写回时用它的顺序），值不变。加和删都在 `$CORRAL_HOME/.runtime/trust.lock` 的锁里做。出错只记进 pen.log，不影响启动。
+    - 用户 10-17 同意 corral 为它开的 agy 改写 agy 的信任列表；用户自己开的 agy 不受影响。
+  - corral 技能里开 agy 改成 `-- agy --dangerously-skip-permissions`，和派活技能一致；Claude Code 不改（用户 10-17）。
+  - 来历：`docs/任务/R13-agy启动抢跑与免确认.md`。

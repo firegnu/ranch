@@ -651,8 +651,9 @@ prompt() {
   hook PreInvocation
 }
 printf '%s\0' "$0" "$@" > "$CORRAL_EVENTS.args"
-# Like agy, it starts the session with the first prompt.
-case $1 in --prompt-interactive=*) hook SessionStart; prompt "${1#--prompt-interactive=}" ;; esac
+# Like agy, it starts the session with the first prompt; when agy sends that prompt before its
+# hooks are attached (R13), the session start is lost.
+case $1 in --prompt-interactive=*) [ -n "$LOST_START" ] || hook SessionStart; prompt "${1#--prompt-interactive=}" ;; esac
 while IFS= read -r line; do
   case $line in
   ask) printf 'Run ls?\n> Allow\n  Deny\n\342\206\221/\342\206\223 Navigate \302\267 tab Amend \302\267 ctrl+g edit\n' ;;
@@ -667,6 +668,11 @@ done
 /// Installs the plugin in the lab's HOME, writes the commands and inputs `FAKE_AGY` runs, and starts
 /// it as `name` with `prompt`. Returns its state directory and the fake's.
 fn start_agy(lab: &Lab, name: &str, prompt: &str) -> (PathBuf, PathBuf) {
+    start_agy_with(lab, name, prompt, &[])
+}
+
+/// `start_agy` with extra environment for the fake.
+fn start_agy_with(lab: &Lab, name: &str, prompt: &str, env: &[&str]) -> (PathBuf, PathBuf) {
     let root = lab.root.path();
     let dir = root.join("pens").join(name);
     let state_dir = root.join("agy");
@@ -725,6 +731,7 @@ fn start_agy(lab: &Lab, name: &str, prompt: &str) -> (PathBuf, PathBuf) {
             .arg(format!("PATH={}:/usr/bin:/bin", root.join("bin").display()))
             .arg("--env")
             .arg(format!("LAB={}", state_dir.display()))
+            .args(env.iter().flat_map(|e| ["--env", e]))
             .args(["--prompt", prompt, "--", "agy"])
             .output()
             .unwrap(),
@@ -859,6 +866,43 @@ fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
         (&stopped["out"]["ok"], &stopped["out"]["stopped_by"]),
         (&json!(true), &json!("SIGHUP"))
     );
+}
+
+/// R13: agy sometimes sends the first prompt before its hooks are attached, so the session start is
+/// lost; the events that come later still drive its state.
+#[test]
+fn agy_that_lost_its_session_start_still_reports_its_turns() {
+    use std::io::Write;
+    let lab = Lab::new();
+    let (_dir, state_dir) = start_agy_with(&lab, "lab/agy", "hello", &["LOST_START=1"]);
+    let status =
+        || lab.result(lab.cmd().args(["status", "lab/agy"]).output().unwrap())["out"].clone();
+    let wait = |want: &str| {
+        let end = Instant::now() + Duration::from_secs(10);
+        loop {
+            let s = status();
+            if s["state"] == want {
+                return s;
+            }
+            assert!(Instant::now() < end, "never became {want}: {s}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    wait("working");
+    let mut f = fs::OpenOptions::new()
+        .append(true)
+        .open(state_dir.join("transcript"))
+        .unwrap();
+    writeln!(f, "{}", json!({"type":"PLANNER_RESPONSE","content":"hi\nDONE"})).unwrap();
+    let o = lab
+        .cmd()
+        .args(["keys", "lab/agy", "text:stop", "enter"])
+        .output()
+        .unwrap();
+    assert!(o.status.success());
+    wait("idle");
+    let o = lab.result(lab.cmd().args(["reply", "lab/agy"]).output().unwrap());
+    assert_eq!(o["out"]["text"], "hi\nDONE", "{o}");
 }
 
 #[test]

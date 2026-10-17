@@ -134,6 +134,7 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             &d,
             st["instance"].as_str().unwrap_or(""),
             Path::new(m["cwd"].as_str().unwrap_or("")),
+            agents::adopts_session(m["kind"].as_str().unwrap_or("")),
         )?;
         public["state"] =
             if m["has_prompt"] == true && snap["input_count"] == 0 && snap["state"] == "idle" {
@@ -290,7 +291,12 @@ pub(crate) fn confirmation(
 ) -> Result<Option<Value>> {
     let d = state::dir(name)?;
     let m = state::read(d.join("meta.json"));
-    let snap = events::read(&d, instance, Path::new(m["cwd"].as_str().unwrap_or("")))?;
+    let snap = events::read(
+        &d,
+        instance,
+        Path::new(m["cwd"].as_str().unwrap_or("")),
+        agents::adopts_session(m["kind"].as_str().unwrap_or("")),
+    )?;
     let inputs = snap["inputs"].as_array().unwrap();
     let want = events::digest(text);
     let merged = if inputs

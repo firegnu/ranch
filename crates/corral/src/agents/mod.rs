@@ -81,6 +81,11 @@ pub(crate) trait Adapter: Sync {
     fn global(&self) -> Option<Global> {
         None
     }
+    /// Whether a session that reports before any session start becomes the main one: agy can
+    /// lose its session start when it sends the first prompt before its hooks are attached (R13).
+    fn adopts_session(&self) -> bool {
+        false
+    }
     /// The agent's hook writes version 2 raw events (`"adapter": kind`) for `events::raw`.
     fn raw_events(&self) -> bool {
         false
@@ -163,6 +168,9 @@ pub fn waits_on_terminal(a: &dyn Adapter, state: &str, title: &str, screen: Opti
     matches!(state, "working" | "idle")
         && (a.title_blocked(title)
             || screen.is_some_and(|s| crate::screen::matches(a.screen_rules(), s)))
+}
+pub fn adopts_session(kind: &str) -> bool {
+    find(kind).is_some_and(|a| a.adopts_session())
 }
 pub fn known(kind: &str) -> bool {
     find(kind).is_some()
