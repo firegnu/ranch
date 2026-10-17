@@ -1,7 +1,7 @@
 // From Saddle `plugins/dispatch/src/rules.rs` at commit `c21674a`, telemetry capture removed.
 //! Request constants ported verbatim from Corral 6923da1 route.py (see README).
 use serde::Serialize;
-pub(super) const MODEL: &str = "jev-1.13.0";
+pub(super) const MODEL: &str = "jev-1.14.0";
 pub(super) const TIERS: [&str; 3] = ["轻", "常规", "重"];
 pub(super) const CONFIDENT: f64 = 0.8;
 pub(super) const CROSS_YES: f64 = 0.8;

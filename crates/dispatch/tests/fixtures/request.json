@@ -2,7 +2,7 @@
   "state": {
     "task_summary": "合成任务"
   },
-  "model": "jev-1.13.0",
+  "model": "jev-1.14.0",
   "questions": {
     "tier": {
       "type": "score",
