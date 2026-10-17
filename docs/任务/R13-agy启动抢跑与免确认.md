@@ -133,3 +133,8 @@
 - 首句的送法（`--prompt-interactive`）没改，抢跑没复现。
 - 没核实 agy 子 agent 会不会触发 `SessionStart`（R8 的已知限制，照旧）。
 - 第 4 部分要求的「agy 运行时自己写设置文件会不会拿旧内容覆盖」没做针对性实测：要让另一个 agy 在运行中保存设置（如点信任），会往用户的信任列表里留下 agy 自己加、corral 不能删的条目。可能的后果已写在「拿主意的地方」，用户已接受并发写的窗口。
+
+## 部署后验收（10-17，主控）
+
+- 用户部署 `versions/59705a4`：两个链接已切，`corral install-skills` 三处覆盖、`ranch dispatch install-skills` 都是 `same`；三处 corral 技能里 agy 的命令带 `--dangerously-skip-permissions`。部署时在跑的 4 个 agent（3 个 Claude、1 个 agy）都是旧版 pen，没动，照常运行。
+- 真实 agy（`ranch/test-agy-deploy-1`，`--label role=test`）开在一个新建、从没信任过的目录（上级 `personal_projs` 用户信任过）：开起来列表里就有了这个目录，没弹信任框；首句拿到「你好。DONE」，状态到 `idle`；`corral stop` 后条目已删，`trust.json` 为空；设置文件的值和测试前一致（键顺序按 DESIGN 所说重排）。测试 agent 已停、目录已删。
