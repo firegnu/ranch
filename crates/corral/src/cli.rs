@@ -134,13 +134,23 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             &d,
             st["instance"].as_str().unwrap_or(""),
             Path::new(m["cwd"].as_str().unwrap_or("")),
+            agents::adopts_session(m["kind"].as_str().unwrap_or("")),
         )?;
-        public["state"] =
-            if m["has_prompt"] == true && snap["input_count"] == 0 && snap["state"] == "idle" {
-                json!("starting")
-            } else {
-                snap["state"].clone()
-            };
+        // Started with a first prompt: idle only once that prompt was taken. An agent whose
+        // session was adopted (`events::adopt`) may have lost the prompt's hook with the session
+        // start; a later event than the session start shows its turn went on anyway.
+        let kind = m["kind"].as_str().unwrap_or("");
+        let waits_for_prompt =
+            !agents::adopts_session(kind) || snap["last_event"] == "SessionStart";
+        public["state"] = if m["has_prompt"] == true
+            && snap["input_count"] == 0
+            && snap["state"] == "idle"
+            && waits_for_prompt
+        {
+            json!("starting")
+        } else {
+            snap["state"].clone()
+        };
         // An agent whose hooks cannot report a pending approval may show it in its terminal.
         if agents::find(m["kind"].as_str().unwrap_or("")).is_some_and(|a| {
             agents::waits_on_terminal(
@@ -290,7 +300,12 @@ pub(crate) fn confirmation(
 ) -> Result<Option<Value>> {
     let d = state::dir(name)?;
     let m = state::read(d.join("meta.json"));
-    let snap = events::read(&d, instance, Path::new(m["cwd"].as_str().unwrap_or("")))?;
+    let snap = events::read(
+        &d,
+        instance,
+        Path::new(m["cwd"].as_str().unwrap_or("")),
+        agents::adopts_session(m["kind"].as_str().unwrap_or("")),
+    )?;
     let inputs = snap["inputs"].as_array().unwrap();
     let want = events::digest(text);
     let merged = if inputs

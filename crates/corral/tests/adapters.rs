@@ -651,8 +651,15 @@ prompt() {
   hook PreInvocation
 }
 printf '%s\0' "$0" "$@" > "$CORRAL_EVENTS.args"
-# Like agy, it starts the session with the first prompt.
-case $1 in --prompt-interactive=*) hook SessionStart; prompt "${1#--prompt-interactive=}" ;; esac
+# Like agy, it starts the session with the first prompt; when agy sends that prompt before its
+# hooks are attached (R13), the session start is lost.
+# With LOST_START=all, the hooks of the whole first turn are lost: only the later ones report.
+case $1 in --prompt-interactive=*)
+  [ -n "$LOST_START" ] || hook SessionStart
+  if [ "$LOST_START" = all ]; then
+    printf '{"type":"USER_INPUT","content":"%s"}\n' "${1#--prompt-interactive=}" >> "$LAB/transcript"
+  else prompt "${1#--prompt-interactive=}"; fi ;;
+esac
 while IFS= read -r line; do
   case $line in
   ask) printf 'Run ls?\n> Allow\n  Deny\n\342\206\221/\342\206\223 Navigate \302\267 tab Amend \302\267 ctrl+g edit\n' ;;
@@ -667,6 +674,11 @@ done
 /// Installs the plugin in the lab's HOME, writes the commands and inputs `FAKE_AGY` runs, and starts
 /// it as `name` with `prompt`. Returns its state directory and the fake's.
 fn start_agy(lab: &Lab, name: &str, prompt: &str) -> (PathBuf, PathBuf) {
+    start_agy_with(lab, name, prompt, &[])
+}
+
+/// `start_agy` with extra environment for the fake.
+fn start_agy_with(lab: &Lab, name: &str, prompt: &str, env: &[&str]) -> (PathBuf, PathBuf) {
     let root = lab.root.path();
     let dir = root.join("pens").join(name);
     let state_dir = root.join("agy");
@@ -725,6 +737,7 @@ fn start_agy(lab: &Lab, name: &str, prompt: &str) -> (PathBuf, PathBuf) {
             .arg(format!("PATH={}:/usr/bin:/bin", root.join("bin").display()))
             .arg("--env")
             .arg(format!("LAB={}", state_dir.display()))
+            .args(env.iter().flat_map(|e| ["--env", e]))
             .args(["--prompt", prompt, "--", "agy"])
             .output()
             .unwrap(),
@@ -859,6 +872,110 @@ fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
         (&stopped["out"]["ok"], &stopped["out"]["stopped_by"]),
         (&json!(true), &json!("SIGHUP"))
     );
+}
+
+/// R13: agy sometimes sends the first prompt before its hooks are attached, so the session start,
+/// and maybe the whole first turn, is lost; the events that come later still drive its state.
+#[test]
+fn agy_that_lost_its_session_start_still_reports_its_turns() {
+    use std::io::Write;
+    for lost in ["LOST_START=1", "LOST_START=all"] {
+        let lab = Lab::new();
+        let (_dir, state_dir) = start_agy_with(&lab, "lab/agy", "hello", &[lost]);
+        let status =
+            || lab.result(lab.cmd().args(["status", "lab/agy"]).output().unwrap())["out"].clone();
+        let keys = |text: &str| {
+            let o = lab
+                .cmd()
+                .args(["keys", "lab/agy", &format!("text:{text}"), "enter"])
+                .output()
+                .unwrap();
+            assert!(o.status.success());
+        };
+        let wait = |want: &str| {
+            let end = Instant::now() + Duration::from_secs(10);
+            loop {
+                let s = status();
+                if s["state"] == want {
+                    return s;
+                }
+                assert!(Instant::now() < end, "{lost}: never became {want}: {s}");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        keys("tool");
+        wait("working");
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(state_dir.join("transcript"))
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type":"PLANNER_RESPONSE","content":"hi\nDONE"})
+        )
+        .unwrap();
+        keys("stop");
+        wait("idle");
+        let o = lab.result(lab.cmd().args(["reply", "lab/agy"]).output().unwrap());
+        assert_eq!(o["out"]["text"], "hi\nDONE", "{lost}: {o}");
+    }
+}
+
+/// R13: agy trusts only the directories in its list, so its pen adds a working directory under a
+/// trusted one while the agy runs. Other agents in the same directory leave the list alone.
+#[test]
+fn agy_is_trusted_under_a_trusted_directory_while_it_runs() {
+    let lab = Lab::new();
+    let root = fs::canonicalize(lab.root.path()).unwrap();
+    let work = root.join("work");
+    fs::create_dir(&work).unwrap();
+    let settings = root.join(".gemini/antigravity-cli/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let before = json!({"model": "m", "trustedWorkspaces": [root]});
+    fs::write(&settings, serde_json::to_string_pretty(&before).unwrap()).unwrap();
+    let listed = || -> Value {
+        serde_json::from_str::<Value>(&fs::read_to_string(&settings).unwrap()).unwrap()
+            ["trustedWorkspaces"]
+            .clone()
+    };
+    let run = |name: &str, program: &str| {
+        lab.program(program);
+        let o = lab.result(
+            lab.cmd()
+                .args(["start", name, "--cwd"])
+                .arg(&work)
+                .arg("--env")
+                .arg(format!("PATH={}:/usr/bin:/bin", root.join("bin").display()))
+                .args(["--", program])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(o["code"], 0, "{o}");
+        lab.names.borrow_mut().push(name.into());
+        let args = lab.root.path().join("pens").join(name).join("events.args");
+        let end = Instant::now() + Duration::from_secs(5);
+        while !args.exists() {
+            assert!(Instant::now() < end, "{name} never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let stop = |name: &str| {
+        let o = lab.result(
+            lab.cmd()
+                .args(["stop", name, "--timeout", "20"])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(o["out"]["ok"], true, "{o}");
+    };
+    run("lab/claude", "claude");
+    assert_eq!(listed(), before["trustedWorkspaces"]);
+    stop("lab/claude");
+    run("lab/agy", "agy");
+    assert_eq!(listed(), json!([root, work]));
+    stop("lab/agy");
+    assert_eq!(listed(), before["trustedWorkspaces"]);
 }
 
 #[test]

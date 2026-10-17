@@ -18,7 +18,7 @@ corral reply <名字>
 - 第一句话**必须**用 `--prompt` 带上；新开的 agent 不能用 `send` 送第一句。amp 例外，见下。
 - 换成 Codex：`-- codex --yolo --disable memories`（在 Codex 沙箱里 corral 会直接拒绝，见下；`--disable memories` 关掉这个会话的 Codex 记忆，它是跨项目的，会把别的项目、旧约定带进回答，人明确要它带记忆时才去掉）。换成 pi：`-- pi`。换成 omp：`-- omp --approval-mode yolo`。
 - 换成 amp：`-- amp`，不能带 `--prompt`（会退回 1）：start 完先 `corral wait <名字> --timeout 60` 等到 `idle`，再 `corral send <名字> "<你的问题>"` 送第一句，然后 wait。amp 靠装在它配置目录里的 corral 插件报状态；一直是 `starting`，可能是插件没装、没加载成功，或者卡在对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent amp`，装完要重开这个 amp），不要自己装。
-- 换成 agy：`-- agy`，同样**必须**带 `--prompt`（agy 收到第一句话之前什么都不报，不带就一直是 `starting`）。agy 也靠装在它配置目录里的 corral 插件报状态；带了 `--prompt` 还一直是 `starting`，可能是插件没装、被停用，或者卡在「是否信任这个目录」的对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent agy`，停用了就 `agy plugin enable corral`，之后要重开这个 agy；对话框要人 `corral attach <名字>` 去点），不要自己装。
+- 换成 agy：`-- agy --dangerously-skip-permissions`，同样**必须**带 `--prompt`（agy 收到第一句话之前什么都不报，不带就一直是 `starting`）。agy 也靠装在它配置目录里的 corral 插件报状态；带了 `--prompt` 还一直是 `starting`，可能是插件没装、被停用，或者卡在「是否信任这个目录」的对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent agy`，停用了就 `agy plugin enable corral`，之后要重开这个 agy；对话框要人 `corral attach <名字>` 去点），不要自己装。
 - `--env CAIRN_DISABLE=1` 让临时委派的 agent 不用 cairn（工作接续记忆）：它开在同一个目录，会把它的停点存到你这条工作线上。没装 cairn 时这个变量不起作用，照写即可，不要删。人要开一个以后自己长期对话的 agent，直接 `corral start <名字> --cwd <目录> -- claude`，不带这个变量。
 - `reply` 的 `text` 是回复原文，多段文字和代码块原样保留。
 

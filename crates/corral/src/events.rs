@@ -92,40 +92,48 @@ fn update(s: &mut Value, e: &Value) {
         s["state_started"] = e["t"].clone();
     }
 }
+/// Whether an event comes from the agent's own directory.
+fn same_dir(e: &Value, cwd: &Path) -> bool {
+    e["cwd"]
+        .as_str()
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .zip(std::fs::canonicalize(cwd).ok())
+        .is_some_and(|(a, b)| a == b)
+}
+/// Makes `sid` the main session and takes its pending events, oldest first.
+fn make_main(s: &mut Value, sid: &Value) -> Vec<Value> {
+    if sid != &s["main_session"] {
+        s["main_session"] = sid.clone();
+        s["other_sessions"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|v| v != sid);
+    }
+    let mut mine: Vec<Value> = s["pending"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| &e["session_id"] == sid)
+        .cloned()
+        .collect();
+    mine.sort_by(|a, b| {
+        a["t"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .total_cmp(&b["t"].as_f64().unwrap_or(0.0))
+    });
+    s["pending"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|e| &e["session_id"] != sid);
+    mine
+}
 fn apply(s: &mut Value, e: &Value, cwd: &Path) {
     let sid = &e["session_id"];
     if e["ev"] == "SessionStart" {
-        let same = e["cwd"]
-            .as_str()
-            .and_then(|p| std::fs::canonicalize(p).ok())
-            .zip(std::fs::canonicalize(cwd).ok())
-            .is_some_and(|(a, b)| a == b);
-        if e["has_transcript"] == true && same {
-            if sid != &s["main_session"] {
-                s["main_session"] = sid.clone();
-                s["other_sessions"]
-                    .as_array_mut()
-                    .unwrap()
-                    .retain(|v| v != sid);
-            }
+        if e["has_transcript"] == true && same_dir(e, cwd) {
+            let mine = make_main(s, sid);
             update(s, e);
-            let mut mine: Vec<Value> = s["pending"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|e| &e["session_id"] == sid)
-                .cloned()
-                .collect();
-            mine.sort_by(|a, b| {
-                a["t"]
-                    .as_f64()
-                    .unwrap_or(0.0)
-                    .total_cmp(&b["t"].as_f64().unwrap_or(0.0))
-            });
-            s["pending"]
-                .as_array_mut()
-                .unwrap()
-                .retain(|e| &e["session_id"] != sid);
             for e in mine {
                 update(s, &e)
             }
@@ -158,7 +166,33 @@ fn apply(s: &mut Value, e: &Value, cwd: &Path) {
         }
     }
 }
-pub fn read(dir: &Path, instance: &str, cwd: &Path) -> Result<Value> {
+/// For an agent that can lose its session start (`Adapter::adopts_session`): with no main
+/// session yet, the session of the oldest pending event from its directory becomes the main one.
+fn adopt(s: &mut Value, cwd: &Path) {
+    if !s["main_session"].is_null() {
+        return;
+    }
+    let Some(sid) = s["pending"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["has_transcript"] == true && !e["session_id"].is_null() && same_dir(e, cwd))
+        .min_by(|a, b| {
+            a["t"]
+                .as_f64()
+                .unwrap_or(0.0)
+                .total_cmp(&b["t"].as_f64().unwrap_or(0.0))
+        })
+        .map(|e| e["session_id"].clone())
+    else {
+        return;
+    };
+    for e in make_main(s, &sid) {
+        update(s, &e)
+    }
+}
+/// The agent's state from its events; `adopt_session` is the agent's `Adapter::adopts_session`.
+pub fn read(dir: &Path, instance: &str, cwd: &Path, adopt_session: bool) -> Result<Value> {
     let f = match File::open(dir.join("events")) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(fresh(instance)),
@@ -211,9 +245,80 @@ pub fn read(dir: &Path, instance: &str, cwd: &Path) -> Result<Value> {
         offset += line.len() as u64;
     }
     s["offset"] = json!(offset);
+    if adopt_session {
+        adopt(&mut s, cwd);
+    }
     raw::settle(&mut s, crate::now(), cwd);
     if s != original {
         state::write(&dir.join("cursor"), &s)?
     }
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn state(events: &[Value], adopt: bool) -> Value {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = File::create(dir.path().join("events")).unwrap();
+        for e in events {
+            let mut e = e.clone();
+            e["v"] = json!(1);
+            e["inst"] = json!("i");
+            e["has_transcript"] = json!(true);
+            if e.get("cwd").is_none() {
+                e["cwd"] = json!(dir.path());
+            }
+            writeln!(f, "{e}").unwrap();
+        }
+        read(dir.path(), "i", dir.path(), adopt).unwrap()
+    }
+
+    #[test]
+    fn a_session_that_lost_its_start_is_adopted_only_where_the_adapter_says_so() {
+        let turn = [
+            json!({"ev":"UserPromptSubmit","session_id":"a","t":2.0,"prompt":"go"}),
+            json!({"ev":"PostToolUse","session_id":"a","t":1.0,"tool_name":"ls"}),
+            json!({"ev":"Stop","session_id":"a","t":3.0,"last_assistant_message":"DONE"}),
+        ];
+        // Other agents keep waiting for the session start.
+        let s = state(&turn, false);
+        assert_eq!(
+            (&s["state"], &s["main_session"]),
+            (&json!("starting"), &Value::Null)
+        );
+        assert_eq!(s["pending"].as_array().unwrap().len(), 3);
+        // agy's session is adopted and its events count in time order.
+        let s = state(&turn, true);
+        assert_eq!(s["main_session"], "a");
+        assert_eq!((&s["state"], &s["reply"]), (&json!("idle"), &json!("DONE")));
+        assert_eq!(
+            (&s["input_count"], &s["last_tool"]),
+            (&json!(1), &Value::Null)
+        );
+        assert!(s["pending"].as_array().unwrap().is_empty());
+        // Only once it reports: before that it still starts.
+        assert_eq!(state(&[], true)["state"], "starting");
+    }
+
+    #[test]
+    fn adoption_takes_the_oldest_session_from_the_agents_directory_and_yields_to_a_later_start() {
+        let elsewhere = json!({"ev":"PostToolUse","session_id":"x","t":1.0,"cwd":"/"});
+        let mine = json!({"ev":"UserPromptSubmit","session_id":"a","t":2.0,"prompt":"go"});
+        let later = json!({"ev":"UserPromptSubmit","session_id":"b","t":3.0,"prompt":"go"});
+        let s = state(&[elsewhere, mine.clone(), later], true);
+        assert_eq!(
+            (&s["main_session"], &s["state"]),
+            (&json!("a"), &json!("working"))
+        );
+        // A session start that comes afterwards switches sessions as before.
+        let start = json!({"ev":"SessionStart","session_id":"c","t":4.0,"source":"startup"});
+        let s = state(&[mine, start], true);
+        assert_eq!(
+            (&s["main_session"], &s["state"]),
+            (&json!("c"), &json!("idle"))
+        );
+    }
 }

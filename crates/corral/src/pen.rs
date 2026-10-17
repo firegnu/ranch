@@ -16,7 +16,7 @@ use std::{
             process::{CommandExt, ExitStatusExt},
         },
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 use upgrade::{Custody, Handle, Upgrade};
@@ -203,6 +203,17 @@ struct Pen {
     /// Only for an agent with screen rules; snapshots leave it out and it is rebuilt from `ring`.
     #[serde(skip)]
     screen: Option<crate::screen::Screen>,
+    /// The HOME whose trust list may hold the agent's directory (`trust`), to clean on exit.
+    #[serde(default)]
+    trust: Option<PathBuf>,
+}
+/// Takes out what `trust::add` put in for this instance; a failure only goes to the log.
+fn untrust(home: Option<&Path>, instance: &str) {
+    if let Some(home) = home
+        && let Err(e) = crate::trust::remove(home, instance)
+    {
+        eprintln!("trust: {}", e.value);
+    }
 }
 impl Drop for Pen {
     fn drop(&mut self) {
@@ -716,6 +727,7 @@ impl Pen {
         }
         // The agent is gone; nothing it froze may stay frozen.
         self.resume();
+        untrust(self.trust.as_deref(), &self.instance);
         // Match v1 shutdown: bounded flushing lets attached readers receive the last PTY bytes.
         for client in self.clients.values_mut() {
             let _ = client.sock.set_nonblocking(false);
@@ -821,7 +833,7 @@ pub fn worker() -> i32 {
         command
             .args(&argv[1..])
             .env_clear()
-            .envs(environment)
+            .envs(&environment)
             .current_dir(cfg["cwd"].as_str().unwrap())
             .stdin(slave.try_clone()?)
             .stdout(slave.try_clone()?)
@@ -842,9 +854,30 @@ pub fn worker() -> i32 {
                 Ok(())
             });
         }
-        let agent = command
-            .spawn()
-            .map_err(|e| Error::new(1, "exec_failed", e))?;
+        // An agent that trusts only listed directories need not ask about one under a trusted one;
+        // the list is the one under the HOME the agent gets.
+        let home = environment
+            .get("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()));
+        let trust = crate::trust::add(
+            &crate::agents::kind(program),
+            &home,
+            cfg["cwd"].as_str().unwrap_or(""),
+            &name,
+            &instance,
+        )
+        .unwrap_or_else(|e| {
+            eprintln!("trust: {}", e.value);
+            Some(home)
+        });
+        let agent = match command.spawn() {
+            Ok(agent) => agent,
+            Err(e) => {
+                untrust(trust.as_deref(), &instance);
+                return Err(Error::new(1, "exec_failed", e));
+            }
+        };
         drop(command);
         drop(slave);
         let started = now();
@@ -887,6 +920,7 @@ pub fn worker() -> i32 {
             frozen: Vec::new(),
             resumed_at: None,
             screen: None,
+            trust,
         };
         if let Some(prompt) = cfg["prompt"].as_str() {
             pen.recent

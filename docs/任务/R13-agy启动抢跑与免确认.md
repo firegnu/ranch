@@ -81,6 +81,7 @@
 ## 用户定的（10-17，第 2–4 部分）
 
 - “第3部分也做，验收按你的建议，开工吧。”
+- 复核第二轮后（“按照建议走”）：接受改名前最后一次检查和改名之间极短的窗口（agy 或编辑器恰好这时写设置文件，它们的改动会丢）；接受「agent 运行期间用户对同一目录取消再重新信任，退出时会被删」作为已知限制，第 4 部分「用户自己点过信任的条目一概不删不改」在这一点上放宽。
 
 ## 对 paddock 的影响
 
@@ -102,3 +103,33 @@
 - 对照启动日志的顺序：正常时「新建对话 → 约 1 秒后登录完成 → 再 1–3 秒送首句」；paddock 那次登录用了 11 秒（正常 5–6 秒），首句在新建对话后 5.4 秒、登录完成之前就送了。推测：agy 等登录有上限，登录慢时不等就送，这一轮便没有钩子和技能。10 次里登录都不慢，所以这条没法证实，也说不清出现频率。目前观察到的是 11 次里出 1 次。
 - **agy 的信任只认目录本身，不继承上级目录**；点过一次后同一目录不再弹。派活每件活一个新 worktree，所以每次派给 agy 都要人点一次信任。
 - 第一组 5 次每次新建目录，是主控测试设计的失误，用户因此点了 5 次信任。agy 把这 5 个目录记进了 `trustedWorkspaces`。用户要求删掉，主控去改时被 Claude Code 自动权限检查拦下，给了用户一条命令自己删。
+
+## 完成记录（10-17，主控）
+
+### 做了什么
+- 第 2 部分：`crates/corral/resources/SKILL.md`、`AGENT_USAGE.md` 里开 agy 改成 `-- agy --dangerously-skip-permissions`。
+- 第 3 部分：`Adapter::adopts_session`（只有 agy 为真）。`events::read` 多一个参数，读完事件后若还没有主会话，就认领 `pending` 里最早一条（带 transcript、本目录）事件的会话，按时间补算积压事件。`SessionStart` 的处理抽成 `make_main`，行为不变。
+- 第 4 部分：新模块 `trust.rs`；`Adapter::trust` 声明信任列表（agy：`~/.gemini/antigravity-cli/settings.json` 的 `trustedWorkspaces`）。pen 在启动 agent 前调用 `trust::add`（HOME 用 agent 拿到的那个），agent 起不来或主循环结束（agent 已退出）后调用 `trust::remove`；出错只写 pen.log。记录在 `<HOME>/.corral/.runtime/trust.json`（配置文件、字段、路径、`CORRAL_HOME`、名字、实例、pen 进程号；加之前先记成「待确认」），加删都在同目录 `trust.lock` 的 `flock` 里做（最多等 5 秒）。改设置文件：临时文件写好，改名前核对还是同一个普通文件、内容没变，否则重来。细则见 DESIGN §7 R13。
+- 先改了 `docs/DESIGN.md` §7（R13 一条）和 `docs/CONTRACT.md`（agy 的 `--prompt` 一节）。
+
+### 验证了什么
+- 第 3 部分先写测试再改：`tests/adapters.rs` 新增 `agy_that_lost_its_session_start_still_reports_its_turns`（假 agy 不发 `SessionStart`），改之前卡在 `starting`（失败），改之后到 `idle` 并拿到回复；`events.rs` 单元测试覆盖别家不认领、认领顺序、不认领别的目录、认领后 `SessionStart` 照旧换主会话。
+- 第 4 部分：`trust.rs` 14 条单元测试：加删、不动用户条目、上级目录没信任不加、坏文件和符号链接不写、清残留、正在启动的不清、两个实例共用目录、几份 `CORRAL_HOME` 共用记录、加删失败的回滚和保留、写的同时被改不丢、12 线程并发加删（临时去掉加锁，3 次都失败）；复核第二轮后新增 3 条（加到一半断了不删列表里的目录、设置文件读不了时记录留着、写的同时被换成符号链接或别的文件不覆盖），都先在旧代码上确认因目标缺陷失败；复核第三轮后再加 1 条（删的时候文件被换掉、没删成，不能当成删完丢掉记录），把判断改回旧写法时失败。`tests/adapters.rs` 新增 `agy_is_trusted_under_a_trusted_directory_while_it_runs`，走真实 pen：claude 不动列表，agy 开着时有条目、停掉后没了。
+- `cargo test --all-targets --no-fail-fast`：合并前（c282d8c 之后）122 通过、0 失败、3 跳过。复核第二轮修改后那次 `protocol` 一组的 `concurrent_unique_starts_and_listing_preserve_live_locks` 卡住一次（已知的 macOS 并发启动问题，悬着的 R9），按进程号停掉后单独连跑 3 次、整组重跑都通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。
+- 真实 agy 1.4.0（分支编出的 corral，用户的真实 HOME，用户知情）：`ranch/test-agy-a`、`ranch/test-agy-b` 各开在一个新目录，都没弹信任框，都拿到 DONE；先停 b 只删 b，再停 a 删 a；设置文件内容、权限和测试前一致，没留临时文件，用户原有的条目（含没删的 5 条 `.agy-test-*`）没动。第一轮审查修改后用 `ranch/test-agy-c` 重测，结果相同。测试 agent 已停、目录已删。
+- 交叉审查（Codex astra xhigh，`ranch/review-r13-1`，记录在 `docs/任务/R13-审查.md`）：第一轮 7 条必须改、3 条建议改，改于 3f96e01；第二轮剩 4 条必须改，用户定了其中两处取舍（见「用户定的」），其余照改（d18f3b9）；第三轮剩 1 条必须改（删的过程中文件被换掉时误当删完），照改（c282d8c）；用户要求再复核一轮，第四轮结论「可以合并」，0 条必须改、0 条建议改。
+
+### 拿主意的地方
+- 认领放在「读事件」时做，不放在钩子里：这样已经积压了事件的 agy 换上新版命令行就能恢复，不用等它的钩子换版本。
+- 删条目的时机跟 agent 退出走，不跟 worktree 走：清 worktree 是主控用 git 做的，corral 看不到；派活技能本来就要求清 worktree 时一并关掉住在里面的 agent。
+- 判断「agent 还活着」用 `meta.json` 的实例和 `agent_pid`：`corral upgrade` 换 pen 时 agent 进程不变，`meta.json` 会被新 pen 改写，实例不变。不去抢 agent 的 `lock`，免得和正在启动的同名 agent 争锁。
+- 写回设置文件时对象键按字母重排（serde_json 不保序；开 `preserve_order` 会改整个 corral 的 JSON 输出顺序，不值得）。值不变；agy 自己写回时会用它的顺序。
+- 加进列表的是规范化后的路径（macOS 的 `/tmp` 会变成 `/private/tmp`）；真实 agy 认这个形式（实测不弹框）。
+- 没有实测「另一个先开的 agy 拿内存里的旧列表写回」：会这样写的只有 agy 自己改设置的时候（如用户在它里面点信任）。后果是 corral 加的条目被冲掉（那个 agy 下次再开会弹框），或 corral 删掉的条目被写回（多一行不再用到的路径）。没为它加机制。
+- corral 改名前最后一次检查和改名之间，agy 或编辑器恰好写设置文件，它们这次的改动会丢；corral 的锁管不到它们，用户接受这个窗口。
+- 列表只存路径：agent 运行期间用户对同一目录取消再重新信任，退出时会被删（用户接受，DESIGN 写为已知限制）。除此之外，corral 不删拿不准是不是自己加的条目：加到一半断了，宁可多留一行。
+
+### 没做的
+- 首句的送法（`--prompt-interactive`）没改，抢跑没复现。
+- 没核实 agy 子 agent 会不会触发 `SessionStart`（R8 的已知限制，照旧）。
+- 第 4 部分要求的「agy 运行时自己写设置文件会不会拿旧内容覆盖」没做针对性实测：要让另一个 agy 在运行中保存设置（如点信任），会往用户的信任列表里留下 agy 自己加、corral 不能删的条目。可能的后果已写在「拿主意的地方」，用户已接受并发写的窗口。
