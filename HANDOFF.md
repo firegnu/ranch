@@ -4,9 +4,10 @@
 
 ## 现在在哪
 
-- 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R8、R10 都已合并、推送、收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy 都在 §7），公开格式在 `docs/CONTRACT.md`。
+- 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R8、R10、R12 都已合并、推送、收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy 都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
   - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/8299e39/bin/`（10-16 起：两个技能开出去的 Codex 都加 `--disable memories`；corral-dispatch 的完成记录和回复多写「踩过的坑」。corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：切回 `versions/14fb8d9/bin/`（没有「踩过的坑」）或 `versions/f86d1c2/bin/`。旧版本目录都保留，不删。
+  - 已打好、还没部署：`versions/9b69e4d/`（R12：corral-dispatch 技能换成分工表和新分档表，`ranch dispatch route` 用 jev-1.14.0；corral 代码没变）。等用户切链接、跑 `ranch dispatch install-skills`。
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/` 下。
   - 用户的 Linux 实测机器（主机名不进仓库）：代码在 `~/Develop/ranch`（远端仓库设了 `receive.denyCurrentBranch updateInstead`，本机 `git push` 过去），装的是 `versions/53fe6fc/`（R10 分支上的提交，10-16 用户部署），两份技能都装了，没有在跑的 agent。那台机器上只用 pi、omp，任何情况下不跑 Claude Code、Codex，pi、omp 不委派活（用户 10-15，暂时的）。
   - 全局插件：amp 装在 `~/.config/amp/plugins/corral.ts`（10-14 用户同意后装）；agy 装在 `~/.gemini/config/plugins/corral/`（10-15 用户从 paddock Integrations 装，测过能用）。两个 `integration status` 都是 same。
@@ -23,11 +24,12 @@
 
 ## 下一步
 
-1. 草稿任务 `docs/任务/R11-路由模型升到jev-1.14.0.md`（用户 10-16）：先查 1.14.0 改了什么，动手前给用户看、定验收。
+1. R12 部署和验收：用户在普通终端把 `~/.local/bin/ranch`、`~/.local/bin/corral` 切到 `versions/9b69e4d/bin/`，跑 `ranch dispatch install-skills`；正在跑的主控要重开才读到新技能。之后主控开一个 `ranch/test-…`（`--label role=test`）主控，拿两三件合成小任务走一遍「先写正文、再问路由、再查分工表」，看交给谁、几档对不对，用完关掉。
 2. 草稿任务 `docs/任务/R9-常驻进程不带走调用方的描述符.md`（用户 10-14：“记为一个draft task。找时间再做”）：修「悬着」第一条。动手前再给用户看、定验收。
 
 ## 悬着
 
+- R12 的 sonnet 试用：分工表第 8 条（说不清的界面小活）先给 Claude Code sonnet / high 试 5 件；满 5 件后主控把这 5 件的「结果」行汇总给用户，由用户定以后怎么派，定之前第 8 条的活先问用户。
 - macOS 上多个线程同时起 `corral start` 时，某一次的输出管道可能漏进另一个常驻的 pen（Rust 标准库在 macOS 上建管道和设 close-on-exec 分两步），调用方等不到输出结束，卡住不返回。
   - `protocol.rs` 的 `concurrent_unique_starts_and_listing_preserve_live_locks` 偶尔卡住就是这个（R8 期间抓到现场：一个 pen 开着测试进程的管道）。
   - paddock 同时起好几个 agent 时理论上也会碰上。
