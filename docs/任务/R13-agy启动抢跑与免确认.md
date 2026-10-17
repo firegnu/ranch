@@ -115,9 +115,9 @@
 ### 验证了什么
 - 第 3 部分先写测试再改：`tests/adapters.rs` 新增 `agy_that_lost_its_session_start_still_reports_its_turns`（假 agy 不发 `SessionStart`），改之前卡在 `starting`（失败），改之后到 `idle` 并拿到回复；`events.rs` 单元测试覆盖别家不认领、认领顺序、不认领别的目录、认领后 `SessionStart` 照旧换主会话。
 - 第 4 部分：`trust.rs` 14 条单元测试：加删、不动用户条目、上级目录没信任不加、坏文件和符号链接不写、清残留、正在启动的不清、两个实例共用目录、几份 `CORRAL_HOME` 共用记录、加删失败的回滚和保留、写的同时被改不丢、12 线程并发加删（临时去掉加锁，3 次都失败）；复核第二轮后新增 3 条（加到一半断了不删列表里的目录、设置文件读不了时记录留着、写的同时被换成符号链接或别的文件不覆盖），都先在旧代码上确认因目标缺陷失败；复核第三轮后再加 1 条（删的时候文件被换掉、没删成，不能当成删完丢掉记录），把判断改回旧写法时失败。`tests/adapters.rs` 新增 `agy_is_trusted_under_a_trusted_directory_while_it_runs`，走真实 pen：claude 不动列表，agy 开着时有条目、停掉后没了。
-- `cargo test --all-targets --no-fail-fast`（复核第二轮修改后）：121 通过、0 失败、3 跳过。其中 `protocol` 一组的 `concurrent_unique_starts_and_listing_preserve_live_locks` 卡住一次（已知的 macOS 并发启动问题，悬着的 R9），按进程号停掉后单独连跑 3 次、整组重跑都通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。
+- `cargo test --all-targets --no-fail-fast`：合并前（c282d8c 之后）122 通过、0 失败、3 跳过。复核第二轮修改后那次 `protocol` 一组的 `concurrent_unique_starts_and_listing_preserve_live_locks` 卡住一次（已知的 macOS 并发启动问题，悬着的 R9），按进程号停掉后单独连跑 3 次、整组重跑都通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。
 - 真实 agy 1.4.0（分支编出的 corral，用户的真实 HOME，用户知情）：`ranch/test-agy-a`、`ranch/test-agy-b` 各开在一个新目录，都没弹信任框，都拿到 DONE；先停 b 只删 b，再停 a 删 a；设置文件内容、权限和测试前一致，没留临时文件，用户原有的条目（含没删的 5 条 `.agy-test-*`）没动。第一轮审查修改后用 `ranch/test-agy-c` 重测，结果相同。测试 agent 已停、目录已删。
-- 交叉审查（Codex astra xhigh，`ranch/review-r13-1`，记录在 `docs/任务/R13-审查.md`）：第一轮 7 条必须改、3 条建议改，改于 3f96e01；第二轮剩 4 条必须改，用户定了其中两处取舍（见「用户定的」），其余照改（d18f3b9）；第三轮剩 1 条必须改（删的过程中文件被换掉时误当删完），照改。
+- 交叉审查（Codex astra xhigh，`ranch/review-r13-1`，记录在 `docs/任务/R13-审查.md`）：第一轮 7 条必须改、3 条建议改，改于 3f96e01；第二轮剩 4 条必须改，用户定了其中两处取舍（见「用户定的」），其余照改（d18f3b9）；第三轮剩 1 条必须改（删的过程中文件被换掉时误当删完），照改（c282d8c）；用户要求再复核一轮，第四轮结论「可以合并」，0 条必须改、0 条建议改。
 
 ### 拿主意的地方
 - 认领放在「读事件」时做，不放在钩子里：这样已经积压了事件的 agy 换上新版命令行就能恢复，不用等它的钩子换版本。
