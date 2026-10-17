@@ -198,13 +198,36 @@ fn events_filter_subagents_keep_full_reply_and_do_not_resend_unconfirmed_input()
     assert_eq!(lab.json(&["reply", "lab/main"])["text"], reply);
     let sent = lab.out(&["send", "lab/main", "one delivery", "--timeout", "0.1"]);
     assert_eq!(sent.status.code(), Some(3));
-    // cat echoes once through the terminal driver and once itself: no second Enter or retry.
-    let out = lab.out(&["read", "lab/main"]);
-    assert_eq!(
+    // send returning does not mean cat's echo has reached the pen yet.
+    eventually(|| {
+        let out = lab.out(&["read", "lab/main"]);
+        assert!(out.status.success());
         String::from_utf8_lossy(&out.stdout)
-            .matches("one delivery")
-            .count(),
-        2
+            .matches("one delivery\n")
+            .count()
+            >= 2
+    });
+    // Queue a barrier after send: both echoes mean cat consumed all preceding input.
+    lab.json(&["keys", "lab/main", "text:echo-barrier", "enter"]);
+    let mut output = String::new();
+    eventually(|| {
+        let out = lab.out(&["read", "lab/main"]);
+        assert!(out.status.success());
+        output = String::from_utf8(out.stdout).unwrap();
+        output.matches("echo-barrier\n").count() >= 2
+    });
+    // Keep every line, including empty ones: a second Enter or retry must fail.
+    // Terminal-driver and cat output may arrive in either order.
+    let mut lines: Vec<_> = output.lines().collect();
+    lines.sort_unstable();
+    assert_eq!(
+        lines,
+        [
+            "echo-barrier",
+            "echo-barrier",
+            "one delivery",
+            "one delivery"
+        ]
     );
     lab.event(
         "PreToolUse",
