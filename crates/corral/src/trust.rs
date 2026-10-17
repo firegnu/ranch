@@ -196,8 +196,8 @@ fn update(
 
 /// Takes the directory of a record entry out of its list, unless another entry still needs it.
 /// Only one copy goes: any other is not corral's. Fails when the list is there but cannot be read
-/// or written safely, so that the entry stays for the next time.
-fn untrust(entry: &Value, kept: &[Value]) -> Result<()> {
+/// or written safely, so that the entry stays for the next time; `meanwhile` as in `update`.
+fn untrust(entry: &Value, kept: &[Value], meanwhile: &dyn Fn()) -> Result<()> {
     let (Some(file), Some(key), Some(path)) = (
         entry["file"].as_str(),
         entry["key"].as_str(),
@@ -211,10 +211,12 @@ fn untrust(entry: &Value, kept: &[Value]) -> Result<()> {
     {
         return Ok(());
     }
-    let read = std::cell::Cell::new(false);
+    // Whether the last read of the list found the directory already out of it.
+    let absent = std::cell::Cell::new(false);
     let take = |paths: &[String]| {
-        read.set(true);
-        let at = paths.iter().position(|p| p == path)?;
+        let at = paths.iter().position(|p| p == path);
+        absent.set(at.is_none());
+        let at = at?;
         let mut paths = paths.to_vec();
         paths.remove(at);
         Some(paths)
@@ -222,7 +224,7 @@ fn untrust(entry: &Value, kept: &[Value]) -> Result<()> {
     let file = Path::new(file);
     let gone =
         || fs::symlink_metadata(file).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound);
-    if update(file, key, take, &|| {})? || read.get() || gone() {
+    if update(file, key, take, meanwhile)? || absent.get() || gone() {
         return Ok(());
     }
     Err(Error::new(
@@ -241,7 +243,7 @@ fn prune(store: &Path) -> Result<Vec<Value>> {
         e["pending"] != true && alive(e) && Path::new(e["path"].as_str().unwrap_or("")).is_dir()
     });
     for e in stale {
-        if e["pending"] != true && untrust(&e, &kept).is_err() {
+        if e["pending"] != true && untrust(&e, &kept, &|| {}).is_err() {
             kept.push(e);
         }
     }
@@ -312,7 +314,7 @@ fn remove_in(store: &Path, instance: &str) -> Result<()> {
     // pending entry (its add was cut short) goes without touching the list, as in `prune`.
     for e in mine {
         if e["pending"] != true
-            && let Err(err) = untrust(&e, &kept)
+            && let Err(err) = untrust(&e, &kept, &|| {})
         {
             kept.push(e);
             failed = Some(err);
@@ -699,6 +701,32 @@ mod tests {
         };
         assert!(update(&lab.file, KEY, add, &replace).unwrap());
         assert!(lab.list().contains(&"/corral-added".to_owned()));
+    }
+
+    #[test]
+    fn a_removal_cut_off_by_a_replaced_file_is_not_taken_as_done() {
+        let lab = Lab::new();
+        let work = lab.dir("work");
+        lab.add(&work, "a/dev", "i1");
+        let entry = read_record(&lab.store)[0].clone();
+        // Replaced by a link after corral read the list and found the directory in it.
+        let target = lab.base.join("dotfiles.json");
+        let to_link = || {
+            if !fs::symlink_metadata(&lab.file).unwrap().is_symlink() {
+                fs::rename(&lab.file, &target).unwrap();
+                std::os::unix::fs::symlink(&target, &lab.file).unwrap();
+            }
+        };
+        assert!(untrust(&entry, &[], &to_link).is_err());
+        assert!(
+            fs::read_to_string(&target)
+                .unwrap()
+                .contains(work.to_str().unwrap())
+        );
+        fs::remove_file(&lab.file).unwrap();
+        fs::rename(&target, &lab.file).unwrap();
+        untrust(&entry, &[], &|| {}).unwrap();
+        assert_eq!(lab.list(), lab.original());
     }
 
     #[test]
