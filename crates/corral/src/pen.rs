@@ -716,6 +716,11 @@ impl Pen {
         }
         // The agent is gone; nothing it froze may stay frozen.
         self.resume();
+        if let Err(e) =
+            crate::trust::remove(self.metadata["kind"].as_str().unwrap_or(""), &self.instance)
+        {
+            eprintln!("trust: {}", e.value);
+        }
         // Match v1 shutdown: bounded flushing lets attached readers receive the last PTY bytes.
         for client in self.clients.values_mut() {
             let _ = client.sock.set_nonblocking(false);
@@ -775,6 +780,15 @@ pub fn worker() -> i32 {
             &raw[0],
             cfg["cwd"].as_str().unwrap_or(""),
         ));
+        // An agent that trusts only listed directories need not ask about one under a trusted one.
+        if let Err(e) = crate::trust::add(
+            &crate::agents::kind(&raw[0]),
+            cfg["cwd"].as_str().unwrap_or(""),
+            &name,
+            &instance,
+        ) {
+            eprintln!("trust: {}", e.value);
+        }
         fs::OpenOptions::new()
             .write(true)
             .create(true)

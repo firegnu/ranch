@@ -285,13 +285,19 @@ mod tests {
         ];
         // Other agents keep waiting for the session start.
         let s = state(&turn, false);
-        assert_eq!((&s["state"], &s["main_session"]), (&json!("starting"), &Value::Null));
+        assert_eq!(
+            (&s["state"], &s["main_session"]),
+            (&json!("starting"), &Value::Null)
+        );
         assert_eq!(s["pending"].as_array().unwrap().len(), 3);
         // agy's session is adopted and its events count in time order.
         let s = state(&turn, true);
         assert_eq!(s["main_session"], "a");
         assert_eq!((&s["state"], &s["reply"]), (&json!("idle"), &json!("DONE")));
-        assert_eq!((&s["input_count"], &s["last_tool"]), (&json!(1), &Value::Null));
+        assert_eq!(
+            (&s["input_count"], &s["last_tool"]),
+            (&json!(1), &Value::Null)
+        );
         assert!(s["pending"].as_array().unwrap().is_empty());
         // Only once it reports: before that it still starts.
         assert_eq!(state(&[], true)["state"], "starting");
@@ -303,10 +309,16 @@ mod tests {
         let mine = json!({"ev":"UserPromptSubmit","session_id":"a","t":2.0,"prompt":"go"});
         let later = json!({"ev":"UserPromptSubmit","session_id":"b","t":3.0,"prompt":"go"});
         let s = state(&[elsewhere, mine.clone(), later], true);
-        assert_eq!((&s["main_session"], &s["state"]), (&json!("a"), &json!("working")));
+        assert_eq!(
+            (&s["main_session"], &s["state"]),
+            (&json!("a"), &json!("working"))
+        );
         // A session start that comes afterwards switches sessions as before.
         let start = json!({"ev":"SessionStart","session_id":"c","t":4.0,"source":"startup"});
         let s = state(&[mine, start], true);
-        assert_eq!((&s["main_session"], &s["state"]), (&json!("c"), &json!("idle")));
+        assert_eq!(
+            (&s["main_session"], &s["state"]),
+            (&json!("c"), &json!("idle"))
+        );
     }
 }

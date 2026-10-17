@@ -893,7 +893,12 @@ fn agy_that_lost_its_session_start_still_reports_its_turns() {
         .append(true)
         .open(state_dir.join("transcript"))
         .unwrap();
-    writeln!(f, "{}", json!({"type":"PLANNER_RESPONSE","content":"hi\nDONE"})).unwrap();
+    writeln!(
+        f,
+        "{}",
+        json!({"type":"PLANNER_RESPONSE","content":"hi\nDONE"})
+    )
+    .unwrap();
     let o = lab
         .cmd()
         .args(["keys", "lab/agy", "text:stop", "enter"])
@@ -903,6 +908,62 @@ fn agy_that_lost_its_session_start_still_reports_its_turns() {
     wait("idle");
     let o = lab.result(lab.cmd().args(["reply", "lab/agy"]).output().unwrap());
     assert_eq!(o["out"]["text"], "hi\nDONE", "{o}");
+}
+
+/// R13: agy trusts only the directories in its list, so its pen adds a working directory under a
+/// trusted one while the agy runs. Other agents in the same directory leave the list alone.
+#[test]
+fn agy_is_trusted_under_a_trusted_directory_while_it_runs() {
+    let lab = Lab::new();
+    let root = fs::canonicalize(lab.root.path()).unwrap();
+    let work = root.join("work");
+    fs::create_dir(&work).unwrap();
+    let settings = root.join(".gemini/antigravity-cli/settings.json");
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    let before = json!({"model": "m", "trustedWorkspaces": [root]});
+    fs::write(&settings, serde_json::to_string_pretty(&before).unwrap()).unwrap();
+    let listed = || -> Value {
+        serde_json::from_str::<Value>(&fs::read_to_string(&settings).unwrap()).unwrap()
+            ["trustedWorkspaces"]
+            .clone()
+    };
+    let run = |name: &str, program: &str| {
+        lab.program(program);
+        let o = lab.result(
+            lab.cmd()
+                .args(["start", name, "--cwd"])
+                .arg(&work)
+                .arg("--env")
+                .arg(format!("PATH={}:/usr/bin:/bin", root.join("bin").display()))
+                .args(["--", program])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(o["code"], 0, "{o}");
+        lab.names.borrow_mut().push(name.into());
+        let args = lab.root.path().join("pens").join(name).join("events.args");
+        let end = Instant::now() + Duration::from_secs(5);
+        while !args.exists() {
+            assert!(Instant::now() < end, "{name} never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let stop = |name: &str| {
+        let o = lab.result(
+            lab.cmd()
+                .args(["stop", name, "--timeout", "20"])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(o["out"]["ok"], true, "{o}");
+    };
+    run("lab/claude", "claude");
+    assert_eq!(listed(), before["trustedWorkspaces"]);
+    stop("lab/claude");
+    run("lab/agy", "agy");
+    assert_eq!(listed(), json!([root, work]));
+    stop("lab/agy");
+    assert_eq!(listed(), before["trustedWorkspaces"]);
 }
 
 #[test]

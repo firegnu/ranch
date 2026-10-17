@@ -1,7 +1,7 @@
 //! agy (Google Antigravity's command-line agent). New in ranch (R8); the research is in
 //! `docs/调研/R5-agy与amp接入、全局安装和读屏兜底.md`, what real runs showed in
 //! `docs/任务/R8-接入agy.md`.
-use super::{Adapter, Global, Launch};
+use super::{Adapter, Global, Launch, Trust};
 use crate::Result;
 use crate::screen::Rule;
 use serde_json::{Value, json};
@@ -27,6 +27,13 @@ impl Adapter for Agy {
     /// session start is lost (R13).
     fn adopts_session(&self) -> bool {
         true
+    }
+    /// agy asks to trust every directory it has not trusted itself, even under a trusted one.
+    fn trust(&self) -> Option<Trust> {
+        Some(Trust {
+            file: |home| home.join(".gemini/antigravity-cli/settings.json"),
+            key: "trustedWorkspaces",
+        })
     }
     /// One argument, so a prompt starting with `-` is not taken for an option.
     fn prompt_args(&self, prompt: &str) -> Vec<String> {

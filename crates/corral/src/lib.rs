@@ -15,6 +15,7 @@ mod screen;
 mod skills;
 mod state;
 mod terminal;
+mod trust;
 mod upgrade;
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};

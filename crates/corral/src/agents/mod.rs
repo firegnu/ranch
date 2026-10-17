@@ -86,6 +86,11 @@ pub(crate) trait Adapter: Sync {
     fn adopts_session(&self) -> bool {
         false
     }
+    /// The list of directories the agent trusts, for an agent that trusts only the directories
+    /// listed there, not what lies under them (R13).
+    fn trust(&self) -> Option<Trust> {
+        None
+    }
     /// The agent's hook writes version 2 raw events (`"adapter": kind`) for `events::raw`.
     fn raw_events(&self) -> bool {
         false
@@ -119,6 +124,13 @@ pub(crate) struct Global {
     pub enabled: Option<fn(&Path) -> Option<bool>>,
     /// The files run `__hook <kind>:<event>` through `$CORRAL_HELPER`, which the pen then sets.
     pub helper: bool,
+}
+
+/// Where an agent keeps the directories it trusts: a JSON object file, given HOME, and its field
+/// that lists them as strings.
+pub(crate) struct Trust {
+    pub file: fn(&Path) -> PathBuf,
+    pub key: &'static str,
 }
 
 /// What an adapter needs to build its hook arguments.
