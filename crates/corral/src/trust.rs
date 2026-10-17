@@ -3,8 +3,14 @@
 //! worktrees of a trusted repository; for such an agent the pen adds its working directory to the
 //! list when a parent directory is already there, and takes it out when the agent exits.
 //!
-//! What corral added is recorded in `$CORRAL_HOME/.runtime/trust.json`, so corral only ever
-//! removes its own entries. Adding and removing happen under `.runtime/trust.lock`.
+//! What corral added is recorded next to the agent's HOME, in `<HOME>/.corral/.runtime/trust.json`,
+//! so every corral that writes the same list (whatever its `CORRAL_HOME`) shares one record and one
+//! lock (`trust.lock`), and corral only ever removes its own entries. The record is written before
+//! a directory goes into the list and after it comes out, so an interrupted change leaves at worst
+//! a record of a directory that is not listed, never a listed directory nobody owns.
+//!
+//! The agent writes its list without corral's lock. Before replacing the file corral reads it
+//! again and starts over if it changed; what changes in between those two steps would be lost.
 use crate::{Error, Result, state};
 use serde_json::{Value, json};
 use std::{
@@ -12,144 +18,171 @@ use std::{
     io::Write,
     os::{fd::AsRawFd, unix::fs::DirBuilderExt, unix::fs::OpenOptionsExt},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
-/// Before the pen starts the agent: trusts `cwd` for an agent of `kind` if a parent is trusted.
-pub fn add(kind: &str, cwd: &str, name: &str, instance: &str) -> Result<()> {
+/// Before the pen starts the agent, with the agent's HOME: trusts `cwd` for an agent of `kind` if
+/// a parent is trusted. Returns the HOME whose record to clean when the agent exits.
+pub fn add(
+    kind: &str,
+    home: &Path,
+    cwd: &str,
+    name: &str,
+    instance: &str,
+) -> Result<Option<PathBuf>> {
     let Some(t) = crate::agents::find(kind).and_then(|a| a.trust()) else {
-        return Ok(());
+        return Ok(None);
     };
-    let file = (t.file)(&home());
-    locked(&state::home(), |root| {
-        add_in(root, &file, t.key, Path::new(cwd), name, instance)
-    })
+    let owner = json!({
+        "root": state::home(),
+        "name": name,
+        "instance": instance,
+        "pen_pid": std::process::id(),
+    });
+    let store = store(home);
+    locked(&store, || {
+        add_in(&store, &(t.file)(home), t.key, Path::new(cwd), owner)
+    })?;
+    Ok(Some(home.to_owned()))
 }
 
 /// After the agent exited: takes out what `add` put in for this instance.
-pub fn remove(kind: &str, instance: &str) -> Result<()> {
-    if crate::agents::find(kind).and_then(|a| a.trust()).is_none() {
-        return Ok(());
-    }
-    locked(&state::home(), |root| remove_in(root, instance))
+pub fn remove(home: &Path, instance: &str) -> Result<()> {
+    let store = store(home);
+    locked(&store, || remove_in(&store, instance))
 }
 
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+/// Where the record and the lock for the lists under `home` live.
+fn store(home: &Path) -> PathBuf {
+    home.join(".corral/.runtime")
 }
 
-/// Runs `f` holding the exclusive lock of `root`'s trust record.
-fn locked<T>(root: &Path, f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
-    let runtime = root.join(".runtime");
+/// Runs `f` holding the exclusive lock of the record in `store`; gives up after a few seconds.
+fn locked<T>(store: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(&runtime)?;
+        .create(store)?;
     let lock = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(runtime.join("trust.lock"))?;
-    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(std::io::Error::last_os_error().into());
+        .open(store.join("trust.lock"))?;
+    let end = Instant::now() + Duration::from_secs(5);
+    while unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let e = std::io::Error::last_os_error();
+        if e.kind() != std::io::ErrorKind::WouldBlock {
+            return Err(e.into());
+        }
+        if Instant::now() > end {
+            return Err(Error::new(1, "busy", "the trust record stayed locked"));
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
-    f(root)
+    f()
 }
 
-fn record_path(root: &Path) -> PathBuf {
-    root.join(".runtime/trust.json")
-}
-fn read_record(root: &Path) -> Vec<Value> {
-    state::read(record_path(root))["entries"]
+fn read_record(store: &Path) -> Vec<Value> {
+    state::read(store.join("trust.json"))["entries"]
         .as_array()
         .cloned()
         .unwrap_or_default()
 }
-fn write_record(root: &Path, entries: Vec<Value>) -> Result<()> {
-    state::write(&record_path(root), &json!({"entries": entries}))
+fn write_record(store: &Path, entries: &[Value]) -> Result<()> {
+    state::write(&store.join("trust.json"), &json!({ "entries": entries }))
 }
 
-/// Whether the agent that made this record entry still runs: its state directory names the same
-/// instance and its process exists.
-fn alive(root: &Path, entry: &Value) -> bool {
+/// Whether a process exists.
+fn exists(pid: Option<i64>) -> bool {
+    pid.is_some_and(|pid| {
+        pid > 0
+            && (unsafe { libc::kill(pid as i32, 0) } == 0
+                || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+    })
+}
+
+/// Whether the agent that made this record entry may still run. Its state directory names its
+/// instance once it started (`corral upgrade` keeps instance and agent); while its pen is still
+/// starting the agent, that directory has no metadata, and the pen has to be alive.
+fn alive(entry: &Value) -> bool {
     let name = entry["name"].as_str().unwrap_or("");
     if state::validate(name).is_err() {
         return false;
     }
-    let meta = state::read(root.join(name).join("meta.json"));
-    let Some(pid) = meta["agent_pid"].as_i64() else {
-        return false;
-    };
-    meta["instance"] == entry["instance"]
-        && (unsafe { libc::kill(pid as i32, 0) } == 0
-            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
+    let dir = Path::new(entry["root"].as_str().unwrap_or("")).join(name);
+    let meta = state::read(dir.join("meta.json"));
+    if meta.is_null() {
+        return exists(entry["pen_pid"].as_i64());
+    }
+    meta["instance"] == entry["instance"] && exists(meta["agent_pid"].as_i64())
 }
 
-/// The agent's trust list in `file`, or `None` when corral must leave the file alone: it is
-/// missing, not a JSON object, or `key` is not a list of strings. A missing `key` is an empty list.
-struct List {
-    file: PathBuf,
-    doc: Value,
-    key: String,
-    newline: bool,
-}
-impl List {
-    fn read(file: &Path, key: &str) -> Option<List> {
-        let text = fs::read_to_string(file).ok()?;
-        let doc: Value = serde_json::from_str(&text).ok()?;
-        match doc.get(key) {
-            None if doc.is_object() => {}
-            Some(Value::Array(a)) if a.iter().all(Value::is_string) => {}
-            _ => return None,
+/// Changes the list under `key` in the JSON object file `file`: `change` gets the listed
+/// directories and returns the new list, or `None` to leave it. Leaves the file alone, returning
+/// `false`, when it is missing, a symbolic link, not a JSON object, or `key` holds anything but
+/// strings. Starts over when the file changes while corral writes it; `meanwhile` runs in that
+/// gap, for tests.
+fn update(
+    file: &Path,
+    key: &str,
+    mut change: impl FnMut(&[String]) -> Option<Vec<String>>,
+    meanwhile: &dyn Fn(),
+) -> Result<bool> {
+    for _ in 0..5 {
+        match fs::symlink_metadata(file) {
+            Ok(m) if m.file_type().is_file() => {}
+            _ => return Ok(false),
         }
-        Some(List {
-            file: file.to_owned(),
-            doc,
-            key: key.to_owned(),
-            newline: text.ends_with('\n'),
-        })
-    }
-    fn paths(&self) -> Vec<String> {
-        self.doc[&self.key]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-    fn set(&mut self, paths: Vec<String>) {
-        self.doc[&self.key] = json!(paths);
-    }
-    /// Replaces the file atomically, keeping its permissions.
-    fn write(&self) -> Result<()> {
-        let mode = fs::metadata(&self.file)?.permissions();
-        let name = self.file.file_name().unwrap_or_default().to_string_lossy();
-        let tmp = self
-            .file
-            .with_file_name(format!(".{name}.corral-{}.tmp", std::process::id()));
-        let mut text = serde_json::to_string_pretty(&self.doc)?;
-        if self.newline {
-            text.push('\n');
+        let Ok(text) = fs::read_to_string(file) else {
+            return Ok(false);
+        };
+        let Ok(mut doc) = serde_json::from_str::<Value>(&text) else {
+            return Ok(false);
+        };
+        let paths: Vec<String> = match doc.get(key) {
+            None if doc.is_object() => vec![],
+            Some(Value::Array(a)) if a.iter().all(Value::is_string) => a
+                .iter()
+                .map(|v| v.as_str().unwrap_or_default().to_owned())
+                .collect(),
+            _ => return Ok(false),
+        };
+        let Some(paths) = change(&paths) else {
+            return Ok(false);
+        };
+        doc[key] = json!(paths);
+        let mut out = serde_json::to_string_pretty(&doc)?;
+        if text.ends_with('\n') {
+            out.push('\n');
         }
-        let result = (|| -> Result<()> {
+        let name = file.file_name().unwrap_or_default().to_string_lossy();
+        let tmp = file.with_file_name(format!(".{name}.corral-{}.tmp", std::process::id()));
+        let written = (|| -> Result<bool> {
             let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
-            f.set_permissions(mode)?;
-            f.write_all(text.as_bytes())?;
+            f.set_permissions(fs::metadata(file)?.permissions())?;
+            f.write_all(out.as_bytes())?;
             f.sync_all()?;
-            fs::rename(&tmp, &self.file)?;
-            Ok(())
+            meanwhile();
+            if fs::read_to_string(file).ok().as_deref() != Some(text.as_str()) {
+                return Ok(false);
+            }
+            fs::rename(&tmp, file)?;
+            Ok(true)
         })();
-        if result.is_err() {
+        if !matches!(written, Ok(true)) {
             let _ = fs::remove_file(&tmp);
         }
-        result
+        if written? {
+            return Ok(true);
+        }
     }
+    Err(Error::new(1, "busy", "the trust list kept changing"))
 }
 
 /// Takes the directory of a record entry out of its list, unless another entry still needs it.
+/// Only one copy goes: any other is not corral's.
 fn untrust(entry: &Value, kept: &[Value]) -> Result<()> {
     let (Some(file), Some(key), Some(path)) = (
         entry["file"].as_str(),
@@ -164,87 +197,97 @@ fn untrust(entry: &Value, kept: &[Value]) -> Result<()> {
     {
         return Ok(());
     }
-    let Some(mut list) = List::read(Path::new(file), key) else {
-        return Ok(());
+    let take = |paths: &[String]| {
+        let at = paths.iter().position(|p| p == path)?;
+        let mut paths = paths.to_vec();
+        paths.remove(at);
+        Some(paths)
     };
-    let paths = list.paths();
-    if !paths.iter().any(|p| p == path) {
-        return Ok(());
-    }
-    list.set(paths.into_iter().filter(|p| p != path).collect());
-    list.write()
+    update(Path::new(file), key, take, &|| {})?;
+    Ok(())
 }
 
-fn add_in(
-    root: &Path,
-    file: &Path,
-    key: &str,
-    cwd: &Path,
-    name: &str,
-    instance: &str,
-) -> Result<()> {
-    // First drop what agents that are gone, or directories that are gone, left behind.
-    let (mut kept, stale): (Vec<Value>, Vec<Value>) = read_record(root)
-        .into_iter()
-        .partition(|e| alive(root, e) && Path::new(e["path"].as_str().unwrap_or("")).is_dir());
-    for e in &stale {
-        untrust(e, &kept)?;
+/// Takes out what record entries of agents that are gone, or of directories that are gone, put in;
+/// an entry whose change fails stays for the next time.
+fn prune(store: &Path) -> Result<Vec<Value>> {
+    let entries = read_record(store);
+    let (mut kept, stale): (Vec<Value>, Vec<Value>) = entries
+        .iter()
+        .cloned()
+        .partition(|e| alive(e) && Path::new(e["path"].as_str().unwrap_or("")).is_dir());
+    for e in stale {
+        if untrust(&e, &kept).is_err() {
+            kept.push(e);
+        }
     }
-    if !stale.is_empty() {
-        write_record(root, kept.clone())?;
+    if kept.len() != entries.len() {
+        write_record(store, &kept)?;
     }
+    Ok(kept)
+}
 
-    let Some(mut list) = List::read(file, key) else {
-        return Ok(());
-    };
+fn add_in(store: &Path, file: &Path, key: &str, cwd: &Path, owner: Value) -> Result<()> {
+    let mut kept = prune(store)?;
     let dir = fs::canonicalize(cwd)?;
     let path = dir
         .to_str()
         .ok_or_else(|| Error::new(1, "error", "non UTF-8 directory"))?
         .to_owned();
-    let file_str = file.to_string_lossy().into_owned();
-    let paths = list.paths();
-    let listed = paths
+    let mut entry = owner;
+    entry["file"] = json!(file.to_string_lossy());
+    entry["key"] = json!(key);
+    entry["path"] = json!(path);
+    // Another running agent of corral's already holds it: share the entry.
+    if kept
         .iter()
-        .any(|p| Path::new(p) == dir || fs::canonicalize(p).is_ok_and(|c| c == dir));
-    let ours = kept
-        .iter()
-        .any(|e| e["file"] == file_str.as_str() && e["key"] == key && e["path"] == path.as_str());
-    if listed && !ours {
-        // The user trusts it already.
-        return Ok(());
+        .any(|e| e["file"] == entry["file"] && e["key"] == key && e["path"] == entry["path"])
+    {
+        kept.push(entry);
+        return write_record(store, &kept);
     }
-    if !listed {
-        let parent_trusted = paths.iter().any(|p| {
+    let add = |paths: &[String]| {
+        let listed = paths
+            .iter()
+            .any(|p| Path::new(p) == dir || fs::canonicalize(p).is_ok_and(|c| c == dir));
+        let under_trusted = paths.iter().any(|p| {
             let p = fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
             dir != p && dir.starts_with(&p)
         });
-        if !parent_trusted {
-            return Ok(());
+        if listed || !under_trusted {
+            return None;
         }
-        let mut paths = paths;
+        let mut paths = paths.to_vec();
         paths.push(path.clone());
-        list.set(paths);
-        list.write()?;
+        Some(paths)
+    };
+    // Recorded first: if adding is cut short, the record names a directory that is not listed.
+    kept.push(entry);
+    write_record(store, &kept)?;
+    let added = update(file, key, add, &|| {});
+    if !matches!(added, Ok(true)) {
+        kept.pop();
+        write_record(store, &kept)?;
     }
-    kept.push(
-        json!({"file": file_str, "key": key, "path": path, "name": name, "instance": instance}),
-    );
-    write_record(root, kept)
+    added.map(|_| ())
 }
 
-fn remove_in(root: &Path, instance: &str) -> Result<()> {
-    let (mine, kept): (Vec<Value>, Vec<Value>) = read_record(root)
+fn remove_in(store: &Path, instance: &str) -> Result<()> {
+    let (mine, mut kept): (Vec<Value>, Vec<Value>) = read_record(store)
         .into_iter()
         .partition(|e| e["instance"] == instance);
     if mine.is_empty() {
         return Ok(());
     }
-    write_record(root, kept.clone())?;
-    for e in &mine {
-        untrust(e, &kept)?;
+    let mut failed = None;
+    // Out of the list first: if that fails, the record keeps the entry for the next `prune`.
+    for e in mine {
+        if let Err(err) = untrust(&e, &kept) {
+            kept.push(e);
+            failed = Some(err);
+        }
     }
-    Ok(())
+    write_record(store, &kept)?;
+    failed.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]
@@ -256,20 +299,21 @@ mod tests {
 
     struct Lab {
         _tmp: tempfile::TempDir,
-        root: PathBuf,
+        base: PathBuf,
+        store: PathBuf,
         file: PathBuf,
         top: PathBuf,
     }
     impl Lab {
-        /// A corral home, and an agent settings file trusting `top` and one other directory.
+        /// A record store, and an agent settings file trusting `top` and one other directory.
         fn new() -> Lab {
             let tmp = tempfile::tempdir().unwrap();
             let base = fs::canonicalize(tmp.path()).unwrap();
-            let root = base.join("corral");
+            let store = base.join("home/.corral/.runtime");
             let top = base.join("projects");
-            fs::create_dir_all(&root).unwrap();
             fs::create_dir_all(&top).unwrap();
-            let file = base.join("settings.json");
+            fs::create_dir_all(base.join("settings")).unwrap();
+            let file = base.join("settings/settings.json");
             let text = format!(
                 "{{\n  \"model\": \"m\",\n  \"{KEY}\": [\n    \"/elsewhere\",\n    \"{}\"\n  ],\n  \"statusLine\": {{\"type\": \"command\"}}\n}}\n",
                 top.display()
@@ -277,10 +321,11 @@ mod tests {
             fs::write(&file, text).unwrap();
             fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
             Lab {
-                _tmp: tmp,
-                root,
+                base,
+                store,
                 file,
                 top,
+                _tmp: tmp,
             }
         }
         /// A working directory under the trusted one.
@@ -289,22 +334,34 @@ mod tests {
             fs::create_dir_all(&d).unwrap();
             d
         }
-        /// Marks agent `name` as running `instance`, as its pen would.
-        fn running(&self, name: &str, instance: &str) {
-            let d = self.root.join(name);
+        /// Marks agent `name` under corral root `root` as running `instance`, as its pen does once
+        /// the agent started.
+        fn running(&self, root: &str, name: &str, instance: &str) {
+            let d = self.base.join(root).join(name);
             fs::create_dir_all(&d).unwrap();
             let meta = json!({"instance": instance, "agent_pid": std::process::id()});
             fs::write(d.join("meta.json"), meta.to_string()).unwrap();
         }
-        fn add(&self, cwd: &Path, name: &str, instance: &str) {
-            self.running(name, instance);
-            locked(&self.root, |r| {
-                add_in(r, &self.file, KEY, cwd, name, instance)
+        /// Adds as the pen of `name` under corral root `root` would; that pen is this process.
+        fn add_as(&self, root: &str, cwd: &Path, name: &str, instance: &str) -> Result<()> {
+            let owner = json!({"root": self.base.join(root), "name": name, "instance": instance,
+                               "pen_pid": std::process::id()});
+            locked(&self.store, || {
+                add_in(&self.store, &self.file, KEY, cwd, owner)
             })
-            .unwrap();
         }
-        fn remove(&self, instance: &str) {
-            locked(&self.root, |r| remove_in(r, instance)).unwrap();
+        fn add(&self, cwd: &Path, name: &str, instance: &str) {
+            self.running("corral", name, instance);
+            self.add_as("corral", cwd, name, instance).unwrap();
+        }
+        fn remove(&self, instance: &str) -> Result<()> {
+            locked(&self.store, || remove_in(&self.store, instance))
+        }
+        /// Makes record entry `i` look like its pen died.
+        fn kill_pen(&self, i: usize) {
+            let mut record = read_record(&self.store);
+            record[i]["pen_pid"] = json!(999_999_999);
+            write_record(&self.store, &record).unwrap();
         }
         fn list(&self) -> Vec<String> {
             let v: Value = serde_json::from_str(&fs::read_to_string(&self.file).unwrap()).unwrap();
@@ -318,6 +375,11 @@ mod tests {
         fn original(&self) -> Vec<String> {
             vec!["/elsewhere".into(), self.top.display().to_string()]
         }
+        fn with(&self, extra: &[&Path]) -> Vec<String> {
+            let mut v = self.original();
+            v.extend(extra.iter().map(|p| p.display().to_string()));
+            v
+        }
     }
 
     #[test]
@@ -325,9 +387,7 @@ mod tests {
         let lab = Lab::new();
         let work = lab.dir("work");
         lab.add(&work, "a/dev", "i1");
-        let mut want = lab.original();
-        want.push(work.display().to_string());
-        assert_eq!(lab.list(), want);
+        assert_eq!(lab.list(), lab.with(&[&work]));
         // The rest of the file stays as it was, values and permissions alike.
         let v: Value = serde_json::from_str(&fs::read_to_string(&lab.file).unwrap()).unwrap();
         assert_eq!(
@@ -337,31 +397,31 @@ mod tests {
         assert!(fs::read_to_string(&lab.file).unwrap().ends_with("}\n"));
         let mode = fs::metadata(&lab.file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o640);
-        assert_eq!(read_record(&lab.root).len(), 1);
-        lab.remove("i1");
+        assert_eq!(read_record(&lab.store).len(), 1);
+        lab.remove("i1").unwrap();
         assert_eq!(lab.list(), lab.original());
-        assert!(read_record(&lab.root).is_empty());
+        assert!(read_record(&lab.store).is_empty());
         // No temporary file is left next to the settings.
         let names: Vec<_> = fs::read_dir(lab.file.parent().unwrap())
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
-        assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");
+        assert_eq!(names, ["settings.json"]);
     }
 
     #[test]
     fn what_corral_did_not_add_is_left_alone() {
         let lab = Lab::new();
         // Not under a trusted directory: the agent asks as before.
-        let outside = lab.top.parent().unwrap().join("outside");
+        let outside = lab.base.join("outside");
         fs::create_dir(&outside).unwrap();
         lab.add(&outside, "a/out", "i1");
         assert_eq!(lab.list(), lab.original());
         // A directory the user trusts is never taken out.
         lab.add(&lab.top, "a/top", "i2");
-        lab.remove("i2");
+        lab.remove("i2").unwrap();
         assert_eq!(lab.list(), lab.original());
-        assert!(read_record(&lab.root).is_empty());
+        assert!(read_record(&lab.store).is_empty());
     }
 
     #[test]
@@ -376,13 +436,28 @@ mod tests {
             fs::write(&lab.file, &text).unwrap();
             lab.add(&lab.dir("work"), "a/dev", "i1");
             assert_eq!(fs::read_to_string(&lab.file).unwrap(), text);
-            assert!(read_record(&lab.root).is_empty());
+            assert!(read_record(&lab.store).is_empty());
         }
         // No settings file at all: nothing is created.
         let lab = Lab::new();
         fs::remove_file(&lab.file).unwrap();
         lab.add(&lab.dir("work"), "a/dev", "i1");
         assert!(!lab.file.exists());
+        // A settings file that links elsewhere, as dotfiles do, stays a link to an unchanged file.
+        let lab = Lab::new();
+        let target = lab.base.join("dotfiles.json");
+        fs::rename(&lab.file, &target).unwrap();
+        std::os::unix::fs::symlink(&target, &lab.file).unwrap();
+        let before = fs::read_to_string(&target).unwrap();
+        lab.add(&lab.dir("work"), "a/dev", "i1");
+        assert!(
+            fs::symlink_metadata(&lab.file)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), before);
+        assert!(read_record(&lab.store).is_empty());
     }
 
     #[test]
@@ -394,17 +469,36 @@ mod tests {
         lab.add(&killed, "a/killed", "i1");
         lab.add(&removed, "a/removed", "i2");
         lab.add(&restarted, "a/restarted", "i3");
-        // Its pen was killed: the agent is gone.
-        fs::remove_dir_all(lab.root.join("a/killed")).unwrap();
+        // Its agent died with its pen.
+        fs::write(
+            lab.base.join("corral/a/killed/meta.json"),
+            json!({"instance": "i1", "agent_pid": 999_999_999}).to_string(),
+        )
+        .unwrap();
         // Its worktree was removed while the agent still runs.
         fs::remove_dir(&removed).unwrap();
         // The name now belongs to another instance.
-        lab.running("a/restarted", "other");
-        lab.add(&lab.dir("new"), "a/new", "i4");
-        let mut want = lab.original();
-        want.push(lab.top.join("new").display().to_string());
-        assert_eq!(lab.list(), want);
-        assert_eq!(read_record(&lab.root).len(), 1);
+        lab.running("corral", "a/restarted", "other");
+        let new = lab.dir("new");
+        lab.add(&new, "a/new", "i4");
+        assert_eq!(lab.list(), lab.with(&[&new]));
+        assert_eq!(read_record(&lab.store).len(), 1);
+    }
+
+    #[test]
+    fn an_agent_still_starting_keeps_its_entry() {
+        let lab = Lab::new();
+        let first = lab.dir("first");
+        // Its pen added the entry but has not written the agent's metadata yet.
+        lab.add_as("corral", &first, "a/first", "i1").unwrap();
+        let second = lab.dir("second");
+        lab.add(&second, "a/second", "i2");
+        assert_eq!(lab.list(), lab.with(&[&first, &second]));
+        // A pen that died before it started the agent leaves nothing behind.
+        lab.kill_pen(0);
+        let third = lab.dir("third");
+        lab.add(&third, "a/third", "i3");
+        assert_eq!(lab.list(), lab.with(&[&second, &third]));
     }
 
     #[test]
@@ -413,13 +507,78 @@ mod tests {
         let work = lab.dir("work");
         lab.add(&work, "a/one", "i1");
         lab.add(&work, "a/two", "i2");
-        let mut want = lab.original();
-        want.push(work.display().to_string());
-        assert_eq!(lab.list(), want);
-        lab.remove("i1");
-        assert_eq!(lab.list(), want);
-        lab.remove("i2");
+        assert_eq!(lab.list(), lab.with(&[&work]));
+        lab.remove("i1").unwrap();
+        assert_eq!(lab.list(), lab.with(&[&work]));
+        lab.remove("i2").unwrap();
         assert_eq!(lab.list(), lab.original());
+    }
+
+    #[test]
+    fn corral_homes_sharing_one_list_share_its_record() {
+        let lab = Lab::new();
+        let work = lab.dir("work");
+        lab.running("corral-a", "a/one", "i1");
+        lab.running("corral-b", "b/one", "i2");
+        lab.add_as("corral-a", &work, "a/one", "i1").unwrap();
+        lab.add_as("corral-b", &work, "b/one", "i2").unwrap();
+        lab.remove("i1").unwrap();
+        assert_eq!(lab.list(), lab.with(&[&work]));
+        lab.remove("i2").unwrap();
+        assert_eq!(lab.list(), lab.original());
+    }
+
+    #[test]
+    fn a_failed_change_leaves_nothing_unowned() {
+        let lab = Lab::new();
+        let settings = lab.file.parent().unwrap().to_owned();
+        let lock = |mode| fs::set_permissions(&settings, fs::Permissions::from_mode(mode)).unwrap();
+        let work = lab.dir("work");
+        // Adding fails: the record does not keep a directory that is not listed.
+        lab.running("corral", "a/dev", "i1");
+        lock(0o500);
+        assert!(lab.add_as("corral", &work, "a/dev", "i1").is_err());
+        lock(0o700);
+        assert_eq!(lab.list(), lab.original());
+        assert!(read_record(&lab.store).is_empty());
+        // Removing fails: the record keeps the entry, and a later add takes it out.
+        lab.add(&work, "a/dev", "i1");
+        lock(0o500);
+        assert!(lab.remove("i1").is_err());
+        lock(0o700);
+        assert_eq!(lab.list(), lab.with(&[&work]));
+        assert_eq!(read_record(&lab.store).len(), 1);
+        fs::remove_dir_all(lab.base.join("corral/a/dev")).unwrap();
+        lab.kill_pen(0);
+        let other = lab.dir("other");
+        lab.add(&other, "a/other", "i2");
+        assert_eq!(lab.list(), lab.with(&[&other]));
+    }
+
+    #[test]
+    fn a_change_made_while_corral_writes_is_kept() {
+        let lab = Lab::new();
+        let once = std::cell::Cell::new(true);
+        let edit = || {
+            if once.replace(false) {
+                let text = fs::read_to_string(&lab.file).unwrap();
+                let mut v: Value = serde_json::from_str(&text).unwrap();
+                v["model"] = json!("user-new");
+                v[KEY].as_array_mut().unwrap().push(json!("/user-added"));
+                fs::write(&lab.file, v.to_string()).unwrap();
+            }
+        };
+        let add = |paths: &[String]| {
+            let mut p = paths.to_vec();
+            p.push("/corral-added".into());
+            Some(p)
+        };
+        assert!(update(&lab.file, KEY, add, &edit).unwrap());
+        let v: Value = serde_json::from_str(&fs::read_to_string(&lab.file).unwrap()).unwrap();
+        assert_eq!(v["model"], "user-new");
+        let mut want = lab.original();
+        want.extend(["/user-added".to_owned(), "/corral-added".to_owned()]);
+        assert_eq!(lab.list(), want);
     }
 
     #[test]
@@ -428,23 +587,23 @@ mod tests {
         let n = 12;
         let dirs: Vec<PathBuf> = (0..n).map(|i| lab.dir(&format!("w{i}"))).collect();
         for i in 0..n {
-            lab.running(&format!("a/p{i}"), &format!("i{i}"));
+            lab.running("corral", &format!("a/p{i}"), &format!("i{i}"));
         }
         std::thread::scope(|s| {
             for (i, d) in dirs.iter().enumerate() {
                 let lab = &lab;
                 s.spawn(move || {
-                    let (name, inst) = (format!("a/p{i}"), format!("i{i}"));
-                    locked(&lab.root, |r| add_in(r, &lab.file, KEY, d, &name, &inst)).unwrap();
+                    lab.add_as("corral", d, &format!("a/p{i}"), &format!("i{i}"))
+                        .unwrap()
                 });
             }
         });
         assert_eq!(lab.list().len(), 2 + n);
-        assert_eq!(read_record(&lab.root).len(), n);
+        assert_eq!(read_record(&lab.store).len(), n);
         std::thread::scope(|s| {
             for i in 0..n {
                 let lab = &lab;
-                s.spawn(move || lab.remove(&format!("i{i}")));
+                s.spawn(move || lab.remove(&format!("i{i}")).unwrap());
             }
         });
         assert_eq!(lab.list(), lab.original());

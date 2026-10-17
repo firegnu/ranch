@@ -653,7 +653,13 @@ prompt() {
 printf '%s\0' "$0" "$@" > "$CORRAL_EVENTS.args"
 # Like agy, it starts the session with the first prompt; when agy sends that prompt before its
 # hooks are attached (R13), the session start is lost.
-case $1 in --prompt-interactive=*) [ -n "$LOST_START" ] || hook SessionStart; prompt "${1#--prompt-interactive=}" ;; esac
+# With LOST_START=all, the hooks of the whole first turn are lost: only the later ones report.
+case $1 in --prompt-interactive=*)
+  [ -n "$LOST_START" ] || hook SessionStart
+  if [ "$LOST_START" = all ]; then
+    printf '{"type":"USER_INPUT","content":"%s"}\n' "${1#--prompt-interactive=}" >> "$LAB/transcript"
+  else prompt "${1#--prompt-interactive=}"; fi ;;
+esac
 while IFS= read -r line; do
   case $line in
   ask) printf 'Run ls?\n> Allow\n  Deny\n\342\206\221/\342\206\223 Navigate \302\267 tab Amend \302\267 ctrl+g edit\n' ;;
@@ -868,46 +874,52 @@ fn agy_starts_bare_and_its_installed_plugin_drives_its_state() {
     );
 }
 
-/// R13: agy sometimes sends the first prompt before its hooks are attached, so the session start is
-/// lost; the events that come later still drive its state.
+/// R13: agy sometimes sends the first prompt before its hooks are attached, so the session start,
+/// and maybe the whole first turn, is lost; the events that come later still drive its state.
 #[test]
 fn agy_that_lost_its_session_start_still_reports_its_turns() {
     use std::io::Write;
-    let lab = Lab::new();
-    let (_dir, state_dir) = start_agy_with(&lab, "lab/agy", "hello", &["LOST_START=1"]);
-    let status =
-        || lab.result(lab.cmd().args(["status", "lab/agy"]).output().unwrap())["out"].clone();
-    let wait = |want: &str| {
-        let end = Instant::now() + Duration::from_secs(10);
-        loop {
-            let s = status();
-            if s["state"] == want {
-                return s;
+    for lost in ["LOST_START=1", "LOST_START=all"] {
+        let lab = Lab::new();
+        let (_dir, state_dir) = start_agy_with(&lab, "lab/agy", "hello", &[lost]);
+        let status =
+            || lab.result(lab.cmd().args(["status", "lab/agy"]).output().unwrap())["out"].clone();
+        let keys = |text: &str| {
+            let o = lab
+                .cmd()
+                .args(["keys", "lab/agy", &format!("text:{text}"), "enter"])
+                .output()
+                .unwrap();
+            assert!(o.status.success());
+        };
+        let wait = |want: &str| {
+            let end = Instant::now() + Duration::from_secs(10);
+            loop {
+                let s = status();
+                if s["state"] == want {
+                    return s;
+                }
+                assert!(Instant::now() < end, "{lost}: never became {want}: {s}");
+                std::thread::sleep(Duration::from_millis(50));
             }
-            assert!(Instant::now() < end, "never became {want}: {s}");
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    };
-    wait("working");
-    let mut f = fs::OpenOptions::new()
-        .append(true)
-        .open(state_dir.join("transcript"))
+        };
+        keys("tool");
+        wait("working");
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(state_dir.join("transcript"))
+            .unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({"type":"PLANNER_RESPONSE","content":"hi\nDONE"})
+        )
         .unwrap();
-    writeln!(
-        f,
-        "{}",
-        json!({"type":"PLANNER_RESPONSE","content":"hi\nDONE"})
-    )
-    .unwrap();
-    let o = lab
-        .cmd()
-        .args(["keys", "lab/agy", "text:stop", "enter"])
-        .output()
-        .unwrap();
-    assert!(o.status.success());
-    wait("idle");
-    let o = lab.result(lab.cmd().args(["reply", "lab/agy"]).output().unwrap());
-    assert_eq!(o["out"]["text"], "hi\nDONE", "{o}");
+        keys("stop");
+        wait("idle");
+        let o = lab.result(lab.cmd().args(["reply", "lab/agy"]).output().unwrap());
+        assert_eq!(o["out"]["text"], "hi\nDONE", "{lost}: {o}");
+    }
 }
 
 /// R13: agy trusts only the directories in its list, so its pen adds a working directory under a

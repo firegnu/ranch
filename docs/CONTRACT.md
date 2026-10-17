@@ -77,7 +77,7 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
   - agy 支持，而且**必须带**：agy 在收到第一句话之前不触发任何钩子，不带 `--prompt` 启动的 agy 一直是 `starting`，`send` 报 `not_idle`。corral 用一个参数 `--prompt-interactive=<首句>` 传给 agy。带了首句还一直是 `starting`，可能是：
     - 插件没装或被停用（看 `install.status`、`install.enabled`）；
     - agy 是装插件之前开的；
-    - agy 停在「是否信任这个目录」或登录的对话框上（要用户 attach 去点）。R13 起，工作目录的上级目录已被用户信任时，corral 启动 agy 前会把工作目录加进 agy 的信任列表（`~/.gemini/antigravity-cli/settings.json` 的 `trustedWorkspaces`），agy 退出后删掉，这时不再弹信任框；上级目录都没被信任的照旧弹。
+    - agy 停在「是否信任这个目录」或登录的对话框上（要用户 attach 去点）。R13 起，工作目录的上级目录已被用户信任时，corral 启动 agy 前会把工作目录加进 agy 的信任列表（`~/.gemini/antigravity-cli/settings.json` 的 `trustedWorkspaces`），agy 退出后删掉，这时不再弹信任框；上级目录都没被信任的照旧弹。corral 自己加的记在 `~/.corral/.runtime/trust.json`，只删这些。退回到 R13 之前的 corral 时，它开的 agy 不加也不删；R13 的 pen 换成旧版后，agy 退出时不删，留到之后新版下次加条目时清掉。
   - R13 起，agy 的「会话开始」丢了（agy 登录慢时首句抢在钩子挂上之前送出）也不会一直 `starting`：钩子恢复后，corral 把 agy 报来的会话当主会话，状态照常变化。钩子缺席的那一段仍是 `starting`。
 - 版本要求：amp 要用 R6 及以后的 corral 操作，agy 要用 R8 及以后的。
   - 旧版 corral 不认识它们：`status` 报 `unknown`，`wait` 返回 `unknown`，`send` 不检查是否空闲。
