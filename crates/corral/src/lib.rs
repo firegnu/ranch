@@ -52,6 +52,23 @@ impl From<serde_json::Error> for Error {
 fn executable() -> std::io::Result<std::path::PathBuf> {
     std::fs::canonicalize(std::env::current_exe()?)
 }
+/// For a process that stays in the background: closes every descriptor but 0, 1 and 2. All of them
+/// were inherited, since exec closed the close-on-exec ones; a caller can leak one by accident (on
+/// macOS, Rust sets close-on-exec on a new pipe in a second step, and another thread may spawn in
+/// between), and holding a pipe it waits on would keep that caller waiting (R9).
+fn close_inherited() {
+    let Ok(dir) = std::fs::read_dir("/dev/fd") else {
+        return;
+    };
+    let fds: Vec<i32> = dir
+        .filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
+        .filter(|&fd| fd > 2)
+        .collect();
+    // The listing's own descriptor is among them and already closed.
+    for fd in fds {
+        unsafe { libc::close(fd) };
+    }
+}
 fn now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -75,9 +92,11 @@ pub fn run() -> i32 {
         return 0;
     }
     if args.first().is_some_and(|s| s == "__after") {
+        close_inherited();
         return after::worker(args.get(1).map(String::as_str).unwrap_or(""));
     }
     if args.first().is_some_and(|s| s == "__pen") {
+        close_inherited();
         return pen::worker();
     }
     match cli::run(&args) {
