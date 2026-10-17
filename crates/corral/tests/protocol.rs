@@ -754,3 +754,83 @@ fn deferred_send_cannot_follow_a_reused_name_to_a_new_instance() {
             .contains("must-not-arrive")
     );
 }
+
+/// Runs corral with `args`, leaving it the write end of a pipe, as a caller on macOS does when
+/// another of its threads is creating that pipe; returns the read end once corral returned.
+fn leaking(lab: &Lab, args: &[&str]) -> std::io::PipeReader {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
+    let (reader, writer) = std::io::pipe().unwrap();
+    let fd = writer.as_raw_fd();
+    let mut c = lab.cmd();
+    c.args(args);
+    unsafe {
+        c.pre_exec(move || {
+            if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let o = c.output().unwrap();
+    assert!(
+        o.status.success(),
+        "{args:?} {}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    reader
+}
+/// Whether every writer of the pipe is gone within a few seconds.
+fn closes(reader: &std::io::PipeReader) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut fd = libc::pollfd {
+        fd: reader.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let mut b = [0u8; 1];
+    unsafe { libc::poll(&mut fd, 1, 3000) == 1 && libc::read(fd.fd, b.as_mut_ptr().cast(), 1) == 0 }
+}
+
+#[test]
+fn background_processes_do_not_keep_what_their_caller_leaked() {
+    let lab = Lab::new();
+    let path = lab.root.path().join("claude");
+    fs::write(&path, "#!/bin/sh\nexec /bin/cat\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    let start = leaking(
+        &lab,
+        &[
+            "start",
+            "lab/main",
+            "--cwd",
+            "/tmp",
+            "--",
+            path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        closes(&start),
+        "the pen or its agent kept the caller's pipe"
+    );
+    lab.event(
+        "SessionStart",
+        json!({"session_id":"main","cwd":"/tmp","transcript_path":"x"}),
+    );
+    lab.event(
+        "UserPromptSubmit",
+        json!({"session_id":"main","prompt":"working"}),
+    );
+    let send = leaking(
+        &lab,
+        &[
+            "send",
+            "lab/main",
+            "later",
+            "--after",
+            "lab/main",
+            "--timeout",
+            "30",
+        ],
+    );
+    assert!(closes(&send), "the deferred send kept the caller's pipe");
+}
