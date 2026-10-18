@@ -116,6 +116,7 @@ pub(crate) fn status(name: &str) -> Result<Status> {
         json!({})
     };
     let mut public = json!({"ok":true,"name":name,"instance":st["instance"],"kind":m["kind"],"proto":st["proto"],"state":"unknown","state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_at":null,"last_input_at":null,"last_input_source":null,"title":st["title"],"last_output":st["last_output"],"idle_for":st["last_output"].as_f64().map(|t|((now()-t)*1000.0).round()/1000.0),"attached":st["attached"],"last_human_input":st["last_human_input"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"]});
+    public["sandbox"] = crate::sandbox::public(&m);
     for key in [
         "exe",
         "custody",
@@ -440,6 +441,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         );
         return Ok(None);
     }
+    if op != "guide" && std::env::var_os("FENCE_RUN").is_some() {
+        return Err(Error::new(6, "sandbox", "running inside fence"));
+    }
     if op != "guide" && std::env::var_os("CODEX_SANDBOX").is_some() {
         return Err(Error::new(6, "sandbox", "running inside a Codex sandbox"));
     }
@@ -517,7 +521,10 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         )?));
     }
     let (flags, values): (&[&str], &[&str]) = match op {
-        "start" => (&["--unique"], &["--cwd", "--prompt", "--env", "--label"]),
+        "start" => (
+            &["--unique"],
+            &["--cwd", "--prompt", "--env", "--label", "--sandbox"],
+        ),
         "send" => (&["--force"], &["--timeout", "--after", "--request-id"]),
         "wait" => (&[], &["--timeout", "--quiet"]),
         "stop" => (&[], &["--timeout"]),
@@ -571,8 +578,14 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                     Some(_) => {}
                 }
             }
+            let extra = parsed.pairs("--env", false)?;
+            let labels = parsed.pairs("--label", true)?;
+            let sandbox = match parsed.get("--sandbox") {
+                Some(profile) => crate::sandbox::check(profile, &argv[0], &cwd, name, &extra)?,
+                None => Value::Null,
+            };
             pen::start(
-                json!({"name":name,"unique":parsed.has("--unique"),"cwd":cwd,"argv":argv,"prompt":parsed.get("--prompt"),"env":parsed.pairs("--env",false)?,"labels":parsed.pairs("--label",true)?}),
+                json!({"name":name,"unique":parsed.has("--unique"),"cwd":cwd,"argv":argv,"prompt":parsed.get("--prompt"),"env":extra,"labels":labels,"sandbox":sandbox}),
             )?
         }
         "status" => status(name)?.public,
@@ -649,7 +662,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "where" => {
             let s = state::require(name, json!({"op":"status"}))?;
             let m = state::read(state::dir(name)?.join("meta.json"));
-            json!({"ok":true,"name":name,"instance":s["instance"],"kind":m["kind"],"cwd":m["cwd"],"agent_pid":s["agent_pid"],"started":s["started"]})
+            json!({"ok":true,"name":name,"instance":s["instance"],"kind":m["kind"],"cwd":m["cwd"],"agent_pid":s["agent_pid"],"started":s["started"],"sandbox":crate::sandbox::public(&m)})
         }
         "read" => {
             let n = parsed

@@ -1,0 +1,5 @@
+description = "omp (Oh My Pi)"
+write = ["${home}/.omp/agent", "${home}/.omp/natives", "${home}/.omp/run"]
+deny_write = ["${home}/.omp/agent/config.yml", "${home}/.omp/agent/settings.json", "${home}/.omp/agent/auth.json", "${home}/.omp/agent/models.json"]
+[macos]
+allow_pty = true

@@ -113,3 +113,74 @@ corral integration uninstall --agent <kind> [--dry-run] [--yes]
   - `written`：这次有没有真的写或删。`same`、`absent`、`foreign` 和 `--dry-run` 都是 `false`。
   - `warnings`：`foreign` 时说明那里的东西不归 corral，没动它。
 - 做完后再调一次 `integration status` 刷新显示。
+
+## sandbox 与 `fence`（R17b）
+
+这些都是兼容新增。paddock 当前用法不用改；P5-120 接入档案选择、卡片小锁、拒绝记录及 Settings 规则展示。前端通过 PATH 找 `fence`；远端先 `command -v fence`，再试 `~/.local/bin/fence`，检查 `--version` 的 `contract`。未安装时不提供 sandbox 选项。
+
+### `corral start NAME --sandbox <档案> … -- <命令>`
+
+加参数就通过 fence 起 agent；不加保持原行为，派活技能不默认加。corral 不依赖 fence 包，只调用以下命令：
+
+```text
+fence check --profile <档案> --kind <原种类> --cwd <目录>
+fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实例>
+          [--read <路径>]… [--write <路径>]… -- <含钩子与首句的原命令>
+```
+
+先用绝对路径的 `CORRAL_FENCE`，否则用 corral 真实程序所在目录的 `fence`；CLI 检查成功后把该路径传给 pen。fence 不认识 corral 的状态目录，所需管道和 helper 只经 `--read/--write` 传入。
+
+`start`、`status`、`ls` 中每个 agent、`where` 增加 `sandbox:{"profile":"dev"}`；未套墙或旧格式记录为 `null`。`meta.json` 增加 `sandbox:{"profile":"dev","fence":"/absolute/path/fence"}`，`argv` 仍是原来的 agent 启动参数，不含 fence 包装。原种类识别、钩子与首句不变；stop/pause/resume 沿用 pen 的进程管理。
+
+新增启动错误（退出码 1，均不起 pen）：
+
+- `sandbox_unavailable`：找不到或无法执行 fence，或 `CORRAL_FENCE` 非绝对路径。
+- `sandbox_failed`：fence 检查未同时返回退出码 0 与 `ok:true`；`fence` 字段携带其原始 JSON 错误。
+
+墙内继承 `FENCE_RUN`，再调 corral 用户命令报 `sandbox`，退出码 6，message 为 `running inside fence`；`__hook`、`guide` 仍可用。因此这个阶段墙内 agent 不能再派活。
+
+检查与运行之间条件变化、srt 初始化失败时，start 可能已经返回成功；随后 agent 停止，退出码 125，原因在终端中，可用 `corral read` 读取。fence 不会回退成无 sandbox 运行。runner 正常结束时透传原程序的退出码或信号；runner 意外先死时 pen 清理剩余进程组。
+
+### fence 输出约定
+
+前端命令均只输出一行 JSON；成功 `ok:true`、退出码 0；失败 `ok:false`、`error`、`message`、退出码 1。忽略未知字段、显示未知取值。内部 `run` 不属于前端命令，启动失败向 stderr 输出、退出码 125；启动后的终端与退出状态属于 agent。
+
+`fence --version`：
+
+```json
+{"ok":true,"version":"0.1.0","contract":"1","srt":"0.0.80","node":"v24.13.1"}
+```
+
+`node` 是打包时记录的版本；尚未打包、没有运行时记录时为 `null`，能否运行交给 `check`。
+
+`fence profiles`：只读，列出档案、种类数据和模型服务。
+
+```json
+{"ok":true,"profiles":[{"name":"dev","description":"在工作目录里改代码、编译、测试、提交；HOME 默认不可读。Codex 在 macOS 开启 trustd，会削弱网络隔离","source":"builtin","path":null,"overrides_builtin":false}],"kinds":[{"kind":"claude","source":"builtin","services":["anthropic"]},{"kind":"codex","source":"builtin","services":["openai"]},{"kind":"omp","source":"builtin","services":[]},{"kind":"pi","source":"builtin","services":[]}],"services":[{"name":"anthropic","source":"builtin"},{"name":"deepseek","source":"builtin"},{"name":"openai","source":"builtin"}],"local":{"path":"/Users/u/.fence/local.toml","exists":false}}
+```
+
+`source` 为 `builtin` 或 `user`。用户同名文件整份替换内置档案，`path` 为该路径、`overrides_builtin:true`。读不了或数据格式错误仍列出该项，多一个 `error` 对象；整条命令仍为 `ok:true`。
+
+`fence check --profile <档案> [--kind <种类>] [--cwd <目录>]`：只读，不创建运行记录或 mkdir 目录。cwd 默认当前目录；不带 kind 只检查档案和本机补充；带 kind 再合并种类、模型服务与工作区 `.fence.toml`。检查程序、固定 node/srt 和 Linux 的 bwrap/socat/rg。
+
+```json
+{"ok":true,"profile":"dev","kind":"codex","platform":"macos","cwd":"/Users/u/w/x","layers":[{"source":"profile","name":"dev","origin":"builtin"},{"source":"agent","name":"codex","origin":"builtin"},{"source":"service","name":"openai","origin":"builtin"},{"source":"repo","path":"/Users/u/w/x/.fence.toml"}],"settings":{"network":{"allowedDomains":["chatgpt.com"],"deniedDomains":[]},"filesystem":{"denyRead":["/Users/u"],"allowRead":["/Users/u/w/x"],"allowWrite":["/Users/u/w/x"],"denyWrite":["/Users/u/w/x/.fence.toml","/Users/u/.fence"]},"allowPty":true,"enableWeakerNetworkIsolation":true},"env":{"TMPDIR":"<运行时才有>"},"args":["-c","projects={\"/Users/u/w/x\"={trust_level=\"trusted\"}}"],"skipped":[],"warnings":["weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）"],"runtime":{"node":{"path":"/Users/u/.nvm/versions/node/v24.13.1/bin/node","version":"v24.13.1","ok":true},"srt":{"version":"0.0.80","ok":true}}}
+```
+
+示例的路径和域名列表已缩短。`settings` 为实际合并规则；运行时专有的 `${tmp}` 显示为 `<运行时才有>`。`skipped:[{entry,reason}]` 列出缺值或不存在的读路径，`warnings` 列出环境覆盖与平台差异。Codex 默认 trustd 规则会削弱 macOS 网络隔离。
+
+错误码：`usage`、`unknown_profile`、`invalid_data`（附 `problems:[{source,path,message}]`）、`unsupported_kind`（附 `supported:[…]`）、`no_service`、`program_not_found`、`bad_cwd`、`runtime_missing`、`not_found`。amp/agy 本轮无数据，使用 sandbox 时返回 `unsupported_kind`。
+
+`fence denials --agent <名字> [--instance <实例>] [--limit <n>]`：只读，未给实例时取该名字最近一次运行；前端宜传 `corral status` 的 instance，避免重名混淆。limit 默认 200，取最后 n 条并保持时间顺序；没有匹配记录返回 `not_found`。
+
+```json
+{"ok":true,"agent":"ranch/dev-x","instance":"0123abcd4567","profile":"dev","kind":"codex","started":1760760000.1,"running":false,"exit":{"code":0,"signal":null,"t":1760760200.1},"monitors":{"network":true,"files":true},"denials":[{"t":1760760123.4,"type":"network","target":"example.com:443","detail":"deny network-outbound example.com:443 (not on the allow list)"}],"truncated":false}
+```
+
+类型为 `network`、`file-read`、`file-write`、`other`；不认识目标时 `target:null`。running 表示 runner 尚在运行；exit 来自 runner 的退出记录，没有则为 null。网络记录来自 srt 代理，macOS 文件记录来自系统日志，Linux 文件记录是 seccomp 对写尝试的诊断提示，路径可能不准且没有读记录。srt 没有监视器健康接口，因此 `files` 只有收到文件事件后才为 true；false 表示尚未证实能记录，文件拒绝还可看 agent 终端。
+
+记录在 `$FENCE_HOME/runs/<实例>/`（默认 `~/.fence/runs/`），由墙外的 fence/runner 写：`run.json`、0600 的 `settings.json`、`denials.jsonl`、`monitor.json`、`exit.json`。拒绝日志最多 5 MiB，满了停写并报 `truncated:true`；不保存完整 agent 命令或首句。`--limit` 仅限制返回条数，不改变 truncated。文件事件可能漏记，`files:true` 只证明收到了文件事件，不保证覆盖每次拒绝；`truncated:false` 也不代表上游日志没有遗漏。
+
+临时目录在 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，与记录分开，起 agent 前创建并按档案放行读写。每次启动清理已结束超过 7 天的记录和它对应的临时目录。整个 `$FENCE_HOME` 及工作区 `.fence.toml` 始终禁止写。
+
+新 CLI 读旧 metadata 得到 sandbox:null；旧 CLI 忽略新增字段，但不能使用 `--sandbox`。新旧 pen 升级快照原样携带 metadata，runner 不随 pen 升级切换版本；仍有 runner 使用的旧版本目录不能清理。

@@ -1,6 +1,6 @@
 //! Build an immutable ranch version directory. Never installs, switches links or installs
 //! skills: those are separate deployment steps. Follows Saddle's `scripts/package.sh` at
-//! `a31dea2`, limited to corral and the `ranch` command.
+//! `a31dea2`; ranch now also packages the independent fence runtime.
 //!
 //! Usage: `cargo run -p ranch-package [-- NEW_OUTPUT_DIRECTORY]`
 //! Default output: `~/.local/share/ranch/versions/<short commit>/`.
@@ -11,7 +11,7 @@ use std::{
 };
 
 /// Programs placed in `bin/`.
-const PROGRAMS: &[&str] = &["corral", "ranch"];
+const PROGRAMS: &[&str] = &["corral", "ranch", "fence"];
 
 /// Files shipped beside the program, from the repository root.
 const SHARED: &[&str] = &[
@@ -48,6 +48,22 @@ fn run() -> Result<(), String> {
     };
     refuse_existing(&output)?;
 
+    let runtime_error = "打包 fence 需要 node ≥ 22.12 和 npm";
+    let node = output_of(&root, "node", &["-p", "process.execPath"])
+        .map_err(|e| format!("{runtime_error}: {e}"))?;
+    let node_version =
+        output_of(&root, &node, &["--version"]).map_err(|e| format!("{runtime_error}: {e}"))?;
+    let mut parts = node_version
+        .trim_start_matches('v')
+        .split('.')
+        .filter_map(|s| s.parse::<u32>().ok());
+    if !Path::new(&node).is_absolute()
+        || (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) < (22, 12)
+    {
+        return Err(runtime_error.into());
+    }
+    output_of(&root, "npm", &["--version"]).map_err(|e| format!("{runtime_error}: {e}"))?;
+
     let host = output_of(&root, "rustc", &["-vV"])?
         .lines()
         .find_map(|l| l.strip_prefix("host: ").map(str::to_owned))
@@ -68,6 +84,10 @@ fn run() -> Result<(), String> {
             "ranch",
             "--bin",
             "ranch",
+            "-p",
+            "fence",
+            "--bin",
+            "fence",
             "--release",
             "--locked",
         ])
@@ -83,7 +103,7 @@ fn run() -> Result<(), String> {
     fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     let staging = Staging(parent.join(format!(".ranch-package.{}", std::process::id())));
     fs::create_dir(&staging.0).map_err(|e| format!("{}: {e}", staging.0.display()))?;
-    for dir in ["bin", "share/corral"] {
+    for dir in ["bin", "share/corral", "share/fence", "lib/srt"] {
         fs::create_dir_all(staging.0.join(dir)).map_err(|e| e.to_string())?;
     }
     for program in PROGRAMS {
@@ -97,6 +117,44 @@ fn run() -> Result<(), String> {
         let name = from.file_name().ok_or("bad shared path")?;
         copy(&from, &staging.0.join("share/corral").join(name))?;
     }
+    copy(
+        &root.join("crates/fence/resources/runner.mjs"),
+        &staging.0.join("share/fence/runner.mjs"),
+    )?;
+    for file in ["package.json", "package-lock.json"] {
+        copy(
+            &root.join("crates/fence/srt").join(file),
+            &staging.0.join("lib/srt").join(file),
+        )?;
+    }
+    let status = Command::new("npm")
+        .args([
+            "ci",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--prefix",
+        ])
+        .arg(staging.0.join("lib/srt"))
+        .status()
+        .map_err(|e| format!("npm: {e}"))?;
+    if !status.success() {
+        return Err("npm ci failed; nothing installed".into());
+    }
+    let runtime = toml::Table::from_iter([
+        ("node".into(), toml::Value::String(node.clone())),
+        (
+            "node_version".into(),
+            toml::Value::String(node_version.clone()),
+        ),
+        ("srt_version".into(), toml::Value::String("0.0.80".into())),
+    ]);
+    fs::write(
+        staging.0.join("share/fence/runtime.toml"),
+        toml::to_string(&runtime).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
 
     let revision = output_of(&root, "git", &["rev-parse", "HEAD"])?;
     let dirty = !output_of(&root, "git", &["status", "--porcelain"])?.is_empty();
@@ -109,10 +167,10 @@ fn run() -> Result<(), String> {
     let digest = output_of(
         &staging.0,
         "shasum",
-        &["-a", "256", "bin/corral", "bin/ranch"],
+        &["-a", "256", "bin/corral", "bin/ranch", "bin/fence"],
     )?;
     let build = format!(
-        "revision: {revision}\ntarget: {host}\nworking-tree: {}\nsource: {}\nbranch: {branch}\n{digest}\n",
+        "revision: {revision}\ntarget: {host}\nworking-tree: {}\nsource: {}\nbranch: {branch}\nsrt: 0.0.80\nnode: {node_version} ({node})\n{digest}\n",
         if dirty { "modified" } else { "clean" },
         root.display(),
     );

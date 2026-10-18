@@ -5,3 +5,6 @@ edition = "2024"
 rust-version = "1.96"
 description = "Build an immutable ranch version directory; never installs or switches links"
 publish = false
+
+[dependencies]
+toml = "1.1"

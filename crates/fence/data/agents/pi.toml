@@ -1,0 +1,8 @@
+description = "pi"
+read = ["${home}/.bun/bin", "${home}/node_modules", "${home}/.pi/agent"]
+write = ["${home}/.pi/agent/sessions", "${home}/.pi/agent/auth.json.lock", "${home}/.pi/agent/settings.json.lock"]
+deny_write = ["${home}/.pi/agent/settings.json", "${home}/.pi/agent/auth.json", "${home}/.pi/agent/models.json"]
+[macos]
+allow_pty = true
+[linux]
+write = ["${home}/.pi/agent"]

@@ -566,7 +566,14 @@ impl Pen {
                 self.handoff(target);
             }
             self.finish_upgrade();
+            let was_running = self.exit.is_none();
             self.observe_exit()?;
+            if was_running && self.exit.is_some() && self.metadata["sandbox"].is_object() {
+                // The runner owns the sandbox proxies. Nothing in its group may outlive it.
+                unsafe {
+                    libc::kill(-(self.agent as i32), libc::SIGKILL);
+                }
+            }
             if self.exit.is_some() && (!self.pty_open || now() - self.exit_at > 0.3) {
                 break;
             }
@@ -824,14 +831,26 @@ pub fn worker() -> i32 {
             libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC);
             libc::fcntl(slave.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC);
         }
-        let program = argv[0].as_str();
+        let program = raw[0].as_str();
         let socket = state::socket(&name)?;
         let listener = UnixListener::bind(&socket)?;
         listener.set_nonblocking(true)?;
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600))?;
-        let mut command = Command::new(program);
+        let mut command = if cfg["sandbox"].is_object() {
+            crate::sandbox::command(
+                &cfg["sandbox"],
+                &crate::agents::kind(program),
+                &name,
+                &instance,
+                &dir,
+                &argv,
+            )?
+        } else {
+            let mut command = Command::new(&argv[0]);
+            command.args(&argv[1..]);
+            command
+        };
         command
-            .args(&argv[1..])
             .env_clear()
             .envs(&environment)
             .current_dir(cfg["cwd"].as_str().unwrap())
@@ -927,9 +946,11 @@ pub fn worker() -> i32 {
                 .push(json!({"t":started,"digest":crate::events::digest(prompt)}));
         }
         pen.metadata = json!({"name":name,"instance":pen.instance,"proto":1,"kind":kind,"cwd":cfg["cwd"],"argv":argv,"started":started,"pen_pid":std::process::id(),"agent_pid":pen.agent,"version":env!("CARGO_PKG_VERSION"),"has_prompt":cfg["prompt"].is_string(),"exe":crate::executable()?,"upgrade_capable":true});
+        pen.metadata["sandbox"] = cfg["sandbox"].clone();
         state::write(&pen.dir.join("meta.json"), &pen.metadata)?;
         // Ready is the only stdout record. Closing its writer lets the short-lived start command exit.
         let mut ready = json!({"ok":true,"name":name,"instance":pen.instance,"kind":kind});
+        ready["sandbox"] = crate::sandbox::public(&pen.metadata);
         if !warnings.is_empty() {
             ready["warnings"] = json!(warnings)
         }

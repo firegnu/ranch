@@ -1,0 +1,29 @@
+description = "在工作目录里改代码、编译、测试、提交；HOME 默认不可读。Codex 在 macOS 开启 trustd，会削弱网络隔离"
+deny_read = ["${home}"]
+read = [
+  "${home}/.gitconfig", "${home}/.config/git",
+  "${home}/.cargo/bin", "${home}/.cargo/config.toml", "${home}/.rustup",
+  "${home}/.nvm/versions/node", "${git_common}",
+]
+write = [
+  "${worktree}", "${tmp}", "${target}",
+  "${home}/.cargo/registry", "${home}/.cargo/git",
+  "${git_common}/objects", "${git_dir}",
+  "${git_common}/refs/heads/${branch}",
+  "${git_common}/refs/heads/${branch}.lock",
+  "${git_common}/logs/refs/heads/${branch}",
+]
+mkdir = [
+  "${tmp}", "${target}",
+  # pack-refs 可能移除斜杠分支的父目录；在墙外准备，不放宽 ref 写权限。
+  "${git_common}/refs/heads/${branch}/..",
+  "${git_common}/logs/refs/heads/${branch}/..",
+]
+domains = ["crates.io", "index.crates.io", "static.crates.io"]
+env = { TMPDIR = "${tmp}" }
+[services]
+pi = ["deepseek"]
+omp = ["deepseek"]
+[linux]
+# bwrap 的文件绑定不能被 ref 改名替换；Linux 放行目录，R17c 实测。
+write = ["${git_common}/refs/heads", "${git_common}/logs/refs/heads"]
