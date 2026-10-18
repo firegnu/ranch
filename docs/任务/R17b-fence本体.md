@@ -147,3 +147,12 @@
 - `cargo clippy -p fence --tests -- -D warnings`、`cargo fmt -p fence --check`、`git diff --check` 通过。
 
 隔离夹具自动清理；没有启动真实 agent、重跑全套、打包、部署、合并或推送。Linux 整机实测仍留 R17c，无新增需要主控决定的事项。
+
+## 主控审查
+
+- 10-18 ranch/main 审 `8dca2ca`：插件边界照用户强调的核对过——corral 的 Cargo 不依赖 fence，各家适配器没动，corral 只认 `fence check`/`fence run`、`CORRAL_FENCE` 和同目录查找；fence 的代码和数据里不出现 corral。不带 `--sandbox` 时走原来的路。重跑 fmt、clippy、全套 137 通过 0 失败，和对方说的一致。四家真实验收照表达到。
+- 「被拦的记录找得到」：网络拦截四家都有；Codex、pi 写主仓库被拦但 srt 日志漏记，只在终端可见，是 srt 记录能力的限制，没有伪造，记「建议改」不返工。
+- 中途主控定（用户 10-18 交给主控）：`${tmp}` 挪到 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，`$FENCE_HOME` 整个仍禁止写；已同步 DESIGN §8。
+- 交叉审查（`docs/任务/R17b-审查.md`）：第一轮必须改 2（符号链接绕过规则文件写保护、Linux 文件事件没归一）、建议改 1（check 提前校验域名，主控采纳）→ 返工 1（`711a400`）；复核 1 剩 1 条（链接链中间节点）→ 返工 2（`b4b7d37`，主控定保护每个链接节点、不拒绝链接，因为用户配置常是 dotfiles 链接）；复核 2 可以合并。
+- 合并前主控在 `b4b7d37` 上跑 fmt、clippy 通过；全套第一遍有 1 个失败没认出名字，`--no-fail-fast` 再跑 141 通过 0 失败 9 跳过。和完成记录里说的原有 hook 协议测试偶发超时、R12 起记着的 macOS 并发测试问题同类，和本次改动无关，没追。
+结果：返工 2 次
