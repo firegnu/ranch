@@ -112,3 +112,23 @@
 - Claude 的 zsh heredoc 尝试写 `/private/tmp/zsh…` 被拒，随后用自身 Write 工具完成编辑；没有为此放宽 `/tmp`。用户全局 cairn hook 即使禁用也有入口不可读提示，corral 自己的 hook 和任务仍正常。
 - Claude 一轮 Stop 后自行调用 ScheduleWakeup，额外 PreToolUse 使状态回到 working；补测明确不调定时工具，观察到 idle 并完成暂停/恢复。没有改 corral 的既有状态机去掩盖该事件。
 - 最终全套测试曾在既有 hook 协议测试等待合成 agent 参数文件时超时；单项复跑和随后完整全套均通过，未改测试断言或超时。最终 clippy、fmt 和真 srt 三项回归也通过。
+
+## 返工 1
+
+按主控认可的三条交叉审查意见修正，未改 corral 插件边界：
+
+- `.fence.toml`、FENCE_HOME 及数据层所有 `deny_write` 同时保护原路径和真实目标。解析中间目录链接；末级尚不存在时从已有父目录补全。遇到断链、循环或其他解析错误返回 `invalid_data`，不启动程序。四家数据里的配置/凭证禁止写都经过同一入口，不仅修强制路径。
+- runner 将 srt 0.0.80 Linux 的 `deny <syscall> <路径>` 归为 `file-write`，填 `target` 并置 `monitors.files:true`。优先识别完整 Linux 格式，避免路径中的 `file-read` 或 `deny network-outbound` 文本误导分类。保留 Linux 事件只是写尝试诊断、路径可能不准的说明。
+- `check` 与 `run` 共用域名/端口校验，错误带规则来源及 `domains[索引]`，在创建记录和启动程序前报 `invalid_data`。保留通配域名、IPv6（包括方括号、zone ID、IPv4 映射地址）及合法端口；补充 CONTRACT/README。对 paddock 是既有约定的修正，不需新接口适配。
+
+验证（命令均以前台方式完成，统一使用本任务 `CARGO_TARGET_DIR`）：
+
+- RED → GREEN：真 srt 首次复现规则目标、`.fence.toml` 链接和 Claude 配置目标均可写；修复后同一测试拒绝全部写入及删除规则链接，外部读取内容未变，普通文件仍可写。CLI 覆盖中间链接、不存在后缀、断链、循环和启动前失败。
+- RED → GREEN：Linux `deny openat /synthetic/protected` 原为 `other/target:null`，修复后为 `file-write` 和正确路径。原 runner 配合合成 srt 事件源验证 macOS 读/写、Linux 写尝试、网络及未知分类，也检查文件监视标志；没有把此测试称作 Linux sandbox 实跑。
+- RED → GREEN：`https://example.com` 原先 `check` 返回 `ok:true`，现在 check/run 均带来源和字段报错。合法/非法域名、通配、端口及 IPv6 样例逐项与实际固定 srt schema 对照通过。
+- `cargo test -p fence --test cli --test runner`：12 项通过。
+- `FENCE_TEST_SRT=<本任务编译目录>/srt cargo test -p fence --test srt -- --ignored --nocapture`：5 项通过（原 3 项、符号链接回归、域名 schema 对照）。
+- `cargo test -p corral-core --test sandbox`：5 项通过；只复查直接相关的启动失败与生命周期边界。
+- `cargo clippy -p fence --tests -- -D warnings`、`cargo fmt -p fence --check`、`git diff --check` 通过。
+
+测试都使用隔离目录和合成程序，临时夹具自动清理。未重跑全套、四家真实验收或打包，未部署、合并、推送。Linux 整机实测仍留 R17c；无新增需要主控决定的事项。

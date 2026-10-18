@@ -35,6 +35,46 @@ fn strings(value: &Value) -> bool {
         .is_some_and(|a| a.iter().all(Value::is_string))
 }
 
+// Match srt 0.0.80's domain-pattern.js allow-list grammar, including its
+// wildcard rules, bracketed IPv6 zone IDs and non-zero, unpadded port suffixes.
+fn valid_domain(entry: &str) -> bool {
+    let valid_port = |port: &str| {
+        !port.starts_with('0')
+            && port.bytes().all(|b| b.is_ascii_digit())
+            && port.parse::<u16>().is_ok_and(|p| p > 0)
+    };
+    let host = if let Some(inner) = entry.strip_prefix('[') {
+        let Some((host, rest)) = inner.split_once(']') else {
+            return false;
+        };
+        if !rest.is_empty() && !rest.strip_prefix(':').is_some_and(valid_port) {
+            return false;
+        }
+        let host = host.split('%').next().unwrap();
+        if host.parse::<std::net::Ipv6Addr>().is_ok() {
+            return true;
+        }
+        host
+    } else if let Some((host, port)) = entry.split_once(':') {
+        if !valid_port(port) {
+            return false;
+        }
+        host
+    } else {
+        entry
+    };
+    if host.contains(['/', ':']) {
+        return false;
+    }
+    if host == "localhost" {
+        return true;
+    }
+    if let Some(domain) = host.strip_prefix("*.") {
+        return domain.contains('.') && domain.split('.').all(|part| !part.is_empty());
+    }
+    !host.contains('*') && host.contains('.') && !host.starts_with('.') && !host.ends_with('.')
+}
+
 pub fn validate(value: &Value, source: &str, role: &str, section: &str) -> Result<()> {
     let table = value
         .as_object()
@@ -237,6 +277,29 @@ fn append(list: &mut Vec<String>, value: String) {
     }
 }
 
+// Resolve existing ancestors as well as the leaf. A missing leaf is valid, but a
+// dangling link, loop or inaccessible ancestor must not silently weaken a deny.
+fn write_target(path: &Path) -> std::io::Result<PathBuf> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => path.canonicalize(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            match (path.parent(), path.file_name()) {
+                (Some(parent), Some(name)) => Ok(write_target(parent)?.join(name)),
+                _ => Err(e),
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn protect_write(list: &mut Vec<String>, path: &Path, source: &str) -> Result<()> {
+    let target = write_target(path)
+        .map_err(|e| data::problem(source, "deny_write", format!("{}: {e}", path.display())))?;
+    append(list, normalize(path).to_string_lossy().into_owned());
+    append(list, target.to_string_lossy().into_owned());
+    Ok(())
+}
+
 pub struct Rules {
     pub value: Value,
     pub mkdir: Vec<PathBuf>,
@@ -324,13 +387,20 @@ pub fn resolve(
         }
         for (&key, list) in &mut lists {
             if let Some(entries) = v[key].as_array() {
-                for entry in entries {
+                for (index, entry) in entries.iter().enumerate() {
                     let entry = entry.as_str().unwrap();
                     let is_path = !matches!(key, "domains" | "args");
                     let Some(mut expanded) = context.expand(entry, &source, key, is_path)? else {
                         skipped.push(json!({"entry":entry,"reason":"placeholder has no value (git, branch or CARGO_TARGET_DIR not set)"}));
                         continue;
                     };
+                    if key == "domains" && !valid_domain(&expanded) {
+                        return Err(data::problem(
+                            &source,
+                            &format!("domains[{index}]"),
+                            format!("invalid domain pattern or port: {expanded}"),
+                        ));
+                    }
                     if is_path && !expanded.starts_with("<运行时才有>") {
                         if !Path::new(&expanded).is_absolute() || expanded.contains(['*', '?', '['])
                         {
@@ -339,6 +409,10 @@ pub fn resolve(
                                 key,
                                 format!("path must be absolute without wildcards: {expanded}"),
                             ));
+                        }
+                        if key == "deny_write" {
+                            protect_write(list, Path::new(&expanded), &source)?;
+                            continue;
                         }
                         expanded = normalize(Path::new(&expanded))
                             .to_string_lossy()
@@ -379,11 +453,12 @@ pub fn resolve(
     if settings["enableWeakerNetworkIsolation"] == true {
         warnings.push("weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）".into());
     }
-    for entry in [context.worktree.join(".fence.toml"), normalize(home)] {
-        append(
+    for entry in [context.worktree.join(".fence.toml"), home.to_path_buf()] {
+        protect_write(
             lists.get_mut("deny_write").unwrap(),
-            entry.to_string_lossy().into_owned(),
-        );
+            &entry,
+            &entry.to_string_lossy(),
+        )?;
     }
     for entry in lists["write"].clone() {
         append(lists.get_mut("read").unwrap(), entry);

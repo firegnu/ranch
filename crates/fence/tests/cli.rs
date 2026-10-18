@@ -28,6 +28,161 @@ impl Fixture {
 }
 
 #[test]
+fn deny_write_resolves_linked_parents_and_rejects_unresolvable_targets() {
+    let f = Fixture::new();
+    let root = f.0.path();
+    fs::create_dir(root.join("actual")).unwrap();
+    let actual = root.join("actual").canonicalize().unwrap();
+    std::os::unix::fs::symlink(root.join("actual"), root.join("alias")).unwrap();
+    fs::write(
+        root.join("fence/local.toml"),
+        "deny_write = ['${home}/alias/missing/config']\n",
+    )
+    .unwrap();
+    let v = f.call(&["check", "--profile", "dev"]);
+    assert_eq!(v["ok"], true, "{v}");
+    let denies = v["settings"]["filesystem"]["denyWrite"].as_array().unwrap();
+    assert!(denies.contains(&json!(root.join("alias/missing/config"))));
+    assert!(denies.contains(&json!(actual.join("missing/config"))));
+    // FENCE_HOME can itself contain a linked parent and not exist yet.
+    let out = f
+        .command()
+        .env("FENCE_HOME", root.join("alias/new/fence"))
+        .args(["check", "--profile", "dev"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(
+        v["settings"]["filesystem"]["denyWrite"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(actual.join("new/fence")))
+    );
+    for target in ["absent", "alias"] {
+        fs::remove_file(root.join("alias")).unwrap();
+        std::os::unix::fs::symlink(target, root.join("alias")).unwrap();
+        let v = f.call(&["check", "--profile", "dev"]);
+        assert_eq!(v["error"], "invalid_data", "{target}: {v}");
+        assert_eq!(v["problems"][0]["path"], "deny_write");
+        let out = f
+            .command()
+            .args([
+                "run",
+                "--profile",
+                "dev",
+                "--kind",
+                "claude",
+                "--agent",
+                "test/policy",
+                "--instance",
+                "broken",
+                "--",
+                "/bin/sh",
+                "-c",
+                "touch launched",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125));
+        assert!(!root.join("launched").exists());
+        assert!(!root.join("fence/runs").exists());
+    }
+}
+
+#[test]
+fn domain_patterns_are_checked_before_start_with_source_and_field() {
+    let f = Fixture::new();
+    let policy = f.0.path().join(".fence.toml");
+    fs::create_dir(f.0.path().join("bin")).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", f.0.path().join("bin/claude")).unwrap();
+    for domain in [
+        "https://example.com",
+        "example.com/path",
+        "*",
+        "*.com",
+        "*example.com",
+        "example.com:0",
+        "example.com:65536",
+        "example.com:0443",
+        "example.com:https",
+        "[::1]:0",
+        "[::1]:65536",
+        "::1",
+        "[invalid::ip]",
+    ] {
+        fs::write(&policy, format!("domains = [{}]\n", json!(domain))).unwrap();
+        let out = f
+            .command()
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", f.0.path().join("bin").display()),
+            )
+            .args(["check", "--profile", "dev", "--kind", "claude"])
+            .output()
+            .unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["error"], "invalid_data", "{domain}: {v}");
+        assert_eq!(
+            v["problems"][0]["source"],
+            json!(policy.canonicalize().unwrap())
+        );
+        assert_eq!(v["problems"][0]["path"], "domains[0]");
+        let out = f
+            .command()
+            .args([
+                "run",
+                "--profile",
+                "dev",
+                "--kind",
+                "claude",
+                "--agent",
+                "test/domain",
+                "--instance",
+                "invalid",
+                "--",
+                "/bin/sh",
+                "-c",
+                "touch launched",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125));
+        let v: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(v["error"], "invalid_data", "{domain}: {v}");
+        assert_eq!(v["problems"][0]["path"], "domains[0]");
+        assert!(!f.0.path().join("launched").exists());
+        assert!(!f.0.path().join("fence/runs").exists());
+    }
+    let valid = json!([
+        "example.com",
+        "*.example.com",
+        "*.nested.example.com:8443",
+        "localhost:1",
+        "127.0.0.1:65535",
+        "[::1]",
+        "[2001:db8::1]:443",
+        "[::ffff:192.0.2.1]:80",
+        "[fe80::1%eth0]:443"
+    ]);
+    fs::write(
+        f.0.path().join("fence/local.toml"),
+        format!("domains = {valid}\n"),
+    )
+    .unwrap();
+    let v = f.call(&["check", "--profile", "dev"]);
+    assert_eq!(v["ok"], true, "{v}");
+    for domain in valid.as_array().unwrap() {
+        assert!(
+            v["settings"]["network"]["allowedDomains"]
+                .as_array()
+                .unwrap()
+                .contains(domain)
+        );
+    }
+}
+
+#[test]
 fn profiles_list_builtin_and_user_replacements_even_when_invalid() {
     let f = Fixture::new();
     let result = f.call(&["profiles"]);

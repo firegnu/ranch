@@ -142,6 +142,136 @@ test "$(cat http-code)" = 403
 
 #[test]
 #[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
+fn symlinked_policy_and_agent_config_targets_remain_write_protected() {
+    let l = Lab::new();
+    fs::write(l.cwd.join("repo-policy"), "domains = []\n").unwrap();
+    fs::create_dir(l.cwd.join("policy-home")).unwrap();
+    fs::write(l.cwd.join("policy-home/local.toml"), "domains = []\n").unwrap();
+    fs::create_dir(l.home.join(".claude")).unwrap();
+    fs::write(l.cwd.join("agent-settings"), "unchanged").unwrap();
+    for (target, link) in [
+        (l.cwd.join("repo-policy"), l.cwd.join(".fence.toml")),
+        (l.cwd.join("policy-home"), l.home.join(".fence")),
+        (
+            l.cwd.join("agent-settings"),
+            l.home.join(".claude/settings.json"),
+        ),
+    ] {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+    let out = l.run("symlink-policy", r#"
+printf allowed > ordinary
+for path in policy-home/local.toml repo-policy .fence.toml "$FENCE_HOME/local.toml" agent-settings "$HOME/.claude/settings.json"; do
+  if printf bad > "$path"; then echo "writable: $path"; fi
+done
+if rm .fence.toml; then echo 'removed policy link'; fi
+"#).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(
+        fs::read_to_string(l.cwd.join("ordinary")).unwrap(),
+        "allowed"
+    );
+    assert_eq!(
+        fs::read_to_string(l.cwd.join("repo-policy")).unwrap(),
+        "domains = []\n"
+    );
+    assert_eq!(
+        fs::read_to_string(l.cwd.join("policy-home/local.toml")).unwrap(),
+        "domains = []\n"
+    );
+    assert_eq!(
+        fs::read_to_string(l.cwd.join("agent-settings")).unwrap(),
+        "unchanged"
+    );
+    assert!(l.cwd.join(".fence.toml").is_symlink());
+}
+
+#[test]
+#[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
+fn domain_preflight_agrees_with_the_locked_srt_schema() {
+    let l = Lab::new();
+    let patterns = [
+        "example.com",
+        "*.example.com",
+        "*.nested.example.com:8443",
+        "localhost:1",
+        "127.0.0.1:65535",
+        "[::1]",
+        "[2001:db8::1]:443",
+        "[::ffff:192.0.2.1]:80",
+        "[fe80::1%eth0]:443",
+        "example..com",
+        "*.foo*.example.com",
+        "https://example.com",
+        "example.com/path",
+        "*",
+        "*.com",
+        "*example.com",
+        "example.com:0",
+        "example.com:65536",
+        "example.com:0443",
+        "example.com:https",
+        "[::1]:0",
+        "[::1]:65536",
+        "::1",
+        "[invalid::ip]",
+    ];
+    let out = Command::new("node")
+        .env(
+            "SRT_MODULE",
+            l.root
+                .join("lib/srt/node_modules/@anthropic-ai/sandbox-runtime/dist/index.js"),
+        )
+        .args([
+            "--input-type=module",
+            "-e",
+            r#"
+const { SandboxRuntimeConfigSchema } = await import(process.env.SRT_MODULE);
+console.log(JSON.stringify(JSON.parse(process.argv[1]).map(domain =>
+  SandboxRuntimeConfigSchema.safeParse({
+    network: { allowedDomains: [domain], deniedDomains: [] },
+    filesystem: { denyRead: [], allowWrite: [], denyWrite: [] }
+  }).success)));
+"#,
+        ])
+        .arg(serde_json::to_string(&patterns).unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let accepted: Vec<bool> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(accepted.len(), patterns.len());
+    fs::create_dir(l.home.join(".fence")).unwrap();
+    for (domain, expected) in patterns.into_iter().zip(accepted) {
+        fs::write(
+            l.home.join(".fence/local.toml"),
+            format!("domains = [{}]\n", serde_json::json!(domain)),
+        )
+        .unwrap();
+        let out = l
+            .command()
+            .args(["check", "--profile", "dev"])
+            .output()
+            .unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["ok"], expected, "{domain}: {v}");
+    }
+}
+
+#[test]
+#[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
 fn real_srt_runner_preserves_normal_exit_and_group_hup_status() {
     let l = Lab::new();
     assert_eq!(l.run("normal", "exit 9").status().unwrap().code(), Some(9));

@@ -171,6 +171,8 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 
 错误码：`usage`、`unknown_profile`、`invalid_data`（附 `problems:[{source,path,message}]`）、`unsupported_kind`（附 `supported:[…]`）、`no_service`、`program_not_found`、`bad_cwd`、`runtime_missing`、`not_found`。amp/agy 本轮无数据，使用 sandbox 时返回 `unsupported_kind`。
 
+`check` 在合并时校验域名和可选端口，错误返回 `invalid_data`，附规则来源和 `domains[索引]`；`run` 复用同一校验，在创建运行记录和启动程序前失败。允许 `*.example.com`、`example.com:443`、`[::1]`、`[2001:db8::1]:443` 等 srt 格式；端口为 1–65535，不带前导零。
+
 `fence denials --agent <名字> [--instance <实例>] [--limit <n>]`：只读，未给实例时取该名字最近一次运行；前端宜传 `corral status` 的 instance，避免重名混淆。limit 默认 200，取最后 n 条并保持时间顺序；没有匹配记录返回 `not_found`。
 
 ```json
@@ -179,8 +181,12 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 
 类型为 `network`、`file-read`、`file-write`、`other`；不认识目标时 `target:null`。running 表示 runner 尚在运行；exit 来自 runner 的退出记录，没有则为 null。网络记录来自 srt 代理，macOS 文件记录来自系统日志，Linux 文件记录是 seccomp 对写尝试的诊断提示，路径可能不准且没有读记录。srt 没有监视器健康接口，因此 `files` 只有收到文件事件后才为 true；false 表示尚未证实能记录，文件拒绝还可看 agent 终端。
 
+Linux 的 `deny <syscall> <路径>` 事件归为 `file-write`，`target` 为上游报告的路径，收到后同样置 `monitors.files:true`；不因此把写尝试诊断视为准确的文件访问审计。
+
 记录在 `$FENCE_HOME/runs/<实例>/`（默认 `~/.fence/runs/`），由墙外的 fence/runner 写：`run.json`、0600 的 `settings.json`、`denials.jsonl`、`monitor.json`、`exit.json`。拒绝日志最多 5 MiB，满了停写并报 `truncated:true`；不保存完整 agent 命令或首句。`--limit` 仅限制返回条数，不改变 truncated。文件事件可能漏记，`files:true` 只证明收到了文件事件，不保证覆盖每次拒绝；`truncated:false` 也不代表上游日志没有遗漏。
 
 临时目录在 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，与记录分开，起 agent 前创建并按档案放行读写。每次启动清理已结束超过 7 天的记录和它对应的临时目录。整个 `$FENCE_HOME` 及工作区 `.fence.toml` 始终禁止写。
+
+这些强制保护路径以及数据层所有 `deny_write` 同时保护原路径和解析后的真实目标，包含中间目录的符号链接。末级路径尚不存在时，解析已有父目录后保留不存在的后缀；断链、循环或其他解析错误返回 `invalid_data`，拒绝启动。
 
 新 CLI 读旧 metadata 得到 sandbox:null；旧 CLI 忽略新增字段，但不能使用 `--sandbox`。新旧 pen 升级快照原样携带 metadata，runner 不随 pen 升级切换版本；仍有 runner 使用的旧版本目录不能清理。

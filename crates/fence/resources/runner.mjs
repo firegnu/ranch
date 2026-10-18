@@ -35,10 +35,12 @@ try {
       const detail = event.line;
       const network = detail.match(/deny network-outbound (\S+)/);
       const file = detail.match(/\b(file-read|file-write)[^ ]*\s+(.+?)(?:\s+CMD64_|$)/);
-      const type = network ? 'network' : file ? file[1] : 'other';
-      if (file && !monitors.files) { monitors.files = true; saveMonitor(); }
+      // srt 0.0.80's Linux monitor emits only write-intent syscalls, not reads.
+      const linuxWrite = detail.match(/^deny [a-z][a-z0-9_]* (\/.*)$/);
+      const type = linuxWrite ? 'file-write' : network ? 'network' : file ? file[1] : 'other';
+      if ((file || linuxWrite) && !monitors.files) { monitors.files = true; saveMonitor(); }
       // Do not persist event.command or encodedCommand (the command includes the prompt).
-      const line = JSON.stringify({ t: event.timestamp.getTime() / 1000, type, target: network?.[1] ?? file?.[2] ?? null, detail }) + '\n';
+      const line = JSON.stringify({ t: event.timestamp.getTime() / 1000, type, target: linuxWrite?.[1] ?? network?.[1] ?? file?.[2] ?? null, detail }) + '\n';
       const size = Buffer.byteLength(line);
       if (bytes + size > 5 * 1024 * 1024) { truncated = true; saveMonitor(); break; }
       appendFileSync(options['--denials'], line, { mode: 0o600 });
