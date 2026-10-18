@@ -72,3 +72,10 @@
 - **踩过的坑**：
   - srt 的源码不在 R17a 的临时目录里了（已清掉），改从 `~/.npm/_cacache` 按完整性校验找到 0.0.80 的包，解到会话草稿目录读。
   - 读 srt 源码后发现：srt 命令行调 `initialize` 时没开 `enableLogMonitor`，它的调试输出也和子进程共用 stderr。所以 R17a 的做法取不到文件拦截记录，还会吞掉 agent 的 stderr。方案因此改推启动脚本。
+
+## 主控审查
+
+- 10-18 ranch/main 审：只加了方案和完成记录两份文档，`git diff --check` 通过，没改代码。8 项都有推荐，四家数据照 R17a 写了草稿，`fence` 的命令和 JSON 能直接进 CONTRACT。
+- 方案开头的 5 条交用户，用户 10-18：“五条都同意，按你说的继续”。即：fence 用 Node 小脚本 `runner.mjs` 调 srt 的库接口起 agent（和 `hook_pi.ts` 同类，不算工具）；内置一套档案和数据，用户可在 `~/.fence/` 下整份替换、用 `local.toml` 补本机的；srt 用打包时记下的那个 node；仓库补充文件是工作区顶层的 `.fence.toml`；只内置 `dev` 档案，pi、omp 默认 deepseek。
+- 方案里其余推荐主控照收，没有异议：墙里调 corral 报 `sandbox`；部署多切 `~/.local/bin/fence`；`packed-refs.lock` 不消除；实现整件交 Codex。
+结果：一次过
