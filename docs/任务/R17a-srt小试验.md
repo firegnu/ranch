@@ -55,3 +55,35 @@
 
 ## 做完
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录（阶段：只完成 Codex 小活，R17a 总验收未完成）
+
+- 做了什么：按用户后续要求，先停四家，再只继续 Codex。保留 srt 0.0.80 和 IP Guardian 入口，定位 HTTP TLS 阻塞，取得 Codex 编译、测试、提交与三项拒绝的完整回复；规则全文和证据写入 `docs/调研/R17a-srt小试验.md`。
+- 验证了什么：最终 build/test/commit 均退出 0，提交 `915d7bc`；读假密钥、写合成主仓库、访问 example.com 分别退出 1/1/56。status 有 working/idle；ls 可见但该版本没有 state 字段。空闲 pause/resume 正常，stop 返回 0，测试 agent 全部停止。报告 `git diff --check` 通过。
+- 拿主意的地方：只为本次进程传完整 projects 表完成用户授权的信任，不放开全局 config.toml 写入；补编译目录读取权限。为验证 TLS，单独试了 Keychains 只读（无效）、trustd 放行（有效）；最终带 `enableWeakerNetworkIsolation:true`，必须由主控决定是否接受其隔离代价，不能算严格网络隔离总验收通过。
+- 没做的事：未继续 Claude、pi、omp，未完成四家总验收；未实跑 Linux，未实现 fence、改 ranch 代码、全局安装、改全局配置、合并或推送。目录和域名尚未证明最小化。
+- 踩过的坑：PTY 未放行导致启动失败；只补 ab.chatgpt.com 不能修复 TLS；点 Trust 会写全局 config 被拒，带点路径的单键 -c 未生效，改传完整 projects 表有效；编译目录只放写不放读会失败；commit 退出 0 仍报 packed-refs.lock 拒绝，关闭 maintenance.auto 也未消除，具体原因未查清；agent 停止后 corral reply/read 不可取，必须先存证据。
+
+## 完成记录（阶段补充：pi、omp 分别复测）
+
+- 做了什么：用户先要求 pi，pi 停止后再要求 omp；两家严格顺序运行。补齐各自规则全文、启动形式、前次撞墙原因和完整结果；没有重启 Codex 或 Claude。
+- 验证了什么：pi、omp 均 build/test/commit 退出 0，各 2 个测试通过，提交分别 `cd4a1fe`、`8a571b2`；两家的读假密钥/写合成主仓库/连未放行网站均退出 1/1/56。status 的 working/idle、ls 暂停标记、空闲 pause/resume/stop 正常；最终无测试 agent。`git diff --check` 通过。
+- 拿主意的地方：根据已查证的编译目录读权限遗漏，补各自独立目录 allowRead，沿用已有 allowWrite。保持 srt 默认网络隔离，不开 Codex 的 trustd 开关，也不为更新检查和其他 provider 探测扩大域名白名单。
+- 没做的事：Claude 尚未完成，四家总验收未完成；不做 fence，不改全局配置，不改其他仓库，不跑 Linux，不合并或推送。应用状态目录权限尚未最小化。
+- 踩过的坑：pi 早前 setRawMode EPERM 和配置/认证 lock 目录创建失败，omp 早前 native addon utime 和 run/daemons mkdir 被拒，报告已保留；本轮两家都仍有 packed-refs.lock 报错但提交成功。pi 的 NODE_USE_ENV_PROXY 未设置仍能连接当前 DeepSeek；不要泛化为所有 Node/provider 都如此。
+
+## 完成记录（Claude 补齐与本轮调研收尾）
+
+- 做了什么：最后只开 Claude Code，补齐登录、Bash 工具临时路径规则，完成剩余一家的小活和拒绝试验。报告已有四家规则全文、公共/特有/模型服务/仓库路径区分、启动与结果摘录、撞墙记录、Linux 文档对照和未知项。
+- 验证了什么：Claude 最终 build/test/commit 退出 0，提交 `a7daeae`；三项拒绝退出 1/1/56，Bash 自身没有 cwd 收尾错误。status 有 working/idle，空闲 pause/resume 正常，stop 成功；四个测试 agent 全部关闭。`git diff --check` 通过。
+- 拿主意的地方：复用用户此前对同一临时 worktree 的信任授权，始终禁止全局配置写入。Keychains 只给正常客户端认证使用，不导出或读取其条目内容；用官方 CLAUDE_CODE_TMPDIR 将内部临时文件移到本次已授权目录，撤回先试的旧 tmp 路径放行，不扩大整个 /tmp。
+- 没做的事：不做 fence、不改程序、不改全局配置、不合并推送部署；不测 amp/agy、不实跑 Linux。四家操作证据已齐，但严格隔离总验收不能直接宣告通过：Codex trustd 弱化开关、Claude Keychains 和各家较宽应用状态目录的边界仍交主控决定。未证明 packed refs 等任意 Git 布局可用。
+- 踩过的坑：Claude 未登录源于 Keychains 被读限制挡住；只设置 TMPDIR 不能覆盖其全部 Bash 临时文件，先在 mkdir 阶段失败，再在 cwd 收尾阶段失败，改用 CLAUDE_CODE_TMPDIR 后正常。前两轮明确区分了工具内部失败与目标命令退出码，没有拿内部错误当作拦截验收。全局 cairn hook 被拒但 corral 状态事件照常更新，未为消除提示扩权。
+
+## 交主控的最终结论（用户澄清后）
+
+用户在听完结果后明确：“不需要严格限制。我只是在要通过做这个来彻底完全的了解一下sandbox。”用户随后要求把结论写清楚交给主控。
+
+R17a 的本机四家小活和三项拒绝验证已完成，建议主控审查合并后准备 R17b 任务单给用户看。此前我建议先做权限收窄再接入，偏离了用户的学习和实际使用目标，现撤回这项前置要求。Codex trustd、Claude Keychains、应用状态目录较宽、Git packed-refs.lock 报错、系统拒绝审计未统一，都作为已知行为和后续学习记录，不作为推进门槛；不冒称它们已解决。
+
+R17b 沿已定方案：独立 fence 命令、corral 通过窄 CLI 约定可选套墙、默认不带、支持 Linux、以后可剥离；Linux 实测仍留 R17c，本轮未验证。未授权直接部署、改用户全局配置或扩到 amp/agy。测试 agent 全部停止；临时材料保留，原始日志不入库。提交只在任务分支，不合并、不推送，由主控审查和收尾。
