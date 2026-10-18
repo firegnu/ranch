@@ -1,0 +1,8 @@
+{
+  "name": "ranch-fence-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.80"
+  }
+}

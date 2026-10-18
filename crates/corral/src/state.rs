@@ -267,7 +267,7 @@ pub fn list() -> Result<Vec<Value>> {
                 } else {
                     json!({})
                 };
-                agents.push(json!({"name":name,"instance":st["instance"],"kind":m["kind"],"cwd":m["cwd"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"]}));
+                agents.push(json!({"name":name,"instance":st["instance"],"kind":m["kind"],"cwd":m["cwd"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"],"sandbox":crate::sandbox::public(&m)}));
             }
             Err(e) if e.code == 9 => {
                 agents.push(json!({"name":name,"incompatible":true,"proto":e.value["proto"]}))

@@ -1,0 +1,2 @@
+# 编译目录约定见 CLAUDE.md；主仓库和 worktree 共用此目录。
+write = ["${repo}/../ranch-worktrees/.target"]
