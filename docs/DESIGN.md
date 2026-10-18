@@ -9,6 +9,7 @@
 | corral（agent 运行时，命令 `corral`） | Saddle `crates/corral-core`，提交 `a31dea2` | 第 1 步 |
 | dispatch（路由命令 `ranch dispatch route`、`corral-dispatch` 技能，不带遥测） | Saddle `plugins/dispatch` | 第 2 步 |
 | 遥测、Drover、插件系统 | Saddle | 不迁；用户 10-05 定砍掉，Saddle 删除代码，数据留在磁盘上 |
+| fence（sandbox，命令 `fence`，`corral start --sandbox` 调它，接 srt） | 新做 | 设计中，见 §8 |
 
 ## 2. 与前端的关系
 
@@ -120,3 +121,13 @@
     - 用户 10-17 同意 corral 为它开的 agy 改写 agy 的信任列表；用户自己开的 agy 不受影响。
   - corral 技能里开 agy 改成 `-- agy --dangerously-skip-permissions`，和派活技能一致；Claude Code 不改（用户 10-17）。
   - 来历：`docs/任务/R13-agy启动抢跑与免确认.md`。
+
+## 8. sandbox（用户 10-18）
+
+用户 10-18：“先接 srt（但是要支持linux）。 另外默认委派出去的不要家srt围栏（默认保持现在）。还有架构设计上我希望还是类似插件式的（以后可以很方便的把sandbox剥离出来成为像cairn这样独立的服务）。”
+
+- 围栏式：agent 照常在本机跑，由 srt（Anthropic sandbox-runtime）按规则管读、写、上网，一律默认不许、按需放行。不做容器式、云端。
+- 支持 macOS 和 Linux。
+- 是 `corral start` 的一个选项，不加就是现在的样子；派出去的 agent 默认不加。
+- 插件式：sandbox 叫 fence（用户 10-18：“同意B，名字就叫fence”），放在 ranch 仓库里单独一块（`crates/fence`），出自己的命令 `fence`；corral 不在 Cargo 里依赖它，只按一条窄约定调它，以后能整块剥离成独立服务。
+- 细节和待定项在 `docs/任务/R17-agent放进sandbox.md`。
