@@ -55,3 +55,11 @@
 
 ## 做完
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录（阶段：只完成 Codex 小活，R17a 总验收未完成）
+
+- 做了什么：按用户后续要求，先停四家，再只继续 Codex。保留 srt 0.0.80 和 IP Guardian 入口，定位 HTTP TLS 阻塞，取得 Codex 编译、测试、提交与三项拒绝的完整回复；规则全文和证据写入 `docs/调研/R17a-srt小试验.md`。
+- 验证了什么：最终 build/test/commit 均退出 0，提交 `915d7bc`；读假密钥、写合成主仓库、访问 example.com 分别退出 1/1/56。status 有 working/idle；ls 可见但该版本没有 state 字段。空闲 pause/resume 正常，stop 返回 0，测试 agent 全部停止。报告 `git diff --check` 通过。
+- 拿主意的地方：只为本次进程传完整 projects 表完成用户授权的信任，不放开全局 config.toml 写入；补编译目录读取权限。为验证 TLS，单独试了 Keychains 只读（无效）、trustd 放行（有效）；最终带 `enableWeakerNetworkIsolation:true`，必须由主控决定是否接受其隔离代价，不能算严格网络隔离总验收通过。
+- 没做的事：未继续 Claude、pi、omp，未完成四家总验收；未实跑 Linux，未实现 fence、改 ranch 代码、全局安装、改全局配置、合并或推送。目录和域名尚未证明最小化。
+- 踩过的坑：PTY 未放行导致启动失败；只补 ab.chatgpt.com 不能修复 TLS；点 Trust 会写全局 config 被拒，带点路径的单键 -c 未生效，改传完整 projects 表有效；编译目录只放写不放读会失败；commit 退出 0 仍报 packed-refs.lock 拒绝，关闭 maintenance.auto 也未消除，具体原因未查清；agent 停止后 corral reply/read 不可取，必须先存证据。
