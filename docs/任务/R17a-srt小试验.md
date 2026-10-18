@@ -63,3 +63,11 @@
 - 拿主意的地方：只为本次进程传完整 projects 表完成用户授权的信任，不放开全局 config.toml 写入；补编译目录读取权限。为验证 TLS，单独试了 Keychains 只读（无效）、trustd 放行（有效）；最终带 `enableWeakerNetworkIsolation:true`，必须由主控决定是否接受其隔离代价，不能算严格网络隔离总验收通过。
 - 没做的事：未继续 Claude、pi、omp，未完成四家总验收；未实跑 Linux，未实现 fence、改 ranch 代码、全局安装、改全局配置、合并或推送。目录和域名尚未证明最小化。
 - 踩过的坑：PTY 未放行导致启动失败；只补 ab.chatgpt.com 不能修复 TLS；点 Trust 会写全局 config 被拒，带点路径的单键 -c 未生效，改传完整 projects 表有效；编译目录只放写不放读会失败；commit 退出 0 仍报 packed-refs.lock 拒绝，关闭 maintenance.auto 也未消除，具体原因未查清；agent 停止后 corral reply/read 不可取，必须先存证据。
+
+## 完成记录（阶段补充：pi、omp 分别复测）
+
+- 做了什么：用户先要求 pi，pi 停止后再要求 omp；两家严格顺序运行。补齐各自规则全文、启动形式、前次撞墙原因和完整结果；没有重启 Codex 或 Claude。
+- 验证了什么：pi、omp 均 build/test/commit 退出 0，各 2 个测试通过，提交分别 `cd4a1fe`、`8a571b2`；两家的读假密钥/写合成主仓库/连未放行网站均退出 1/1/56。status 的 working/idle、ls 暂停标记、空闲 pause/resume/stop 正常；最终无测试 agent。`git diff --check` 通过。
+- 拿主意的地方：根据已查证的编译目录读权限遗漏，补各自独立目录 allowRead，沿用已有 allowWrite。保持 srt 默认网络隔离，不开 Codex 的 trustd 开关，也不为更新检查和其他 provider 探测扩大域名白名单。
+- 没做的事：Claude 尚未完成，四家总验收未完成；不做 fence，不改全局配置，不改其他仓库，不跑 Linux，不合并或推送。应用状态目录权限尚未最小化。
+- 踩过的坑：pi 早前 setRawMode EPERM 和配置/认证 lock 目录创建失败，omp 早前 native addon utime 和 run/daemons mkdir 被拒，报告已保留；本轮两家都仍有 packed-refs.lock 报错但提交成功。pi 的 NODE_USE_ENV_PROXY 未设置仍能连接当前 DeepSeek；不要泛化为所有 Node/provider 都如此。

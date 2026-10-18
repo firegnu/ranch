@@ -1,6 +1,6 @@
 # R17a：srt 本机小试验（阶段记录）
 
-2026-10-18。当前只继续 Codex，Claude、pi、omp 已按用户要求停止；四家总验收尚未完成。本记录不表示 R17a 已完成，也不表示已决定 fence 的正式规则。
+2026-10-18。按用户要求逐家进行：Codex、pi、omp 已分别取得编译、测试、提交和三项拒绝的证据，测试 agent 全部停止；Claude 尚未完成。Codex 依赖 trustd 弱化开关，pi、omp 没有开启该开关。四家总验收尚未完成，也未决定 fence 的正式规则。
 
 ## 范围与环境
 
@@ -250,7 +250,7 @@ rg 'Connection blocked to example.com|No matching rule, denying: example.com' \
 
 空闲时 `corral pause` 返回 `paused:true`，`status` 和 `ls` 均可见；`corral resume` 返回 `paused:false`，state 保持 idle。只验证了空闲暂停/恢复，没有验证请求中途恢复的行为。
 
-## 本轮尚未决定/未完成
+## Codex 阶段尚未决定/未完成（pi、omp 后续结果见下）
 
 - 是否接受 Codex 在 macOS 上开放 trustd 的隔离代价，或另找保持默认隔离的 TLS 方案。三项拦截通过不覆盖这个潜在通道。
 - `packed-refs.lock` 报错的具体原因、已有 packed refs 仓库能否提交、逐项保护主仓库 HEAD/index/config 和其他分支的行为未实测。当前仅有规则未授权这些写入的静态依据。
@@ -259,3 +259,224 @@ rg 'Connection blocked to example.com|No matching rule, denying: example.com' \
 - Linux 仅按 README 对照，没有实跑；没有实现 fence，也没有变更全局配置。
 
 收尾：最终实例 `corral stop` 返回 `exit_code:0`、`stopped_by:"keys"`，随后 ls 无测试 agent。本轮临时规则、合成仓库和脱敏前诊断日志保留在临时目录，便于下一家继续时复用；不提交原始日志。报告验证执行 `git diff --check`，未跑 ranch 编译/测试（本轮未改程序）。
+
+## pi 单独复测（2026-10-18）
+
+用户要求一家家测试，本轮只启动 `ranch/test-sandbox-pi`，实例 `dd62631211a9`。pi 1.3.0，仍用本机默认模型和强度，不改其全局配置。
+
+前次撞墙及修正：
+
+| 规则变化 | 直接原因 |
+| --- | --- |
+| `allowPty:false` → `true` | Node TUI 启动时 `ReadStream.setRawMode` 报 `EPERM` 并退出 |
+| 增加 `~/.pi/agent/settings.json.lock`、`auth.json.lock` 写权限 | 原先创建 lock 目录被拒，pi 把 settings 判为无效，模型认证可用性刷新失败并显示没有 API key；不是模型服务缺账号 |
+| `pi-v4.json` 增加独立编译目录读权限 | 前次 pi 曾因编译父目录不存在失败，转用 worktree 内 target 成功；本轮父目录预先创建，同时补上 HOME denyRead 下的编译目录读取权限，要求 pi 使用继承的 CARGO_TARGET_DIR，不换目录 |
+
+认证文件、settings、models 文件本身继续禁止写；只让正常客户端执行认证，不用真实凭证文件做读取拦截试验。未添加 `enableWeakerNetworkIsolation`、Unix socket 放行或其他弱化选项。网络白名单只有 `api.deepseek.com`；启动检查的 `pi.dev` 被拒，未为它补白名单。
+
+### pi 本轮规则全文
+
+```json
+{
+  "network": {
+    "allowedDomains": [
+      "api.deepseek.com"
+    ],
+    "deniedDomains": []
+  },
+  "filesystem": {
+    "denyRead": [
+      "/Users/firegnu"
+    ],
+    "allowRead": [
+      "/Users/firegnu/.cargo/bin",
+      "/Users/firegnu/.rustup",
+      "/Users/firegnu/.nvm/versions/node/v24.13.1",
+      "/Users/firegnu/.local/share/ranch/versions",
+      "/Users/firegnu/.corral/.runtime",
+      "/Users/firegnu/.corral/ranch/test-sandbox-pi",
+      "/Users/firegnu/.bun/bin",
+      "/Users/firegnu/node_modules",
+      "/Users/firegnu/.pi/agent",
+      "/Users/firegnu/Developer/personal_projs/ranch-worktrees/.target/r17a-srt-trial/pi"
+    ],
+    "allowWrite": [
+      "/private/tmp/r17a-srt.lj33U7/wt-pi",
+      "/private/tmp/r17a-srt.lj33U7/tmp-pi",
+      "/private/tmp/r17a-srt.lj33U7/cargo-home",
+      "/Users/firegnu/Developer/personal_projs/ranch-worktrees/.target/r17a-srt-trial/pi",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/objects",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/worktrees/wt-pi",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/refs/heads/trial-pi",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/refs/heads/trial-pi.lock",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/logs/refs/heads/trial-pi",
+      "/Users/firegnu/.corral/ranch/test-sandbox-pi/events",
+      "/Users/firegnu/.pi/agent/sessions",
+      "/Users/firegnu/.pi/agent/auth.json.lock",
+      "/Users/firegnu/.pi/agent/settings.json.lock"
+    ],
+    "denyWrite": [
+      "/Users/firegnu/.pi/agent/settings.json",
+      "/Users/firegnu/.pi/agent/auth.json",
+      "/Users/firegnu/.pi/agent/models.json"
+    ]
+  },
+  "allowPty": true
+}
+```
+
+公共部分与 Codex 相同：HOME denyRead、corral helper/本实例 hook 可读、events 可写、PTY、Rustup/Cargo 和 worktree Git 数据路径。pi 特有的是 `~/.bun/bin/pi` 的入口、解析到 `~/node_modules` 的程序、nvm 下 Node，以及 `~/.pi/agent` 读取、sessions 和两个 lock 目录写入。模型服务部分仅 DeepSeek 域名；编译目录和 Git 数据路径属于合成仓库，不应写死成全局权限。`~/node_modules` 和 `~/.pi/agent` 的允许读取范围尚未最小化，后者会暴露该目录中的其他会话，不能声称不同会话之间已隔离。
+
+包装脚本全文：
+
+```sh
+#!/bin/sh
+export TMPDIR=/private/tmp/r17a-srt.lj33U7/tmp-pi
+export CARGO_HOME=/private/tmp/r17a-srt.lj33U7/cargo-home
+export CARGO_TARGET_DIR=/Users/firegnu/Developer/personal_projs/ranch-worktrees/.target/r17a-srt-trial/pi
+export GIT_CONFIG_GLOBAL=/dev/null
+exec /private/tmp/r17a-srt.lj33U7/runtime/node_modules/.bin/srt --debug --settings /private/tmp/r17a-srt.lj33U7/settings/pi-v4.json -- /Users/firegnu/.bun/bin/pi "$@" 2>> /private/tmp/r17a-srt.lj33U7/logs/pi-stderr.txt
+```
+
+启动命令：
+
+```sh
+corral start ranch/test-sandbox-pi \
+  --cwd /private/tmp/r17a-srt.lj33U7/wt-pi \
+  --env CAIRN_DISABLE=1 --label role=test --prompt '<本轮任务>' \
+  -- /tmp/r17a-srt.lj33U7/bin/pi
+```
+
+本轮任务是在原有 `double(3)==6` 测试之外增加 `double(0)==0` 测试，运行 build/test/commit，再执行同样三项预期拒绝。只额外输出 Node 版本和 `NODE_USE_ENV_PROXY`，未请求输出其他环境变量。
+
+### pi 单独复测结果
+
+- `cargo build` 退出 0：`Finished dev profile ... in 0.05s`，实际 CARGO_TARGET_DIR 为独立的 `.target/r17a-srt-trial/pi`。
+- `cargo test` 退出 0：`running 2 tests`、`doubles_three_to_six ... ok`、`doubles_zero_to_zero ... ok`、`2 passed; 0 failed`。
+- `git add src/lib.rs`、`git commit -m "Test double zero in pi sandbox"` 均退出 0，提交 `cd4a1fe`。仍输出全局 git ignore 读拒绝及 `packed-refs.lock` 写拒绝；没有因此扩大规则。
+- `cat /Users/firegnu/.r17a-fake-secret-lj33U7/id_fake` 退出 1，`Operation not permitted`。
+- `printf "SHOULD_BE_DENIED\n" >> /private/tmp/r17a-srt.lj33U7/main/protected.txt` 退出 1，`/bin/bash: ... Operation not permitted`。
+- `curl -I --max-time 10 https://example.com` 退出 56，`CONNECT tunnel failed, response 403`、`HTTP/1.1 403 host is not on the allow list`、`X-Proxy-Error: blocked-by-allowlist`。
+- `node --version` 为 v24.13.1；`NODE_USE_ENV_PROXY` 未设置。本轮 pi 默认 DeepSeek 路径实际能经 srt 代理工作，不需要额外设置该变量；不能外推到其他 Node 客户端/模型 provider。
+- status 取得 `UserPromptSubmit`/working 和 `Stop`/idle。空闲 pause 后 status/ls 的 paused 为 true，resume 为 false；stop 返回 `exit_code:-1, stopped_by:SIGHUP`，停止成功。这不是优雅退出 0 的证据，也没有验证中途请求暂停。
+- 停止前已通过 corral reply/read 保存完整结果，stderr 的代理拒绝也保留。Linux 可行性仍仅按前文 README 推测，未实测。
+
+## omp 单独复测（2026-10-18）
+
+用户要求接着测 omp；确认 pi 已停止后，只启动 `ranch/test-sandbox-omp`，实例 `54c39556ebdf`。本机 omp 18.12.1，是 Homebrew 的编译版可执行程序（带 Bun 运行时），并非通过 PATH 上的 Node 执行。沿用默认模型/强度和 `--approval-mode yolo`。
+
+前次启动撞墙及补规则：
+
+1. native addon 加载失败，输出 `Failed to load pi_natives native addon for darwin-arm64`，其中 `utime ~/.omp/natives/18.12.1` 为 EPERM。补该版本 native 目录读写后越过此处。
+2. 随后 `mkdir ~/.omp/run/daemons/9bb07e6776ee7fa3` 被拒。补 `~/.omp/run` 读写后进入正常任务。没有放行 Unix socket；本轮不证明所有 daemon/IPC 功能可用，正式规则应限制到本 agent 的运行目录。
+3. `allowPty:true` 随第二版规则开启；未单独测试 omp 关掉它的结果，因此不能声称已证明 omp 必须启用。
+4. 本轮像 pi 一样补独立编译目录读取权限，要求沿用继承的 CARGO_TARGET_DIR。
+
+没有开启 trustd 弱化开关。白名单仍只有 `api.deepseek.com`，其他 provider 目录/模型清单探测的域名拒绝没有逐个放行；这不是这些 provider 的可用性测试。
+
+### omp 本轮规则全文
+
+```json
+{
+  "network": {
+    "allowedDomains": [
+      "api.deepseek.com"
+    ],
+    "deniedDomains": []
+  },
+  "filesystem": {
+    "denyRead": [
+      "/Users/firegnu"
+    ],
+    "allowRead": [
+      "/Users/firegnu/.cargo/bin",
+      "/Users/firegnu/.rustup",
+      "/Users/firegnu/.nvm/versions/node/v24.13.1",
+      "/Users/firegnu/.local/share/ranch/versions",
+      "/Users/firegnu/.corral/.runtime",
+      "/Users/firegnu/.corral/ranch/test-sandbox-omp",
+      "/Users/firegnu/.omp/agent",
+      "/Users/firegnu/.omp/natives/18.12.1",
+      "/Users/firegnu/.omp/run",
+      "/Users/firegnu/Developer/personal_projs/ranch-worktrees/.target/r17a-srt-trial/omp"
+    ],
+    "allowWrite": [
+      "/private/tmp/r17a-srt.lj33U7/wt-omp",
+      "/private/tmp/r17a-srt.lj33U7/tmp-omp",
+      "/private/tmp/r17a-srt.lj33U7/cargo-home",
+      "/Users/firegnu/Developer/personal_projs/ranch-worktrees/.target/r17a-srt-trial/omp",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/objects",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/worktrees/wt-omp",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/refs/heads/trial-omp",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/refs/heads/trial-omp.lock",
+      "/private/tmp/r17a-srt.lj33U7/main/.git/logs/refs/heads/trial-omp",
+      "/Users/firegnu/.corral/ranch/test-sandbox-omp/events",
+      "/Users/firegnu/.omp/agent",
+      "/Users/firegnu/.omp/natives/18.12.1",
+      "/Users/firegnu/.omp/run"
+    ],
+    "denyWrite": [
+      "/Users/firegnu/.omp/agent/config.yml",
+      "/Users/firegnu/.omp/agent/settings.json",
+      "/Users/firegnu/.omp/agent/auth.json",
+      "/Users/firegnu/.omp/agent/models.json"
+    ]
+  },
+  "allowPty": true
+}
+```
+
+公共/仓库特有路径同前两家。omp 特有的是 `~/.omp/agent`（含会话和数据库等）、版本化 native 目录、run 目录；模型服务为 DeepSeek。当前对 `~/.omp/agent` 读写比较宽，显式禁止列出的全局配置/认证 JSON 写入，未证明这是最小集，也不能声称阻止了该目录中所有其他全局状态或数据库的修改。nvm Node 路径来自初始公共模板，未证明 omp 本体需要它。
+
+包装脚本全文：
+
+```sh
+#!/bin/sh
+export TMPDIR=/private/tmp/r17a-srt.lj33U7/tmp-omp
+export CARGO_HOME=/private/tmp/r17a-srt.lj33U7/cargo-home
+export CARGO_TARGET_DIR=/Users/firegnu/Developer/personal_projs/ranch-worktrees/.target/r17a-srt-trial/omp
+export GIT_CONFIG_GLOBAL=/dev/null
+exec /private/tmp/r17a-srt.lj33U7/runtime/node_modules/.bin/srt --debug --settings /private/tmp/r17a-srt.lj33U7/settings/omp-v5.json -- /opt/homebrew/bin/omp "$@" 2>> /private/tmp/r17a-srt.lj33U7/logs/omp-stderr.txt
+```
+
+启动命令：
+
+```sh
+corral start ranch/test-sandbox-omp \
+  --cwd /private/tmp/r17a-srt.lj33U7/wt-omp \
+  --env CAIRN_DISABLE=1 --label role=test --prompt '<本轮任务>' \
+  -- /tmp/r17a-srt.lj33U7/bin/omp --approval-mode yolo
+```
+
+本轮任务：增加 `double(0)==0` 测试，build/test/commit，再执行三项预期拒绝。不试浏览器；Linux Chromium 的 user namespace 沙箱限制仍按 srt README 判断，未实跑或关闭 Chromium 自身沙箱。
+
+### omp 单独复测结果
+
+以下表格来自停止前 `corral reply` 的输出摘录：
+
+| 命令 | 退出码 | 输出摘录 |
+| --- | --- | --- |
+| `cargo build` | 0 | `Compiling sandbox-trial v0.1.0`；`Finished dev profile ... in 0.05s` |
+| `cargo test` | 0 | `running 2 tests`；`tests::doubles_three ... ok`；`tests::doubles_zero ... ok`；`2 passed; 0 failed` |
+| `git add src/lib.rs` | 0 | 全局 gitignore 读权限警告 |
+| `git commit -m "Test double zero in omp sandbox"` | 0 | `[trial-omp 8a571b2] Test double zero in omp sandbox`；`1 file changed, 5 insertions(+)`；同时输出 `packed-refs.lock: Operation not permitted` |
+| `cat /Users/firegnu/.r17a-fake-secret-lj33U7/id_fake` | 1 | `cat: ...: Operation not permitted` |
+| `printf "SHOULD_BE_DENIED\n" >> /private/tmp/r17a-srt.lj33U7/main/protected.txt` | 1 | `failed to redirect to .../protected.txt: Operation not permitted (os error 1)` |
+| `curl -I --max-time 10 https://example.com` | 56 | `CONNECT tunnel failed, response 403`；`HTTP/1.1 403 host is not on the allow list`；`X-Proxy-Error: blocked-by-allowlist` |
+
+omp 确认 CARGO_TARGET_DIR 使用继承值，没有换目录。实际模型请求通过 srt 代理访问 DeepSeek；未给 omp 另设 Node 代理开关。本结论只覆盖该版本编译版和当前 provider。
+
+status 取得 `UserPromptSubmit`/working、`PostToolUse` 和 `Stop`/idle。空闲 pause/resume 返回 true/false，status/ls 确认暂停标记；stop 返回 `exit_code:-1, stopped_by:SIGHUP`，之后列表没有测试 agent。只验证空闲暂停/恢复，未证明请求中途恢复或所有后台任务的恢复行为。
+
+停止前保存 `corral reply/read`，网络拒绝另可在 `logs/omp-stderr.txt` 按 `example.com` 找到。本轮同样没有系统日志结构化拒绝审计证据。
+
+### 当前总状态
+
+| 家 | 小活 + 三项拒绝 | 额外条件/未决 |
+| --- | --- | --- |
+| Codex | 完成，`915d7bc` | 依赖 macOS trustd 弱化网络隔离；是否接受待决定 |
+| pi | 单独复测完成，`cd4a1fe` | 不需 NODE_USE_ENV_PROXY；仅当前 DeepSeek 路径实测 |
+| omp | 单独复测完成，`8a571b2` | 编译版 + DeepSeek 实测；native/run/app 状态目录权限需继续收窄 |
+| Claude Code | 未完成 | 先前墙内未登录；尚待用户安排单独继续 |
+
+三家均出现 Git packed-refs.lock 被拒但提交成功，原因未定位，不扩大 `.git` 放行。三家测试 agent 均已停止。Linux 均未实测；pi/omp 的 Node/Bun 路径、数据库写入、corral 状态与信号行为需要 R17c 验证，不能由 macOS 结果替代。报告的 HOME denyRead 范围、srt 默认写路径、应用历史数据可读等边界仍适用，尚不是正式的最小权限档案。
