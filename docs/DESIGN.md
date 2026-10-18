@@ -21,6 +21,7 @@
 ## 3. 安装
 
 - 打包工具（Rust）生成不可变版本目录 `~/.local/share/ranch/versions/<ranch 提交>/`：`bin/corral`、`bin/ranch`、`share/corral/`（随程序的资源和设计文档）、`BUILD.txt`（提交、目标平台、工作区是否干净、校验和）。目录已存在就拒绝；只生成目录，不切链接、不装技能。
+- R17b 起版本目录还有 `bin/fence`、`share/fence/`（`runner.mjs`、记着打包时 node 路径和版本的 `runtime.toml`）、`lib/srt/`（固定版本的 srt）；打包机器要有 node ≥ 22.12 和 npm，没有就打包失败。corral 用同一版本目录里的 fence，前端调 PATH 上的 `fence`，所以部署时 `~/.local/bin/fence` 和另外两个链接一起切。
 - 切换 `~/.local/bin/corral`、`~/.local/bin/ranch` 和安装技能（`corral install-skills`、`ranch dispatch install-skills`）是单独的部署操作，用户在场时做。已在运行的 agent 由启动它的那份 corral 管理；要换过来用 `corral upgrade`（用户 10-05 定：第 1 步切换时不做）。
 
 ### 在另一台机器（Linux）上装和升级（R10，10-16）
@@ -130,4 +131,10 @@
 - 支持 macOS 和 Linux。
 - 是 `corral start` 的一个选项，不加就是现在的样子；派出去的 agent 默认不加。
 - 插件式：sandbox 叫 fence（用户 10-18：“同意B，名字就叫fence”），放在 ranch 仓库里单独一块（`crates/fence`），出自己的命令 `fence`；corral 不在 Cargo 里依赖它，只按一条窄约定调它，以后能整块剥离成独立服务。
-- 细节和待定项在 `docs/任务/R17-agent放进sandbox.md`。
+- 定下的边界（R17b 方案，用户 10-18：“五条都同意”；全文 `docs/调研/R17b-fence方案.md`）：
+  - corral 只调两条命令：起 pen 前 `fence check`，pen 里用 `fence run … -- <原命令>` 代替直接起 agent。fence 用同一版本目录里的那份（可用 `CORRAL_FENCE` 改），剥离时只改这一处。出错一律启动失败，不悄悄不套墙。
+  - fence 用 Node 小脚本 `runner.mjs` 调 srt 的库接口起 agent（和 `hook_pi.ts` 同类，是跑在 srt 运行时里的代码，不算工具），被拦记录单独写进 `~/.fence/runs/<实例>/`，由 `fence denials` 读。
+  - 规则是 TOML：内置档案（只有 `dev`）、各家数据、模型服务编进 fence；用户在 `~/.fence/` 下放同名文件整份替换，`~/.fence/local.toml` 补本机的；仓库补充是工作区顶层的 `.fence.toml`，只许额外放行，墙里写不了。路径用 `${…}` 占位符、不许通配符，macOS 专有项写在 `[macos]` 段。Codex 默认开 trustd（削弱网络隔离，用户同意）。
+  - 套了墙的 agent 在墙里调 corral 报 `sandbox`，不能再开 agent。
+  - `packed-refs.lock` 报错不消除：提交不受影响，删除已打包的分支、`gc`、建新分支或 worktree 在墙里会失败。
+- 来历：`docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`、`docs/调研/R17b-fence方案.md`。
