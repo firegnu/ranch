@@ -4,7 +4,7 @@
 
 ## 现在在哪
 
-- 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过），任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
+- 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过）；R17（sandbox，fence 接 srt，DESIGN §8）进行中，R17a 本机小试验已收尾，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
   - `~/.local/bin/corral`、`~/.local/bin/ranch` → `~/.local/share/ranch/versions/9683ab4/bin/`（10-17 用户部署，R9：pen 和提醒进程启动时关掉继承来的描述符；只改内部实现，技能没变，没重装；部署后起测试 agent 核对过，新 pen 只开着锁、日志、pty、socket，没有多余管道；没跑 `corral upgrade --all`，部署前起的 pen 还是旧版）。打包时主仓库有两个未跟踪的任务草稿（R14、R15），BUILD.txt 记成 `working-tree: modified`，程序和 9683ab4 的代码一致。退回：两个链接切回 `versions/59705a4/bin/`。
   - 上一版 59705a4（R13：agy 状态兜底、corral 技能里 agy 免确认、pen 临时信任工作目录，部署后真实 agy 验收通过；技能三处都是 `same`）。退回到它之前：两个链接切回 `versions/9b69e4d/bin/`，重跑 `corral install-skills`。再上一版 9b69e4d（R12：corral-dispatch 技能换成分工表和新分档表，`ranch dispatch route` 用 jev-1.14.0；corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：两个链接切回 `versions/8299e39/bin/`，再跑 `ranch dispatch install-skills`。旧版本目录都保留，不删。
@@ -24,7 +24,7 @@
 
 ## 下一步
 
-1. 没有排定的活。10-17 起 ranch 的活由主控派出去（R15，AGENTS.md「开发方式（主控分派）」）。
+1. R17b：fence 本体加 `corral start --sandbox`，本机四家（Claude Code、Codex、pi、omp）跑通；需求单先给用户看再派。依据 `docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`。之后 R17c 到 5090 验 Linux（只用 pi、omp）。10-17 起 ranch 的活由主控派出去（R15，AGENTS.md「开发方式（主控分派）」）。
 
 ## 悬着
 
@@ -36,3 +36,4 @@
   - Antigravity IDE 会不会加载插件，没核对；
   - R13：agy 运行中自己保存设置（如点信任）会不会拿旧内容冲掉 corral 加删的条目，没实测；登录慢时首句抢跑没复现（10 次 0 次），送法没改。
 - paddock 的 `docs/DESIGN.md` §3“Saddle 保底”和决策表还写着“只保证 Saddle 和运行时对得上、不兼容时写需求给 Saddle 适配”；ranch 这边已按用户 10-07“保底规矩放松吧，Saddle 不用再写影响了”改了 AGENTS.md 和 DESIGN §2，paddock 那边要不要跟着改，在 paddock 自己的任务里做。
+- R17a 记下的 srt 边界（用户 10-18：“不需要严格限制。我只是在要通过做这个来彻底完全的了解一下sandbox。”，不当成 R17b 的门槛）：Codex 要开 `enableWeakerNetworkIsolation`（trustd，削弱网络隔离）；Claude Code 要读 `~/Library/Keychains`、用 `CLAUDE_CODE_TMPDIR`；各家状态目录放得较宽；worktree 提交成功但报 `packed-refs.lock` 被拒，原因没查清；macOS 系统日志的拦截记录没整理成统一取法。
