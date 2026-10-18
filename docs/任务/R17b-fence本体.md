@@ -132,3 +132,18 @@
 - `cargo clippy -p fence --tests -- -D warnings`、`cargo fmt -p fence --check`、`git diff --check` 通过。
 
 测试都使用隔离目录和合成程序，临时夹具自动清理。未重跑全套、四家真实验收或打包，未部署、合并、推送。Linux 整机实测仍留 R17c；无新增需要主控决定的事项。
+
+## 返工 2
+
+按主控指定方式修复多跳链接的中间节点可替换问题，保留 dotfiles 符号链接支持。`write_target` 逐组件解析相对/绝对链接，记录途中每个链接节点（包括目录组件和链接目标路径中的链接）；`protect_write` 将起点、这些节点和最终目标一并加入禁止写。同一入口继续覆盖 `.fence.toml`、FENCE_HOME 和全部数据层 `deny_write`。不存在的普通后缀仍保留保护；链接自身目标必须存在，断链、循环及其他解析错误仍报 `invalid_data`，遍历有界。CONTRACT/README 同步说明；paddock 无需适配。
+
+验证只覆盖本处及直接相关回归，均以前台方式完成，统一使用本任务 `CARGO_TARGET_DIR`：
+
+- 先加审查者的真 srt 复现，确认 RED：`.fence.toml -> policy-hop -> policy-old` 在墙内 `ln -sf policy-new policy-hop` 返回 0，读取规则变为新内容。修复后同一操作返回 1，外部 `read_link` 断言起点和中间链接指向未变；删除及改名中间节点也返回 1。
+- 同一个真 srt 回归覆盖 FENCE_HOME 的多跳链，以及 agent 配置路径中多跳目录链接的替换；都被拒绝且链接指向未变，普通文件仍可写。没有只检查旧目标的内容。
+- CLI 回归检查原路径、每一跳、最终目标及不存在后缀均在 denyWrite 中；相对/绝对链接仍可用，断链、自环、两节点循环拒绝 check/run，未创建运行记录或启动合成程序。
+- `cargo test -p fence --test cli`：10 项通过。
+- `FENCE_TEST_SRT=<本任务编译目录>/srt cargo test -p fence --test srt -- --ignored --nocapture`：6 项通过，包括新增多跳回归及原单跳写保护、合法写入、网络、退出/HUP、Git 提交和域名 schema 对照。
+- `cargo clippy -p fence --tests -- -D warnings`、`cargo fmt -p fence --check`、`git diff --check` 通过。
+
+隔离夹具自动清理；没有启动真实 agent、重跑全套、打包、部署、合并或推送。Linux 整机实测仍留 R17c，无新增需要主控决定的事项。

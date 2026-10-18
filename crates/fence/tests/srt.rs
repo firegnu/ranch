@@ -197,6 +197,90 @@ if rm .fence.toml; then echo 'removed policy link'; fi
 
 #[test]
 #[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
+fn intermediate_policy_links_cannot_be_replaced() {
+    let l = Lab::new();
+    fs::write(l.cwd.join("policy-old"), "domains = []\n").unwrap();
+    fs::write(l.cwd.join("policy-new"), "domains = ['example.com']\n").unwrap();
+    for (target, link) in [("policy-old", "policy-hop"), ("policy-hop", ".fence.toml")] {
+        std::os::unix::fs::symlink(target, l.cwd.join(link)).unwrap();
+    }
+    for dir in ["home-old", "home-new", "settings-old", "settings-new"] {
+        fs::create_dir(l.cwd.join(dir)).unwrap();
+    }
+    fs::write(l.cwd.join("home-old/local.toml"), "domains = []\n").unwrap();
+    fs::write(l.cwd.join("settings-old/config.json"), "{}").unwrap();
+    fs::write(l.cwd.join("settings-new/config.json"), "{\"changed\":true}").unwrap();
+    fs::create_dir(l.home.join(".claude")).unwrap();
+    for (target, link) in [
+        (l.cwd.join("home-hop"), l.home.join(".fence")),
+        (PathBuf::from("home-old"), l.cwd.join("home-hop")),
+        (
+            l.cwd.join("settings-parent/config.json"),
+            l.home.join(".claude/settings.json"),
+        ),
+        (PathBuf::from("settings-hop"), l.cwd.join("settings-parent")),
+        (PathBuf::from("settings-old"), l.cwd.join("settings-hop")),
+    ] {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+    let out = l
+        .run(
+            "policy-chain",
+            r#"
+printf allowed > ordinary
+ln -sf policy-new policy-hop
+echo retarget:$?
+cat .fence.toml
+rm policy-hop
+echo remove:$?
+mv policy-hop moved-policy
+echo rename:$?
+ln -sfn home-new home-hop
+echo home:$?
+ln -sfn settings-new settings-hop
+echo settings:$?
+"#,
+        )
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "retarget:1\ndomains = []\nremove:1\nrename:1\nhome:1\nsettings:1\n"
+    );
+    assert_eq!(
+        fs::read_link(l.cwd.join("policy-hop")).unwrap(),
+        PathBuf::from("policy-old")
+    );
+    assert_eq!(
+        fs::read_link(l.cwd.join(".fence.toml")).unwrap(),
+        PathBuf::from("policy-hop")
+    );
+    assert_eq!(
+        fs::read_link(l.cwd.join("home-hop")).unwrap(),
+        PathBuf::from("home-old")
+    );
+    assert_eq!(
+        fs::read_link(l.cwd.join("settings-parent")).unwrap(),
+        PathBuf::from("settings-hop")
+    );
+    assert_eq!(
+        fs::read_link(l.cwd.join("settings-hop")).unwrap(),
+        PathBuf::from("settings-old")
+    );
+    assert!(!l.cwd.join("moved-policy").exists());
+    assert_eq!(
+        fs::read_to_string(l.cwd.join("ordinary")).unwrap(),
+        "allowed"
+    );
+}
+
+#[test]
+#[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
 fn domain_preflight_agrees_with_the_locked_srt_schema() {
     let l = Lab::new();
     let patterns = [

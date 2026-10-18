@@ -33,7 +33,8 @@ fn deny_write_resolves_linked_parents_and_rejects_unresolvable_targets() {
     let root = f.0.path();
     fs::create_dir(root.join("actual")).unwrap();
     let actual = root.join("actual").canonicalize().unwrap();
-    std::os::unix::fs::symlink(root.join("actual"), root.join("alias")).unwrap();
+    std::os::unix::fs::symlink(root.join("hop"), root.join("alias")).unwrap();
+    std::os::unix::fs::symlink("actual", root.join("hop")).unwrap();
     fs::write(
         root.join("fence/local.toml"),
         "deny_write = ['${home}/alias/missing/config']\n",
@@ -44,6 +45,9 @@ fn deny_write_resolves_linked_parents_and_rejects_unresolvable_targets() {
     let denies = v["settings"]["filesystem"]["denyWrite"].as_array().unwrap();
     assert!(denies.contains(&json!(root.join("alias/missing/config"))));
     assert!(denies.contains(&json!(actual.join("missing/config"))));
+    for node in ["alias", "hop"] {
+        assert!(denies.contains(&json!(root.canonicalize().unwrap().join(node))));
+    }
     // FENCE_HOME can itself contain a linked parent and not exist yet.
     let out = f
         .command()
@@ -59,7 +63,16 @@ fn deny_write_resolves_linked_parents_and_rejects_unresolvable_targets() {
             .unwrap()
             .contains(&json!(actual.join("new/fence")))
     );
-    for target in ["absent", "alias"] {
+    for node in ["alias", "hop"] {
+        assert!(
+            v["settings"]["filesystem"]["denyWrite"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(root.canonicalize().unwrap().join(node)))
+        );
+    }
+    std::os::unix::fs::symlink("alias", root.join("cycle-hop")).unwrap();
+    for target in ["absent", "alias", "cycle-hop"] {
         fs::remove_file(root.join("alias")).unwrap();
         std::os::unix::fs::symlink(target, root.join("alias")).unwrap();
         let v = f.call(&["check", "--profile", "dev"]);

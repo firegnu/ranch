@@ -24,7 +24,7 @@
 
 路径只用具体绝对路径，不许 `* ? [`；`..` 按字面规整。写放行同时放行读。读取放行中的不存在路径会跳过，写放行保留。没有 Unix socket 配置键。Linux 的分支 ref 与 pi 锁放行整个父目录，待 R17c 实测。
 
-所有 `deny_write`（包括强制保护的 FENCE_HOME、`.fence.toml`）保留原路径并补上真实目标，避免通过链接目标修改规则或 agent 配置。不存在的末级路径按已解析的父目录补全；断链、循环或其他解析错误拒绝启动。域名与端口在 `check/run` 共用的规则解析阶段校验，`invalid_data` 带来源与 `domains[索引]`，支持通配域名、带方括号的 IPv6 及 1–65535 的无前导零端口。
+所有 `deny_write`（包括强制保护的 FENCE_HOME、`.fence.toml`）保留原路径、逐组件解析途中每一个链接节点及最终真实目标，避免通过改写目标或替换中间链接修改规则和 agent 配置；支持多跳链接及中间目录链接。不存在的末级路径按已解析的父目录补全；链接自身的目标须存在，断链、循环或其他解析错误拒绝启动。域名与端口在 `check/run` 共用的规则解析阶段校验，`invalid_data` 带来源与 `domains[索引]`，支持通配域名、带方括号的 IPv6 及 1–65535 的无前导零端口。
 
 占位符用 `${home}`、`${cwd}`、`${worktree}`、`${repo}`、`${git_dir}`、`${git_common}`、`${branch}`、`${tmp}`、`${target}`；`${名字:json}` 生成 JSON/TOML 字符串字面量。Git 路径由 `git rev-parse` 取得，`${target}` 来自绝对路径的 `CARGO_TARGET_DIR`。路径引用缺值时跳过并列入 `skipped`；参数或环境变量引用缺值时失败。不在仓库里时 worktree/repo 都是 cwd。
 

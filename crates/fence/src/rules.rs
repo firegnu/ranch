@@ -277,25 +277,52 @@ fn append(list: &mut Vec<String>, value: String) {
     }
 }
 
-// Resolve existing ancestors as well as the leaf. A missing leaf is valid, but a
-// dangling link, loop or inaccessible ancestor must not silently weaken a deny.
-fn write_target(path: &Path) -> std::io::Result<PathBuf> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => path.canonicalize(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            match (path.parent(), path.file_name()) {
-                (Some(parent), Some(name)) => Ok(write_target(parent)?.join(name)),
-                _ => Err(e),
+// Walk each component rather than canonicalizing away the links: every link
+// node must be protected against replacement, including links in parent paths.
+// Missing suffixes are valid only on the original path, never a link's target.
+fn write_target(
+    path: &Path,
+    links: &mut Vec<PathBuf>,
+    allow_missing: bool,
+) -> std::io::Result<PathBuf> {
+    let mut resolved = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                resolved.pop();
             }
+            Component::Normal(name) => {
+                resolved.push(name);
+                match fs::symlink_metadata(&resolved) {
+                    Ok(meta) if meta.is_symlink() => {
+                        // Bound traversal even if another process is changing the chain.
+                        if links.len() >= 40 {
+                            return Err(std::io::Error::from_raw_os_error(libc::ELOOP));
+                        }
+                        links.push(resolved.clone());
+                        let target = fs::read_link(&resolved)?;
+                        let target = resolved.parent().unwrap().join(target);
+                        resolved = write_target(&target, links, false)?;
+                    }
+                    Ok(_) => {}
+                    Err(e) if allow_missing && e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            other => resolved.push(other.as_os_str()),
         }
-        Err(e) => Err(e),
     }
+    Ok(resolved)
 }
 
 fn protect_write(list: &mut Vec<String>, path: &Path, source: &str) -> Result<()> {
-    let target = write_target(path)
+    let mut links = Vec::new();
+    let target = write_target(path, &mut links, true)
         .map_err(|e| data::problem(source, "deny_write", format!("{}: {e}", path.display())))?;
     append(list, normalize(path).to_string_lossy().into_owned());
+    for link in links {
+        append(list, link.to_string_lossy().into_owned());
+    }
     append(list, target.to_string_lossy().into_owned());
     Ok(())
 }
