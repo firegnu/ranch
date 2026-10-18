@@ -71,3 +71,11 @@
 - 拿主意的地方：根据已查证的编译目录读权限遗漏，补各自独立目录 allowRead，沿用已有 allowWrite。保持 srt 默认网络隔离，不开 Codex 的 trustd 开关，也不为更新检查和其他 provider 探测扩大域名白名单。
 - 没做的事：Claude 尚未完成，四家总验收未完成；不做 fence，不改全局配置，不改其他仓库，不跑 Linux，不合并或推送。应用状态目录权限尚未最小化。
 - 踩过的坑：pi 早前 setRawMode EPERM 和配置/认证 lock 目录创建失败，omp 早前 native addon utime 和 run/daemons mkdir 被拒，报告已保留；本轮两家都仍有 packed-refs.lock 报错但提交成功。pi 的 NODE_USE_ENV_PROXY 未设置仍能连接当前 DeepSeek；不要泛化为所有 Node/provider 都如此。
+
+## 完成记录（Claude 补齐与本轮调研收尾）
+
+- 做了什么：最后只开 Claude Code，补齐登录、Bash 工具临时路径规则，完成剩余一家的小活和拒绝试验。报告已有四家规则全文、公共/特有/模型服务/仓库路径区分、启动与结果摘录、撞墙记录、Linux 文档对照和未知项。
+- 验证了什么：Claude 最终 build/test/commit 退出 0，提交 `a7daeae`；三项拒绝退出 1/1/56，Bash 自身没有 cwd 收尾错误。status 有 working/idle，空闲 pause/resume 正常，stop 成功；四个测试 agent 全部关闭。`git diff --check` 通过。
+- 拿主意的地方：复用用户此前对同一临时 worktree 的信任授权，始终禁止全局配置写入。Keychains 只给正常客户端认证使用，不导出或读取其条目内容；用官方 CLAUDE_CODE_TMPDIR 将内部临时文件移到本次已授权目录，撤回先试的旧 tmp 路径放行，不扩大整个 /tmp。
+- 没做的事：不做 fence、不改程序、不改全局配置、不合并推送部署；不测 amp/agy、不实跑 Linux。四家操作证据已齐，但严格隔离总验收不能直接宣告通过：Codex trustd 弱化开关、Claude Keychains 和各家较宽应用状态目录的边界仍交主控决定。未证明 packed refs 等任意 Git 布局可用。
+- 踩过的坑：Claude 未登录源于 Keychains 被读限制挡住；只设置 TMPDIR 不能覆盖其全部 Bash 临时文件，先在 mkdir 阶段失败，再在 cwd 收尾阶段失败，改用 CLAUDE_CODE_TMPDIR 后正常。前两轮明确区分了工具内部失败与目标命令退出码，没有拿内部错误当作拦截验收。全局 cairn hook 被拒但 corral 状态事件照常更新，未为消除提示扩权。
