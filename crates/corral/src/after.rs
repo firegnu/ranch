@@ -169,8 +169,8 @@ fn wait_step(r: &mut Value) -> Result<()> {
             let key = json!([st["state"], st["last_event"], st["last_event_at"]]);
             if st["instance"] != r["after_instance"] {
                 Some(json!({"result":"restarted"}))
-            } else if st["paused"] == true {
-                // Paused is not finished, whatever its kind: wait for it to continue.
+            } else if st["paused"] == true || state == "idle" && st["interrupted"] == true {
+                // Skip interrupted idle, but keep notifying about blocked prompts.
                 r["wait_stable"] = Value::Null;
                 None
             } else if state == "unknown" {

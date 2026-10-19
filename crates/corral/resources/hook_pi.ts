@@ -17,6 +17,7 @@ export default function (api: any) {
             reason: event?.reason, text: event?.text, prompt: event?.prompt,
             streamingBehavior: event?.streamingBehavior, toolName: event?.toolName,
             message: event?.message, messages: event?.messages, willContinue: event?.willContinue,
+            aborted: event?.aborted,
           },
         };
         appendFileSync(path, JSON.stringify(record) + "\n", { mode: 0o600 });

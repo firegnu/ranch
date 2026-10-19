@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/events.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/events.rs` at commit `a31dea2`; ranch has changed it since.
 use crate::{Error, Result, state};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -18,7 +18,7 @@ pub fn digest(s: &str) -> String {
     format!("{:x}", Sha256::digest(normalize(s).as_bytes()))
 }
 fn fresh(instance: &str) -> Value {
-    json!({"cursor":4,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
+    json!({"cursor":5,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","interrupted":false,"state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
 }
 fn string(v: &Value) -> String {
     match v {
@@ -42,6 +42,7 @@ fn update(s: &mut Value, e: &Value) {
         }
         "UserPromptSubmit" => {
             s["state"] = json!("working");
+            s["interrupted"] = json!(false);
             s["turn_started"] = e["t"].clone();
             s["last_tool"] = Value::Null;
             let prompt = e.get("prompt").map(string).unwrap_or_default();
@@ -77,6 +78,10 @@ fn update(s: &mut Value, e: &Value) {
         }
         "Stop" | "StopFailure" | "Interrupt" => {
             s["state"] = json!("idle");
+            // Closing an idle UI prompt is not the end of a new model turn.
+            if ev != "Stop" || e["idle_only"] != true {
+                s["interrupted"] = json!(ev == "Interrupt");
+            }
             if ev == "Stop" {
                 s["background_running"] = e["background_running"].clone();
                 if e["last_assistant_message"].is_string() {
@@ -200,7 +205,9 @@ pub fn read(dir: &Path, instance: &str, cwd: &Path, adopt_session: bool) -> Resu
     };
     let size = f.metadata()?.len();
     let mut s = state::read(dir.join("cursor"));
-    if s["cursor"] != 4
+    // Old readers rebuild version 4; replay it here so their cached end-of-turn judgement
+    // cannot hide an interruption. The event format stays unchanged in both directions.
+    if s["cursor"] != 5
         || s["inst"] != instance
         || s["offset"].as_u64().is_none_or(|n| n > size)
         || ["pending", "other_sessions", "inputs"]

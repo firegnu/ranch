@@ -4,6 +4,16 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 前端读这里写的字段，遇到没写的字段要忽略，遇到不认识的取值（比如 `hooks`、`status` 的新值）要能显示、不报错。
 
+## 被人打断的一轮（R22）
+
+- `corral status NAME` 新增布尔字段 `interrupted`。最近结束的一轮被识别为中断时为 `true`，状态仍是 `idle`，不增加状态值；下一次 `UserPromptSubmit`（新输入开始一轮）清为 `false`。正常 `Stop`、`StopFailure` 为 `false`。没有可靠中断事件时，`false` 不保证没有被人打断。
+- `corral wait NAME` 在这一轮返回 `ok: true, result: "interrupted"`（退出码 0），不返回 `idle`；原有暂停、blocked、超时等规则不变。
+- `corral reply NAME` 在这一轮返回 `ok: false, error: "no_reply", interrupted: true`（退出码 1），不给出上一轮的回复。下一轮开始后恢复原有回复读取规则。
+- `send --after NAME` 不因这次中断结束等待，原提醒继续等下一轮正常结束；原有 `--timeout` 截止时间不延长，到期仍照旧送。收到提醒仍要查状态和回复，不能当成做完。
+- 识别范围：Codex、amp 的 Interrupt 和 pi 的 `agent_settled.aborted` 已通过真人打断、真人继续后的完整实测。amp 的中断快捷键是连续两次 Esc。agy 保留 USER_CANCELED → Interrupt 映射，收到时适用上述行为，但本次 Esc 实测没有结束钩子，仍报 working、reply 仍可能返回旧回复；用户同意本轮保留此限制。omp 实测 Esc 只取消当前工具，随后模型正常回复并报 Stop，没有可靠标记，用户同意本轮不改。Claude Code 本次 Esc 没有可靠中断事件，不改变其原有规则；working 时 wait 可超时，后续 idle_prompt 也不等于已完成任务，仍须核实回复。
+- 对 paddock：兼容新增字段和 wait 结果值；现有状态显示不用动，reply 报错时不显示旧预览即可。要显示「被打断」或区分 wait 的新结果值，在 paddock 自己的任务里接；本任务不改 paddock。
+- 事件格式仍为 v1/v2，旧版可忽略新增字段。内部 cursor 缓存由 4 升到 5，新旧 reader 交替读取时各自重放事件，不沿用对方的缓存判断；这是可重建缓存，不迁移或删除原事件。旧版命令行和已启动的旧版提醒进程仍不识别中断，不能保证本节行为，使用前需让调用方和提醒进程使用新版。pi 的新采集器补记 `agent_settled.aborted`；已经运行的旧采集器不会因此获得该字段，需重开 pi 才能识别这类打断。
+
 ## `corral integration status`（R4）
 
 只读：不写任何文件，不碰在跑的 agent；只会对找到的程序各跑一次 `--version`。要等各家的 `--version`，一般一两秒、最多三秒多：在打开设置页、用户刷新或装完技能后调，不要放进每秒一次的刷新。和其他命令一样只输出一行 JSON，没有 `--json` 参数。多余的参数、其他子命令报 `usage`，退出码 1。

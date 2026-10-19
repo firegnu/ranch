@@ -22,9 +22,11 @@ corral stop <名字>
 1. **start**：输出里的 `name` 就是之后用的名字（`--unique` 会补后缀；旧的关掉后，同一个名字会被再次使用，汇报时说明是新开的）。第一句话必须用 `--prompt` 带上（amp 例外，见下）。要开 Codex，把最后换成 `-- codex --yolo --disable memories`（关掉这个会话的 Codex 记忆：它是跨项目的，会把别的项目、旧约定带进回答；用户明确要它带记忆时才去掉）；要开 pi，换成 `-- pi`；要开 omp，换成 `-- omp --approval-mode yolo`。要开 agy，换成 `-- agy --dangerously-skip-permissions`，同样必须带 `--prompt`（不带它就一直是 `starting`）；带了还一直是 `starting`，可能是 agy 没装 corral 的插件、插件被停用了，或者卡在「是否信任这个目录」的对话框上：告诉用户运行 `corral integration status` 查（没装就运行 `corral integration install --agent agy`，停用了就运行 `agy plugin enable corral`，之后要重开这个 agy；卡在对话框上就 `corral attach <名字>` 去点），不要自己装。要开 amp，换成 `-- amp`，**不带 `--prompt`**：start 完先 `corral wait <名字> --timeout 60` 等到 `idle`，再用 `corral send <名字> "<要交给对方的话>"` 送第一句，然后照常 wait。一直是 `starting`，可能是 amp 没装 corral 的插件、插件没加载成功，或者卡在对话框上：告诉用户运行 `corral integration status` 查（没装就运行 `corral integration install --agent amp`，装完要重开这个 amp），不要自己装。需要省钱时，调用方可以自己在 agent 命令后面传模型参数。`--env CAIRN_DISABLE=1` 让对方不用 cairn（工作接续记忆）：它开在同一个目录，会把它的停点存到你这条工作线上；没装 cairn 时这个变量不起作用，照写即可，不要删。用户要开一个以后自己长期对话的 agent，不用这个技能，直接 `corral start <名字> --cwd <目录> -- claude`，不带这个变量。
 2. **wait**：你的 shell 工具有超时，所以每次只等 90 秒；退出码 4 就再运行一次，直到返回。看输出里的 `result`：
    - `idle`：这一轮结束，去 reply。
+   - `interrupted`：这一轮被打断，告诉用户，不当成已经答完。`status` 的 `interrupted` 也为 `true`，状态仍是 `idle`；新输入开始下一轮后清为 `false`。
    - `blocked`：对方弹了权限框或提问框。不要替它回答，告诉用户运行 `corral attach <名字>` 去处理，处理完再 wait。
-   - `stopped-quiet`：对方 120 秒没有动静，多半被人打断了。告诉用户，不要当成已经答完。
-3. **reply**：`text` 是对方回复的原文，整理后告诉用户，并说明对方还开着、名字是什么。
+   - `stopped-quiet`：对方 120 秒没有动静，可能被人打断了。告诉用户，不要当成已经答完；没有可靠中断事件的 agent 仍要靠回复核实。
+3. **reply**：`text` 是对方回复的原文，整理后告诉用户，并说明对方还开着、名字是什么。最近一轮被打断时退回 1 `no_reply`，带 `interrupted: true`，不返回上一轮的回复，不能当成完成。
+   已实测可识别 Codex、amp 和加载新采集器的 pi（旧 pi 需重开，amp 连按两次 Esc）。omp、Claude Code、agy 未报中断钩子的路径仍有识别限制，`interrupted: false` 不保证没有被打断，不要把旧回复当成本轮完成。
 4. **stop**：**不要自己关**。用户可能还要接着让对方做。用户说「关掉」「不用了」时才 stop。
    要接着做或追问：`corral send <名字> "<新的话>"`，短活再 wait、reply；长活按下一节挂提醒。
 
@@ -39,15 +41,17 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 
 1. 交给对方的话末尾固定加上：「命令都在前台跑完，全部做完后，回复最后一行写 DONE」。
 2. 提醒的话写成「<名字> 这一轮结束了，去看它的状态和回复」。`send --after` 立即返回，告诉用户已经交出去，然后结束这一轮。
+   已识别为被打断的这一轮不触发提醒，原提醒继续等下一轮正常结束；等满 `--timeout` 仍照旧送，收到提醒不代表完成。
    新提醒保留 `request_id`，可用 `corral after <接收者名字> --request-id <ID>` 查询。pending 不是送达；unknown 时不重发、不换 ID 重试。
 3. **你是 Claude Code 时，再加第二条通道**：你正在忙、或用户刚在你的窗口里打过字时，提醒会晚到。所以另用 Bash 工具的后台运行（run_in_background）跑下面这条，它结束时你会被直接叫醒。两条哪条先到处理哪条；另一条晚到时先查状态，处理过的不再重复。Codex、pi、omp 不加：Codex 和 pi 的后台命令结束时不会叫醒你；omp 会，但这期间你会一直显示为在干活。
    ```sh
    while corral wait <名字> --timeout 90 --quiet 600; [ $? -eq 4 ]; do :; done
    ```
-4. 对方这一轮结束时，这句话会送进你的输入框（挂了后台 wait 的，也可能先被它叫醒）。收到后运行 `corral status <名字>` 和 `corral reply <名字>`：
+4. 提醒送进输入框后（挂了后台 wait 的，也可能先被它叫醒），先运行 `corral status <名字>`，确认没有被打断再看 `corral reply <名字>`：
+   - `status.interrupted: true`、wait 返回 `interrupted`，或 reply 报 `no_reply` 且带 `interrupted: true`：对方被打断，告诉用户，不能当成做完。
    - 回复最后一行是 DONE：整理结果告诉用户，说明对方还开着、名字是什么。不要 stop。
    - 状态是 working：被叫早了，再挂一次上面的提醒（Claude Code 连后台 wait 一起），结束这一轮。
-   - 后台 wait 返回 `stopped-quiet`：对方 600 秒没有动静，多半被人打断了，告诉用户。
+   - 后台 wait 返回 `stopped-quiet`：对方 600 秒没有动静，可能被人打断了，告诉用户，不能当成做完。
    - 空闲、blocked 或已经不在，但没有 DONE：告诉用户去 `corral attach <名字>` 看。
 5. 让已经开着的对方接着做长活：不要重新 start，改用 `corral send <名字> "<新的话>"` 交过去，末尾同样带上 DONE 约定，再挂提醒（Claude Code 同样加后台 wait）。
 

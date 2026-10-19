@@ -117,6 +117,7 @@ pub(crate) fn status(name: &str) -> Result<Status> {
     };
     let mut public = json!({"ok":true,"name":name,"instance":st["instance"],"kind":m["kind"],"proto":st["proto"],"state":"unknown","state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_at":null,"last_input_at":null,"last_input_source":null,"title":st["title"],"last_output":st["last_output"],"idle_for":st["last_output"].as_f64().map(|t|((now()-t)*1000.0).round()/1000.0),"attached":st["attached"],"last_human_input":st["last_human_input"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"]});
     public["sandbox"] = crate::sandbox::public(&m);
+    public["interrupted"] = json!(false);
     public["child_sandbox"] = crate::child_sandbox::public(&d, &st["instance"]);
     for key in [
         "exe",
@@ -142,6 +143,7 @@ pub(crate) fn status(name: &str) -> Result<Status> {
         // session was adopted (`events::adopt`) may have lost the prompt's hook with the session
         // start; a later event than the session start shows its turn went on anyway.
         let kind = m["kind"].as_str().unwrap_or("");
+        public["interrupted"] = json!(snap["interrupted"] == true);
         let waits_for_prompt =
             !agents::adopts_session(kind) || snap["last_event"] == "SessionStart";
         public["state"] = if m["has_prompt"] == true
@@ -351,7 +353,11 @@ fn turn_end(name: &str, timeout: f64, quiet: Option<f64>, instance: Option<&str>
                 .as_ref()
                 .is_some_and(|(k, t)| k == &key && now() - t >= 0.5)
             {
-                Some(state)
+                Some(if state == "idle" && st["interrupted"] == true {
+                    "interrupted"
+                } else {
+                    state
+                })
             } else {
                 if stable.as_ref().is_none_or(|(k, _)| k != &key) {
                     stable = Some((key, now()));
@@ -671,6 +677,13 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         )?,
         "reply" => {
             let s = status(name)?;
+            if s.public["interrupted"] == true {
+                return Err(
+                    Error::new(1, "no_reply", "most recent turn was interrupted")
+                        .with("name", name.as_str())
+                        .with("interrupted", true),
+                );
+            }
             let snap = s
                 .snapshot
                 .filter(|s| !s["reply"].is_null())

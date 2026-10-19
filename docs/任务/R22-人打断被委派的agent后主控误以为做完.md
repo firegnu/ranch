@@ -78,3 +78,22 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：共用状态机保留中断原因，status 新增 interrupted（状态仍 idle，新输入清 false），wait 返回 interrupted，reply 返回退出码 1/no_reply/interrupted=true，after 跳过中断这一轮并继续按原截止时间等待。pi 采集器补记原生 agent_settled.aborted，reader 据此转 Interrupt。更新 guide、corral 技能、dispatch 技能第 4/5 节和 CONTRACT，说明识别范围与 paddock 影响。
+- 自动验证：共用路径先写 6 项集成测试，实际复现 wait 返回 idle、reply 返回 previous reply、提醒提前结束等待、缺少 interrupted，再修至全过；pi 的原生 aborted 转换测试也先红后绿。覆盖正常结束、打断后新输入再正常结束、StopFailure 不算打断、提醒超时照送。最后 cargo test --all-targets、cargo clippy --all-targets -- -D warnings、cargo fmt --check 各跑一次，均通过；全套 165 passed、0 failed、11 ignored（原有 3 项外部基线兼容测试和 8 项环境限定测试）。git diff --check 通过。
+- 真人实测：均用本分支程序、隔离 CORRAL_HOME、role=test、CAIRN_DISABLE=1、各家默认模型，Esc 和继续输入均由用户在真终端操作，没有用 keys 模拟验收。Codex、pi、amp 的完整流程通过：中断后 status=idle/interrupted=true，wait=interrupted，reply=no_reply/interrupted=true，原提醒保持 waiting；真人输入只回复 R22-CONTINUED 后，last_input_source=human、interrupted=false、wait=idle、reply=R22-CONTINUED，同一条提醒随后送达。amp 的实际中断快捷键是连续两次 Esc。
+- 实测限制与已定范围：omp 18.12.2 的 Esc 只取消当前 bash 工具，toolResult 仅有 isError=true、details={} 和文本 [Command aborted]，模型随后回复并以 stopReason=stop 结束；没有可靠结构化标记，用户确认本轮跳过 omp，不改转换。agy 的真人 Esc 在终端显示 Interrupted，但 events 停在 PostToolUse，没有 Stop/Interrupt，仍 working、wait 超时、reply 仍是基线；用户确认保留这个限制，已有 USER_CANCELED → Interrupt 映射和共用修复仍保留。Claude Code 的真人 Esc 后终端显示 Interrupted，约 80 秒后 events 仍停在 PreToolUse，没有结束事件，wait 超时、reply 仍是基线；按任务第 5 条不改其识别规则。不能把这些家写成已通过打断验收。
+- 拿主意的地方：只用明确事件，不按工具输出、模型措辞、静默时间或读屏猜中断。pi 第一次真人打断实际报 stopReason=error，可靠原因在原生 agent_settled.aborted；查本机接口及实现后补采，并在重开的 pi 上实测 true/false。cursor 缓存升为 5，避免沿用旧 reader 丢失中断原因的缓存；事件格式仍为 v1/v2，旧版会重建自己的版本 4。快照只更新缓存版本、新增的 false 字段和 pi 采集器新增字段，没有放宽断言。旧命令/提醒进程仍有旧行为，旧 pi 采集器需重开，这些边界已写 CONTRACT。
+- 对 paddock：新增字段、wait 结果值和 reply 错误附加字段属于兼容新增；原状态显示不用动，reply 报错后按原行为不显示预览即可。若要显示「被打断」，由 paddock 自己的任务接。
+- 没做的事：未改 pen、sandbox、fence、升级、attach 或其他状态规则，未改别的仓库，未部署、未安装技能、未升级用户 agent、未合并 main、未推送。所有测试实例（含合成 /bin/cat 提醒接收者）均已停止，隔离 corral ls 确认空。原始证据和检查日志留在临时目录 /tmp/r22.YUwTZ3，不提交运行数据。
+- 踩过的坑：首次测试命令误用二进制名 corral 作为 Cargo 包名，改成 corral-core 后才取得有效 RED；pi 原有采集器丢掉了真正可靠的 aborted 字段，需重开测试实例；omp 取消工具后会再调用模型；agy 未按预期报结束钩子；amp 首次因用户误键退出不计验收，按用户要求重开，随后发现一次 Esc 只弹快捷键提示，连续两次才发 Interrupt。未将这些未通过或误操作记录当成功。
+- 主控需决定的事：没有新的待决定项。omp 跳过、agy 保留限制已获用户确认；本分支等待主控审查和规定的交叉审查，未自行派审查 agent。
+
+### 返工 1
+
+- 修复交叉审查的两条必须改：pi 的 ui_prompt_end 在 idle 时生成的内部 Stop 增加 idle_only 标记，只恢复空闲，保留 interrupted 和旧回复保护；新输入、真正的 Stop/StopFailure 仍按原约定清标记。after 保留 paused 的优先级，把中断抑制限定为 idle 且 interrupted=true，后续 blocked 仍按原稳定等待规则送提醒，restarted、超时截止时间和接收端保护未改。
+- 各补一条合成回归测试并先运行：关闭对话框的测试因 interrupted=false（期望 true）失败；打开对话框的测试因提醒结果 timeout（期望 blocked）失败。修复后两条通过；关闭测试同时验证 wait=interrupted、reply=no_reply/interrupted=true、提醒不按 idle 提前送出，以及真正新输入和正常结束后恢复回复并送出原提醒。
+- 只跑针对性和直接相关回归：`cargo test -p corral-core --test interrupted` 8 项，`cargo test -p corral-core --lib events::` 4 项，暂停提醒用例 `reminders_wait_for_a_paused_agent_on_either_side` 1 项，状态与缓存用例 `state_started_tracks_transitions_and_survives_events_and_cursor_replay` 1 项，全部通过；`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过。没有重跑全套或真人实测，没有修改快照、删除测试或放宽断言。
+- 拿主意的地方：idle_only 只在 reader 内部的转换事件上使用，不增加持久事件类型、状态值或公开字段；原 ui_prompt_end 的状态、last_event 等无关行为保持原样。paddock 不用动。本次没有新的坑或待主控决定事项；未部署、未合并、未推送。

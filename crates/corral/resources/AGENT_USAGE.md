@@ -20,7 +20,7 @@ corral reply <名字>
 - 换成 amp：`-- amp`，不能带 `--prompt`（会退回 1）：start 完先 `corral wait <名字> --timeout 60` 等到 `idle`，再 `corral send <名字> "<你的问题>"` 送第一句，然后 wait。amp 靠装在它配置目录里的 corral 插件报状态；一直是 `starting`，可能是插件没装、没加载成功，或者卡在对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent amp`，装完要重开这个 amp），不要自己装。
 - 换成 agy：`-- agy --dangerously-skip-permissions`，同样**必须**带 `--prompt`（agy 收到第一句话之前什么都不报，不带就一直是 `starting`）。agy 也靠装在它配置目录里的 corral 插件报状态；带了 `--prompt` 还一直是 `starting`，可能是插件没装、被停用，或者卡在「是否信任这个目录」的对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent agy`，停用了就 `agy plugin enable corral`，之后要重开这个 agy；对话框要人 `corral attach <名字>` 去点），不要自己装。
 - `--env CAIRN_DISABLE=1` 让临时委派的 agent 不用 cairn（工作接续记忆）：它开在同一个目录，会把它的停点存到你这条工作线上。没装 cairn 时这个变量不起作用，照写即可，不要删。人要开一个以后自己长期对话的 agent，直接 `corral start <名字> --cwd <目录> -- claude`，不带这个变量。
-- `reply` 的 `text` 是回复原文，多段文字和代码块原样保留。
+- `reply` 的 `text` 是回复原文，多段文字和代码块原样保留。最近一轮被打断时退回 1 `no_reply`，带 `interrupted: true`，不返回上一轮的回复。
 
 追问、用完：
 
@@ -47,14 +47,17 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 - 交给对方的话末尾加上「命令都在前台跑完，全部做完后，回复最后一行写 DONE」。
 - 提醒的话写成「<名字> 这一轮结束了，去看它的状态和回复」。`send --after` 立即返回；告诉人已经交出去，然后结束这一轮。
 - 对方这一轮结束（或卡在对话框、退出、等满 `--timeout`）时，这句话会像人打字一样送进你的输入框；你正在干活、人刚在你的窗口里操作过时，它会等一会儿再送。
-- 收到后 `corral status <名字>`、`corral reply <名字>`：回复最后一行是 DONE，取结果告诉人，不要 stop；对方又在干活，是被叫早了，再挂一次 `send --after`；没有 DONE 但对方已经停了，告诉人去 attach 看。
+- 已识别为被打断的这一轮不触发提醒，原提醒继续等下一轮正常结束；等满 `--timeout` 仍照旧送，所以收到提醒不代表做完。
+- 收到后先 `corral status <名字>`：`interrupted: true` 表示被打断，告诉人，不当成做完；否则再看 `corral reply <名字>`。reply 报 `no_reply` 且带 `interrupted: true` 时也按打断处理。回复最后一行是 DONE，取结果告诉人，不要 stop；对方又在干活，是被叫早了，再挂一次 `send --after`；没有 DONE 但对方已经停了，告诉人去 attach 看。
 - corral 只知道「这一轮结束」，不知道「做完」，所以一定要靠 DONE 判断。
 - 让已经开着的对方接着做长活：用 `send` 把新任务交过去（末尾同样带 DONE 约定），再挂 `send --after`，不要重新 start。
 - 新提醒返回 `request_id`。用 `corral after <接收者名字> --request-id <ID>` 查 waiting/sending/sent/confirmed/not_delivered/unknown/expired；pending 不是送达。unknown 表示不能证实原请求，不能重发或换 ID 再送。
 
 ## 等待时要知道的
 
-- `wait` 返回的 `result`：`idle` 这一轮结束；`blocked` 弹了权限框或提问框，要人处理（告诉人去 `corral attach <名字>`）；`stopped-quiet` 只有加了 `--quiet 秒` 才会出现，表示 agent 在 working 状态下长时间没动静，多半是人在窗口里打断了它。
+- `wait` 返回的 `result`：`idle` 这一轮结束；`interrupted` 这一轮被打断，不能当成答完；`blocked` 弹了权限框或提问框，要人处理（告诉人去 `corral attach <名字>`）；`stopped-quiet` 只有加了 `--quiet 秒` 才会出现，表示 agent 在 working 状态下长时间没动静，可能被打断，但不能据此确定。
+- `status.interrupted` 是布尔值：已识别最近这一轮被打断为 `true`，状态仍是 `idle`；新输入开始下一轮就回到 `false`。没有可靠中断事件的 agent 不能据此排除打断，仍要核实回复。
+- 已实测可识别：Codex、amp、加载新采集器的 pi（旧 pi 需要重开；amp 要连续两次 Esc）。omp、Claude Code 和 agy 未报中断钩子的路径仍有识别限制，不能仅凭 `interrupted: false` 或旧回复判断完成。
 - `idle` 只表示这一轮结束，agent 之后可能自己再开一轮。拿到 `reply` 后如果 `last_input_source` 是 `agent`，说明这一轮是它自己开的。
 - `wait` 默认最多等 600 秒，可用 `--timeout` 改；超时退出码 4。你的 shell 工具如果有超时（常见是两分钟），就用 `--timeout 90` 反复调用，直到返回结果。状态一直是 `starting`，说明它启动时卡在对话框里，让人接入去看。
 

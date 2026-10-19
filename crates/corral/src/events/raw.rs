@@ -98,6 +98,7 @@ pub(super) fn apply_raw(s: &mut Value, e: &Value, cwd: &Path) -> Result<()> {
         }
         "ui_prompt_end" => {
             if e["idle"] == true {
+                mapped["idle_only"] = json!(true);
                 "Stop"
             } else {
                 "PostToolUse"
@@ -122,7 +123,11 @@ pub(super) fn apply_raw(s: &mut Value, e: &Value, cwd: &Path) -> Result<()> {
         }
         "agent_settled" => {
             mapped["last_assistant_message"] = r["reply"].clone();
-            "Stop"
+            if body["aborted"] == true {
+                "Interrupt"
+            } else {
+                "Stop"
+            }
         }
         "agent_end" => {
             if body["willContinue"] != true {
@@ -205,6 +210,34 @@ mod tests {
             .collect();
         content.push(json!({"type":"thinking","thinking":"hidden"}));
         json!({"message":{"role":"assistant","content":content}})
+    }
+
+    #[test]
+    fn pi_settled_distinguishes_abort_from_error_and_normal_completion() {
+        for aborted in [true, false] {
+            let result = Feed::new("pi")
+                .ev("session_start", json!({"reason":"startup"}))
+                .ev("before_agent_start", json!({"prompt":"first"}))
+                .ev("message_end", assistant(&["previous reply"]))
+                .ev("agent_settled", json!({"aborted":false}))
+                .ev("before_agent_start", json!({"prompt":"second"}))
+                // pi reported an error, not stopReason=aborted, after Esc during bash.
+                .ev("message_end", json!({"message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"This operation was aborted"}}))
+                .ev("agent_settled", json!({"aborted":aborted}))
+                .run();
+            assert_eq!(result["settled"]["state"], "idle");
+            assert_eq!(result["settled"]["interrupted"], aborted);
+        }
+        let result = Feed::new("pi")
+            .ev("session_start", json!({"reason":"startup"}))
+            .ev("before_agent_start", json!({"prompt":"first"}))
+            .ev("agent_settled", json!({"aborted":true}))
+            .ev("before_agent_start", json!({"prompt":"continue"}))
+            .ev("message_end", assistant(&["done"]))
+            .ev("agent_settled", json!({"aborted":false}))
+            .run();
+        assert_eq!(result["settled"]["interrupted"], false);
+        assert_eq!(result["settled"]["reply"], "done");
     }
 
     #[test]
