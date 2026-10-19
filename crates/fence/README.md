@@ -15,20 +15,22 @@
 | `description` | 档案、种类、服务 |
 | `deny_read` | 档案 |
 | `read`、`write`、`domains` | 全部 |
-| `deny_write`、`env` | 档案、种类、本机 |
+| `deny_write`、`env`、`unix_sockets` | 档案、种类、本机 |
 | `mkdir` | 档案、仓库、本机 |
 | `args` | 种类 |
 | `services` | 种类（数组）；档案、本机（按种类的表） |
 | `[macos]`、`[linux]` | 档案、种类、本机，含同来源允许的规则 |
 | `allow_pty`、`weaker_network_isolation` | 只在 `[macos]` 内 |
 
-路径只用具体绝对路径，不许 `* ? [`；`..` 按字面规整。写放行同时放行读。读取放行中的不存在路径会跳过，写放行保留。没有 Unix socket 配置键。Linux 的分支 ref 与 pi 锁放行整个父目录，待 R17c 实测。
+路径只用具体绝对路径，不许 `* ? [`；`..` 按字面规整。写放行同时放行读。读取放行中的不存在路径会跳过，写放行保留。`unix_sockets` 沿用下面的逐组件符号链接解析，只输出最终真实路径；macOS 映射为 srt 的 `allowUnixSockets`，同时放行 bind 和 connect，Linux 忽略并给出 warning，不使用 `allowAllUnixSockets`。内置 `dev` 只放行 `${tmp}`；此键不自动放行读写。Linux 的分支 ref 与 pi 锁放行整个父目录，待 R17c 实测。
 
 所有 `deny_write`（包括强制保护的 FENCE_HOME、`.fence.toml`）保留原路径、逐组件解析途中每一个链接节点及最终真实目标，避免通过改写目标或替换中间链接修改规则和 agent 配置；支持多跳链接及中间目录链接。不存在的末级路径按已解析的父目录补全；链接自身的目标须存在，断链、循环或其他解析错误拒绝启动。域名与端口在 `check/run` 共用的规则解析阶段校验，`invalid_data` 带来源与 `domains[索引]`，支持通配域名、带方括号的 IPv6 及 1–65535 的无前导零端口。
 
 占位符用 `${home}`、`${cwd}`、`${worktree}`、`${repo}`、`${git_dir}`、`${git_common}`、`${branch}`、`${tmp}`、`${target}`；`${名字:json}` 生成 JSON/TOML 字符串字面量。Git 路径由 `git rev-parse` 取得，`${target}` 来自绝对路径的 `CARGO_TARGET_DIR`。路径引用缺值时跳过并列入 `skipped`；参数或环境变量引用缺值时失败。不在仓库里时 worktree/repo 都是 cwd。
 
 主控 10-18 决定：`${tmp}` 为 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，在起 agent 前创建；运行记录放在 `$FENCE_HOME/runs/<实例>`。srt 的禁止写优先于放行写，因此临时文件移到规则目录之外，保留整个 `$FENCE_HOME` 的写保护，在 Linux 上也按整目录保护。每次启动清理已结束超过 7 天的运行记录及其中记下的临时目录；缓存根目录后来改变也能清理原路径。`.fence.toml` 始终禁止写。
+
+`dev` 同时设 `TMPDIR=${tmp}`、`CLAUDE_CODE_TMPDIR=${tmp}`，让 srt 为四家设置的墙内 `TMPDIR` 都是各实例的临时目录；否则 srt 在没有 `CLAUDE_CODE_TMPDIR` 或旧名 `CLAUDE_TMPDIR` 时会改用 `/tmp/claude`。`TMPPREFIX=${tmp}/zsh` 供 zsh heredoc 使用。
 
 Codex 的 macOS 数据默认开放 trustd（`enableWeakerNetworkIsolation`），削弱网络隔离，已获用户同意。允许访问的应用状态目录范围较宽，不提供不同会话之间的隔离。worktree 只放行当前分支的 Git 写路径；档案用 `mkdir` 在启动前准备当前分支 ref/reflog 的父目录，避免 packed refs 清掉斜杠分支父目录后无法提交。`packed-refs.lock` 未放行，提交时可能报拒绝但提交成功，打包 refs、删除已打包的分支等操作会失败。
 

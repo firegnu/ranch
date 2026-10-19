@@ -20,7 +20,8 @@ mkdir = [
   "${git_common}/logs/refs/heads/${branch}/..",
 ]
 domains = ["crates.io", "index.crates.io", "static.crates.io"]
-env = { TMPDIR = "${tmp}", TMPPREFIX = "${tmp}/zsh" }
+unix_sockets = ["${tmp}"]
+env = { TMPDIR = "${tmp}", TMPPREFIX = "${tmp}/zsh", CLAUDE_CODE_TMPDIR = "${tmp}" }
 [services]
 pi = ["deepseek"]
 omp = ["deepseek"]

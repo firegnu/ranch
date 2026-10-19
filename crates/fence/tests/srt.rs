@@ -92,6 +92,62 @@ impl Lab {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+#[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
+fn unix_sockets_are_limited_to_the_pi_temporary_directory() {
+    use std::os::unix::net::UnixListener;
+    let l = Lab::new();
+    let probe = l.cwd.join("socket-probe");
+    let compiled = Command::new("rustc")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/unix_socket.rs"
+        ))
+        .arg("-o")
+        .arg(&probe)
+        .output()
+        .unwrap();
+    assert!(compiled.status.success(), "{compiled:?}");
+    fs::create_dir_all("/tmp/claude").unwrap();
+    let shared = tempfile::tempdir_in("/tmp/claude").unwrap();
+    let blocked = [
+        l.cwd.join("test.sock"),
+        l.home.join("test.sock"),
+        shared.path().join("test.sock"),
+    ];
+    for path in &blocked {
+        // Rule out path length, absent parents and host permissions as the denial cause.
+        drop(UnixListener::bind(path).unwrap());
+        fs::remove_file(path).unwrap();
+    }
+    let tmp = l.home.join(".cache/fence/tmp/socket-test");
+    let out = l
+        .command()
+        .args([
+            "run",
+            "--profile",
+            "dev",
+            "--kind",
+            "pi",
+            "--agent",
+            "test/srt",
+            "--instance",
+            "socket-test",
+            "--",
+        ])
+        .arg(probe)
+        .arg(tmp)
+        .args(blocked)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        out.stdout,
+        b"temporary socket bind/connect and outside denials verified\n"
+    );
+}
+
+#[test]
 #[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
 fn zsh_heredoc_uses_the_sandbox_temporary_directory() {
     let l = Lab::new();
