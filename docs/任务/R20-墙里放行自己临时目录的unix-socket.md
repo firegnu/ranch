@@ -57,3 +57,12 @@
 
 ## 做完
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：新增路径数组 `unix_sockets`，允许档案、种类和 `local.toml` 使用，仓库 `.fence.toml` 使用时报 `invalid_data`。复用写保护的逐组件符号链接解析，保留不存在的后缀，拒绝通配符、相对路径、断链和循环；macOS 输出 `network.allowUnixSockets`，Linux 不输出该设置并给 warning。`dev` 默认只放行 `${tmp}`，同时给四家设 `CLAUDE_CODE_TMPDIR=${tmp}`。更新了 CONTRACT 的 fence 一节及 fence README；paddock 不用改 `.fence.toml`。
+- 验证了什么：先确认四家环境测试因 Codex 缺少 `CLAUDE_CODE_TMPDIR` 失败、默认设置测试因缺少 `allowUnixSockets` 失败、真实 srt 测试因 `${tmp}` 下 bind 报 EPERM 失败，再实现并通过。针对测试覆盖规则合并、符号链接、`/tmp` 与 `/private/tmp` 去重、不存在路径、local 可添加、repo 拒绝和两平台映射。新增的 macOS ignored 测试使用隔离 HOME/FENCE_HOME、pi 数据及 Rust 合成程序，实测 TMPDIR 等于实例临时目录，子目录内 bind、子进程 connect 和传输成功，worktree、HOME、`/tmp/claude` 下 bind 被拒；用只读的已安装 srt 0.0.80 依赖，未启动真实 agent。最终 `cargo test --all-targets` 为 158 passed、11 ignored，`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 及合成程序的 rustfmt 检查通过。所有命令前台执行并等到结束。
+- 拿主意的地方：新键沿用现有路径数组与分层并集机制，不自动放行文件读写。Linux 的 settings 只显示实际生效规则，省略 socket 放行项并用 warnings 解释。保留 Claude 种类原有的 `CLAUDE_CODE_TMPDIR`，避免改变用户整份替换 dev 档案时 Claude 的既有行为。
+- 没做的事：未改 corral、技能、paddock 或用户配置，未部署、合并、推送；未跑 Linux 真实 sandbox（留 R17c）或部署后的 paddock 全量测试（由 paddock/main 用 Claude Code、Codex 复验）。未改 DESIGN；建议主控在 §8 补充 R20 的默认 `${tmp}` unix socket 放行、Linux 忽略，以及四家墙内 TMPDIR 的实际取值。
+- 踩过的坑：最初环境测试没准备种类程序，先报 `program_not_found`；补了隔离 PATH 下的合成程序后才取得有效 RED。真实 srt 中 bind/connect 已成功，但探针额外设置读取超时返回 EINVAL；改为等待客户端写完退出后非阻塞读取，未改 sandbox 规则或放宽断言。首次全量检查发现既有四家设置快照尚未包含新项，精确补上 macOS `allowUnixSockets` 预期后全量重跑通过。
+- 要主控决定的事：没有新增实现决策；交主控审查，并同步上述 DESIGN 内容、安排合并部署后的 paddock 复验。

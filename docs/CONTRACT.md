@@ -201,7 +201,7 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 `fence check --profile <档案> [--kind <种类>] [--cwd <目录>]`：只读，不创建运行记录或 mkdir 目录。cwd 默认当前目录；不带 kind 只检查档案和本机补充；带 kind 再合并种类、模型服务与工作区 `.fence.toml`。检查程序、固定 node/srt 和 Linux 的 bwrap/socat/rg。
 
 ```json
-{"ok":true,"profile":"dev","kind":"codex","platform":"macos","cwd":"/Users/u/w/x","layers":[{"source":"profile","name":"dev","origin":"builtin"},{"source":"agent","name":"codex","origin":"builtin"},{"source":"service","name":"openai","origin":"builtin"},{"source":"repo","path":"/Users/u/w/x/.fence.toml"}],"settings":{"network":{"allowedDomains":["chatgpt.com"],"deniedDomains":[]},"filesystem":{"denyRead":["/Users/u"],"allowRead":["/Users/u/w/x"],"allowWrite":["/Users/u/w/x"],"denyWrite":["/Users/u/w/x/.fence.toml","/Users/u/.fence"]},"allowPty":true,"enableWeakerNetworkIsolation":true},"env":{"TMPDIR":"<运行时才有>","TMPPREFIX":"<运行时才有>/zsh"},"args":["-c","projects={\"/Users/u/w/x\"={trust_level=\"trusted\"}}"],"skipped":[],"warnings":["weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）"],"runtime":{"node":{"path":"/Users/u/.nvm/versions/node/v24.13.1/bin/node","version":"v24.13.1","ok":true},"srt":{"version":"0.0.80","ok":true}}}
+{"ok":true,"profile":"dev","kind":"codex","platform":"macos","cwd":"/Users/u/w/x","layers":[{"source":"profile","name":"dev","origin":"builtin"},{"source":"agent","name":"codex","origin":"builtin"},{"source":"service","name":"openai","origin":"builtin"},{"source":"repo","path":"/Users/u/w/x/.fence.toml"}],"settings":{"network":{"allowedDomains":["chatgpt.com"],"deniedDomains":[],"allowUnixSockets":["<运行时才有>"]},"filesystem":{"denyRead":["/Users/u"],"allowRead":["/Users/u/w/x"],"allowWrite":["/Users/u/w/x"],"denyWrite":["/Users/u/w/x/.fence.toml","/Users/u/.fence"]},"allowPty":true,"enableWeakerNetworkIsolation":true},"env":{"TMPDIR":"<运行时才有>","TMPPREFIX":"<运行时才有>/zsh","CLAUDE_CODE_TMPDIR":"<运行时才有>"},"args":["-c","projects={\"/Users/u/w/x\"={trust_level=\"trusted\"}}"],"skipped":[],"warnings":["weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）"],"runtime":{"node":{"path":"/Users/u/.nvm/versions/node/v24.13.1/bin/node","version":"v24.13.1","ok":true},"srt":{"version":"0.0.80","ok":true}}}
 ```
 
 示例的路径和域名列表已缩短。`settings` 为实际合并规则；运行时专有的 `${tmp}` 显示为 `<运行时才有>`。`skipped:[{entry,reason}]` 列出缺值或不存在的读路径，`warnings` 列出环境覆盖与平台差异。Codex 默认 trustd 规则会削弱 macOS 网络隔离。
@@ -226,7 +226,14 @@ R19：`counts` 按 `type` 统计这次运行全部已记录条目，不受 `--li
 
 临时目录在 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，与记录分开，起 agent 前创建并按档案放行读写。每次启动清理已结束超过 7 天的记录和它对应的临时目录。整个 `$FENCE_HOME` 及工作区 `.fence.toml` 始终禁止写。
 
-内置 `dev` 档案设 `TMPDIR=${tmp}`、`TMPPREFIX=${tmp}/zsh`，让 zsh 的 heredoc 临时文件也写在已放行的临时目录；用户整份替换的同名档案需自行补上 `TMPPREFIX`。
+内置 `dev` 档案设 `TMPDIR=${tmp}`、`CLAUDE_CODE_TMPDIR=${tmp}`、`TMPPREFIX=${tmp}/zsh`。srt 0.0.80 会把墙内 `TMPDIR` 改成 `CLAUDE_CODE_TMPDIR`（其次是旧名 `CLAUDE_TMPDIR`，都没有则为 `/tmp/claude`）；R20 起 Claude Code、Codex、pi、omp 使用 `dev` 时，墙内实际 `TMPDIR` 都是各自实例的 `${tmp}`，zsh 的 heredoc 也写在这里。用户整份替换的同名档案需自行补上这些环境项；后续数据层仍可覆盖环境变量。
+
+R20 兼容新增 `unix_sockets`：具体绝对路径的字符串数组，支持现有 `${…}` 占位符、不许 `* ? [` 通配符。档案、种类数据和本机 `local.toml`（含其 `[macos]`、`[linux]` 段）可用，按路径取并集；仓库 `.fence.toml` 不开放此键，写了返回 `invalid_data`。未配置时不放行；内置 `dev` 默认 `unix_sockets = ["${tmp}"]`。
+
+- macOS：合并后映射到 `settings.network.allowUnixSockets`，允许所列路径及其子路径的 unix socket bind 和 connect。路径沿用写保护的逐组件符号链接解析，输出最终真实路径（如 `/tmp` → `/private/tmp`）；尚不存在的后缀保留，断链、循环或其他解析错误报 `invalid_data`。`check` 中 `${tmp}` 仍显示 `<运行时才有>`，不创建目录。
+- Linux：srt 不能按路径放行 unix socket，此项不生效；有合并路径时 `check` 的 `warnings` 包含 `unix_sockets: Linux 不能按路径放行 unix socket，已忽略`，实际 `settings.network` 不含 `allowUnixSockets`。不使用 `allowAllUnixSockets`，Linux 实测留 R17c。
+
+`unix_sockets` 不额外放行文件读写、不改变对外网络规则；默认仅放行各实例 `${tmp}` 下的 unix socket，worktree、HOME 的其他位置、`/tmp/claude`、其他临时目录和系统 socket 不因此放开。对 paddock：不用改 `.fence.toml`；合并部署后由 paddock/main 用 Claude Code、Codex 测试 agent 跑 paddock 全量测试复验。
 
 这些强制保护路径以及数据层所有 `deny_write` 同时保护原路径、解析途中每一个符号链接节点和最终真实目标，包含中间目录组件及多跳链接，防止通过替换中间链接更换规则。末级路径尚不存在时，解析已有父目录后保留不存在的后缀；链接自身的目标必须存在，断链、循环或其他解析错误返回 `invalid_data`，拒绝启动。
 

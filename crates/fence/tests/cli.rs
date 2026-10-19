@@ -28,6 +28,126 @@ impl Fixture {
 }
 
 #[test]
+fn dev_gives_every_kind_its_own_srt_temporary_directory() {
+    let f = Fixture::new();
+    let bin = f.0.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    for kind in ["claude", "codex", "pi", "omp"] {
+        std::os::unix::fs::symlink("/bin/sh", bin.join(kind)).unwrap();
+        let out = f
+            .command()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .args(["check", "--profile", "dev", "--kind", kind])
+            .output()
+            .unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["ok"], true, "{kind}: {v}");
+        assert_eq!(v["env"]["TMPDIR"], "<运行时才有>");
+        assert_eq!(v["env"]["CLAUDE_CODE_TMPDIR"], "<运行时才有>", "{kind}");
+    }
+}
+
+#[test]
+fn dev_only_allows_unix_sockets_in_its_temporary_directory() {
+    let f = Fixture::new();
+    let v = f.call(&["check", "--profile", "dev"]);
+    assert_eq!(v["ok"], true, "{v}");
+    if cfg!(target_os = "macos") {
+        assert_eq!(
+            v["settings"]["network"]["allowUnixSockets"],
+            json!(["<运行时才有>"])
+        );
+    } else {
+        assert!(v["settings"]["network"].get("allowUnixSockets").is_none());
+        assert!(v["warnings"].as_array().unwrap().iter().any(|w| {
+            w.as_str()
+                .unwrap()
+                .contains("Linux 不能按路径放行 unix socket，已忽略")
+        }));
+    }
+    assert!(
+        v["settings"]["network"]
+            .get("allowAllUnixSockets")
+            .is_none()
+    );
+}
+
+#[test]
+fn local_unix_sockets_resolve_links_and_missing_suffixes_without_creating_paths() {
+    let f = Fixture::new();
+    let root = f.0.path();
+    fs::create_dir(root.join("actual")).unwrap();
+    let actual = root.join("actual").canonicalize().unwrap();
+    std::os::unix::fs::symlink("actual", root.join("hop")).unwrap();
+    std::os::unix::fs::symlink("hop", root.join("alias")).unwrap();
+    let tmp = tempfile::tempdir_in("/tmp").unwrap();
+    let canonical_tmp = tmp.path().canonicalize().unwrap();
+    fs::write(
+        root.join("fence/local.toml"),
+        format!(
+            "unix_sockets = ['${{home}}/alias/missing/sockets', '{}/new', '{}/new']\n",
+            tmp.path().display(),
+            canonical_tmp.display()
+        ),
+    )
+    .unwrap();
+    let v = f.call(&["check", "--profile", "dev"]);
+    assert_eq!(v["ok"], true, "{v}");
+    if cfg!(target_os = "macos") {
+        assert_eq!(
+            v["settings"]["network"]["allowUnixSockets"],
+            json!([
+                "<运行时才有>",
+                actual.join("missing/sockets"),
+                canonical_tmp.join("new")
+            ])
+        );
+    } else {
+        assert!(v["settings"]["network"].get("allowUnixSockets").is_none());
+    }
+    assert!(!actual.join("missing").exists());
+    assert!(!canonical_tmp.join("new").exists());
+
+    for target in ["missing-target", "alias"] {
+        fs::remove_file(root.join("hop")).unwrap();
+        std::os::unix::fs::symlink(target, root.join("hop")).unwrap();
+        let v = f.call(&["check", "--profile", "dev"]);
+        assert_eq!(v["error"], "invalid_data", "{v}");
+        assert_eq!(v["problems"][0]["path"], "unix_sockets");
+    }
+}
+
+#[test]
+fn unix_sockets_reject_wildcards_relative_paths_and_repo_permissions() {
+    let f = Fixture::new();
+    for path in ["/tmp/*", "/tmp/?", "/tmp/[ab]", "relative/socket"] {
+        fs::write(
+            f.0.path().join("fence/local.toml"),
+            format!("unix_sockets = [{path:?}]\n"),
+        )
+        .unwrap();
+        let v = f.call(&["check", "--profile", "dev"]);
+        assert_eq!(v["error"], "invalid_data", "{path}: {v}");
+        assert_eq!(v["problems"][0]["path"], "unix_sockets");
+    }
+    fs::remove_file(f.0.path().join("fence/local.toml")).unwrap();
+    fs::write(
+        f.0.path().join(".fence.toml"),
+        "unix_sockets = ['${tmp}']\n",
+    )
+    .unwrap();
+    let v = f.call(&["check", "--profile", "dev", "--kind", "pi"]);
+    assert_eq!(v["error"], "invalid_data", "{v}");
+    assert_eq!(v["problems"][0]["path"], "unix_sockets");
+    assert!(
+        v["problems"][0]["source"]
+            .as_str()
+            .unwrap()
+            .ends_with("/.fence.toml")
+    );
+}
+
+#[test]
 fn runtime_failures_keep_messages_but_agent_exit_125_does_not() {
     use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
@@ -659,6 +779,7 @@ fn four_agents_match_the_development_profile() {
         deny.extend([json!(home.join(".fence.toml")), json!(home.join("fence"))]);
         let mut expected = json!({"network":{"allowedDomains":allowed,"deniedDomains":[]},"filesystem":{"denyRead":[home],"allowRead":write,"allowWrite":write,"denyWrite":deny}});
         if cfg!(target_os = "macos") {
+            expected["network"]["allowUnixSockets"] = json!(["<运行时才有>"]);
             expected["allowPty"] = json!(true);
             if kind == "codex" {
                 expected["enableWeakerNetworkIsolation"] = json!(true);

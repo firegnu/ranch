@@ -89,7 +89,7 @@ pub fn validate(value: &Value, source: &str, role: &str, section: &str) -> Resul
             "read" | "write" | "domains" => true,
             "description" => section.is_empty() && matches!(role, "profile" | "agent" | "service"),
             "deny_read" => role == "profile",
-            "deny_write" | "env" => matches!(role, "profile" | "agent" | "local"),
+            "deny_write" | "env" | "unix_sockets" => matches!(role, "profile" | "agent" | "local"),
             "mkdir" => matches!(role, "profile" | "local" | "repo"),
             "args" => role == "agent",
             "services" => matches!(role, "profile" | "agent" | "local"),
@@ -121,7 +121,7 @@ pub fn validate(value: &Value, source: &str, role: &str, section: &str) -> Resul
         }
         if matches!(
             key.as_str(),
-            "read" | "write" | "deny_read" | "deny_write" | "mkdir"
+            "read" | "write" | "deny_read" | "deny_write" | "mkdir" | "unix_sockets"
         ) {
             for entry in v.as_array().unwrap() {
                 if entry.as_str().unwrap().contains(['*', '?', '[']) {
@@ -332,6 +332,23 @@ pub struct Rules {
     pub mkdir: Vec<PathBuf>,
 }
 
+fn network_settings(
+    domains: &[String],
+    unix_sockets: &[String],
+    platform: &str,
+    warnings: &mut Vec<String>,
+) -> Value {
+    let mut network = json!({"allowedDomains":domains,"deniedDomains":[]});
+    if !unix_sockets.is_empty() {
+        if platform == "macos" {
+            network["allowUnixSockets"] = json!(unix_sockets);
+        } else {
+            warnings.push("unix_sockets: Linux 不能按路径放行 unix socket，已忽略".into());
+        }
+    }
+    network
+}
+
 pub fn resolve(
     home: &Path,
     profile: &str,
@@ -390,6 +407,7 @@ pub fn resolve(
         "write",
         "deny_write",
         "domains",
+        "unix_sockets",
         "args",
         "mkdir",
     ]
@@ -441,6 +459,14 @@ pub fn resolve(
                             protect_write(list, Path::new(&expanded), &source)?;
                             continue;
                         }
+                        if key == "unix_sockets" {
+                            expanded = write_target(Path::new(&expanded), &mut Vec::new(), true)
+                                .map_err(|e| {
+                                    data::problem(&source, key, format!("{expanded}: {e}"))
+                                })?
+                                .to_string_lossy()
+                                .into_owned();
+                        }
                         expanded = normalize(Path::new(&expanded))
                             .to_string_lossy()
                             .into_owned();
@@ -491,7 +517,12 @@ pub fn resolve(
         append(lists.get_mut("read").unwrap(), entry);
     }
     settings["filesystem"] = json!({"denyRead":lists["deny_read"],"allowRead":lists["read"],"allowWrite":lists["write"],"denyWrite":lists["deny_write"]});
-    settings["network"] = json!({"allowedDomains":lists["domains"],"deniedDomains":[]});
+    settings["network"] = network_settings(
+        &lists["domains"],
+        &lists["unix_sockets"],
+        platform,
+        &mut warnings,
+    );
     let mkdir = lists["mkdir"]
         .iter()
         .filter(|s| !s.starts_with("<运行时才有>"))
@@ -522,6 +553,32 @@ fn optional_file(path: &Path, role: &str) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unix_socket_network_settings_ignore_paths_on_linux_with_a_warning() {
+        let domains = vec!["example.com".into()];
+        let paths = vec!["/private/tmp/fence-test".into()];
+        let mut warnings = Vec::new();
+        assert_eq!(
+            network_settings(&domains, &paths, "linux", &mut warnings),
+            json!({"allowedDomains":["example.com"],"deniedDomains":[]})
+        );
+        assert_eq!(
+            warnings,
+            ["unix_sockets: Linux 不能按路径放行 unix socket，已忽略"]
+        );
+        warnings.clear();
+        assert_eq!(
+            network_settings(&domains, &paths, "macos", &mut warnings),
+            json!({"allowedDomains":["example.com"],"deniedDomains":[],"allowUnixSockets":["/private/tmp/fence-test"]})
+        );
+        assert!(warnings.is_empty());
+        assert_eq!(
+            network_settings(&domains, &[], "linux", &mut warnings),
+            json!({"allowedDomains":["example.com"],"deniedDomains":[]})
+        );
+        assert!(warnings.is_empty());
+    }
+
     #[test]
     fn platform_segments_are_selected_without_leaking_macos_options() {
         let data = json!({"write":["/base"],"macos":{"allow_pty":true,"weaker_network_isolation":true,"read":["/keychain"]},"linux":{"write":["/refs"]}});
