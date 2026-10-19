@@ -60,3 +60,10 @@
 - 没做的事：未改程序、参数或 paddock，未操作用户 agent，未部署、合并或推送；按任务单未扩大全套验证或另做真实 agent 实测。
 - 踩过的坑：第一次 cargo test 的包名写成二进制名 `corral`，Cargo 报找不到包；读 Cargo.toml 后改用 `corral-core`，测试通过。
 - 要主控决定的事：没有。
+
+## 主控审查
+
+- 10-19 ranch/main 看了 diff：只动了 corral 技能、`AGENT_USAGE.md`、corral-dispatch 技能和本文件，程序没改，「不要做」里的一件都没做。三处说法一致：停了没写 DONE（空闲或 blocked）告诉人并重挂提醒和后台 wait，直到看到 DONE；已经退出的不再挂；开完后那次前台 wait 已停的照第 5 节处理；被打断的规则没改。
+- 看得见那档，不重跑测试；对方跑了相关 4 个测试和 `git diff --check`。
+- 真正接不接得到，要部署后下一次派活看。
+- 结果：一次过
