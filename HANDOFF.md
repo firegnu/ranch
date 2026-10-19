@@ -39,6 +39,7 @@
 6. agy 进 sandbox 不做（用户 10-19：“不接了，改成不做吧”）。R23 摸底已合并：agy 1.4.2 启动要在本机开 TCP 监听，墙里被拒起不来；fence 没接 srt 的 `allowLocalBinding`（一开就放行所有本地地址监听和 localhost 任意端口），钩子父进程检查也要改。都要改代码。报告 `docs/调研/R23-agy进sandbox摸底.md`。
 7. R24（Claude Code 被 Esc 打断后马上认出来）已合并、10-19 部署到 `versions/aef2b4a`，部署后实测认得出。以后部署改了钩子的版本，要照这次的办法切共用 helper。
 8. R25（omp 被 Esc 打断后认得出）已合并、10-19 部署到 `versions/06e2c27`：omp 生成回复或调用工具时按 Esc，最后一条回复带 `aborted` / `Interrupted by user` / UserInterrupt 位，reader 认作打断；跑命令时 Esc 只停命令、接着正常结束的照旧。开发时真人实测过。
+9. R26（agy 被 Esc 打断时报什么）摸底已合并：agy 1.4.2 写字时、命令在跑时按 Esc 都不发 `Stop`/`USER_CANCELED`，对话记录也没有标记，只有 agy 自己的诊断日志记了取消请求；没接，agy 被打断仍认不出。没测到命令同步等待的前 10 秒。报告 `docs/调研/R26-agy被打断时报什么.md`。
 
 ## 悬着
 
