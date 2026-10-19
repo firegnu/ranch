@@ -90,3 +90,10 @@
 - 没做的事：未改 pen、sandbox、fence、升级、attach 或其他状态规则，未改别的仓库，未部署、未安装技能、未升级用户 agent、未合并 main、未推送。所有测试实例（含合成 /bin/cat 提醒接收者）均已停止，隔离 corral ls 确认空。原始证据和检查日志留在临时目录 /tmp/r22.YUwTZ3，不提交运行数据。
 - 踩过的坑：首次测试命令误用二进制名 corral 作为 Cargo 包名，改成 corral-core 后才取得有效 RED；pi 原有采集器丢掉了真正可靠的 aborted 字段，需重开测试实例；omp 取消工具后会再调用模型；agy 未按预期报结束钩子；amp 首次因用户误键退出不计验收，按用户要求重开，随后发现一次 Esc 只弹快捷键提示，连续两次才发 Interrupt。未将这些未通过或误操作记录当成功。
 - 主控需决定的事：没有新的待决定项。omp 跳过、agy 保留限制已获用户确认；本分支等待主控审查和规定的交叉审查，未自行派审查 agent。
+
+### 返工 1
+
+- 修复交叉审查的两条必须改：pi 的 ui_prompt_end 在 idle 时生成的内部 Stop 增加 idle_only 标记，只恢复空闲，保留 interrupted 和旧回复保护；新输入、真正的 Stop/StopFailure 仍按原约定清标记。after 保留 paused 的优先级，把中断抑制限定为 idle 且 interrupted=true，后续 blocked 仍按原稳定等待规则送提醒，restarted、超时截止时间和接收端保护未改。
+- 各补一条合成回归测试并先运行：关闭对话框的测试因 interrupted=false（期望 true）失败；打开对话框的测试因提醒结果 timeout（期望 blocked）失败。修复后两条通过；关闭测试同时验证 wait=interrupted、reply=no_reply/interrupted=true、提醒不按 idle 提前送出，以及真正新输入和正常结束后恢复回复并送出原提醒。
+- 只跑针对性和直接相关回归：`cargo test -p corral-core --test interrupted` 8 项，`cargo test -p corral-core --lib events::` 4 项，暂停提醒用例 `reminders_wait_for_a_paused_agent_on_either_side` 1 项，状态与缓存用例 `state_started_tracks_transitions_and_survives_events_and_cursor_replay` 1 项，全部通过；`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过。没有重跑全套或真人实测，没有修改快照、删除测试或放宽断言。
+- 拿主意的地方：idle_only 只在 reader 内部的转换事件上使用，不增加持久事件类型、状态值或公开字段；原 ui_prompt_end 的状态、last_event 等无关行为保持原样。paddock 不用动。本次没有新的坑或待主控决定事项；未部署、未合并、未推送。

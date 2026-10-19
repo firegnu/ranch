@@ -78,7 +78,10 @@ fn update(s: &mut Value, e: &Value) {
         }
         "Stop" | "StopFailure" | "Interrupt" => {
             s["state"] = json!("idle");
-            s["interrupted"] = json!(ev == "Interrupt");
+            // Closing an idle UI prompt is not the end of a new model turn.
+            if ev != "Stop" || e["idle_only"] != true {
+                s["interrupted"] = json!(ev == "Interrupt");
+            }
             if ev == "Stop" {
                 s["background_running"] = e["background_running"].clone();
                 if e["last_assistant_message"].is_string() {

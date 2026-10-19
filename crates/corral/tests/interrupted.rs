@@ -69,6 +69,12 @@ impl Lab {
         self.event("UserPromptSubmit", json!({"prompt":"second"}));
         self.event("Interrupt", json!({}));
     }
+    fn pi_event(&self, ev: &str, body: Value, idle: bool) {
+        self.event(
+            ev,
+            json!({"v":2,"adapter":"pi","cwd":"/tmp","has_ui":true,"idle":idle,"event":body}),
+        );
+    }
     fn reminder(&self, timeout: &str) -> String {
         self.json(&[
             "send",
@@ -185,4 +191,57 @@ fn normal_stop_and_stop_failure_are_not_interruptions() {
         let id = lab.reminder("10");
         assert_eq!(lab.delivered(&id)["wait_result"]["result"], "idle");
     }
+}
+
+#[test]
+fn pi_ui_close_preserves_interruption_and_reply_protection() {
+    let lab = Lab::new();
+    lab.pi_event("before_agent_start", json!({"prompt":"second"}), false);
+    lab.pi_event("agent_settled", json!({"aborted":true}), true);
+    lab.pi_event("ui_prompt_start", json!({}), true);
+    lab.pi_event("ui_prompt_end", json!({}), true);
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "idle");
+    assert_eq!(st["interrupted"], true);
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+        "interrupted"
+    );
+    let out = lab.out(&["reply", "test/work"]);
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(error["error"], "no_reply");
+    assert_eq!(error["interrupted"], true);
+    // Observe the closed dialog, not the legitimate blocked state while it was open.
+    let id = lab.reminder("10");
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(lab.record(&id)["wait_done"], false);
+
+    lab.pi_event("before_agent_start", json!({"prompt":"continue"}), false);
+    assert_eq!(lab.json(&["status", "test/work"])["interrupted"], false);
+    lab.pi_event(
+        "message_end",
+        json!({"message":{"role":"assistant","content":[{"type":"text","text":"finished now"}]}}),
+        false,
+    );
+    lab.pi_event("agent_settled", json!({"aborted":false}), true);
+    assert_eq!(lab.json(&["reply", "test/work"])["text"], "finished now");
+    assert_eq!(lab.delivered(&id)["wait_result"]["result"], "idle");
+}
+
+#[test]
+fn pi_ui_open_after_interruption_still_notifies_blocked() {
+    let lab = Lab::new();
+    lab.pi_event("before_agent_start", json!({"prompt":"second"}), false);
+    lab.pi_event("agent_settled", json!({"aborted":true}), true);
+    lab.pi_event("ui_prompt_start", json!({}), true);
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "blocked");
+    assert_eq!(st["interrupted"], true);
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+        "blocked"
+    );
+    let id = lab.reminder("1.5");
+    assert_eq!(lab.delivered(&id)["wait_result"]["result"], "blocked");
 }

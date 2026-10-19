@@ -98,6 +98,7 @@ pub(super) fn apply_raw(s: &mut Value, e: &Value, cwd: &Path) -> Result<()> {
         }
         "ui_prompt_end" => {
             if e["idle"] == true {
+                mapped["idle_only"] = json!(true);
                 "Stop"
             } else {
                 "PostToolUse"
