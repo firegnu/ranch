@@ -26,7 +26,7 @@ corral stop <名字>
    - `blocked`：对方弹了权限框或提问框。不要替它回答，告诉用户运行 `corral attach <名字>` 去处理，处理完再 wait。
    - `stopped-quiet`：对方 120 秒没有动静，可能被人打断了。告诉用户，不要当成已经答完；没有可靠中断事件的 agent 仍要靠回复核实。
 3. **reply**：`text` 是对方回复的原文，整理后告诉用户，并说明对方还开着、名字是什么。最近一轮被打断时退回 1 `no_reply`，带 `interrupted: true`，不返回上一轮的回复，不能当成完成。
-   已实测可识别 Codex、amp 和加载新采集器的 pi（旧 pi 需重开，amp 连按两次 Esc）。omp、Claude Code、agy 未报中断钩子的路径仍有识别限制，`interrupted: false` 不保证没有被打断，不要把旧回复当成本轮完成。
+   已实测可识别 Codex、amp 和加载新采集器的 pi（旧 pi 需重开，amp 连按两次 Esc）。Claude Code 从对话记录末尾识别晚于最近一次输入的明确打断标记；调用方和提醒进程需用新版，且该 CORRAL_HOME 的 `.runtime/helper` 要经新版 `corral upgrade` 等方式切到能记录路径的版本；单纯切换 CLI 或重开不够，记录读不到或格式不认识时仍认不出。omp、agy 未报中断钩子的路径仍有识别限制，`interrupted: false` 不保证没有被打断，不要把旧回复当成本轮完成。
 4. **stop**：**不要自己关**。用户可能还要接着让对方做。用户说「关掉」「不用了」时才 stop。
    要接着做或追问：`corral send <名字> "<新的话>"`，短活再 wait、reply；长活按下一节挂提醒。
 

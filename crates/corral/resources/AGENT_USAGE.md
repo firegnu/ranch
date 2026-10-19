@@ -57,7 +57,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 
 - `wait` 返回的 `result`：`idle` 这一轮结束；`interrupted` 这一轮被打断，不能当成答完；`blocked` 弹了权限框或提问框，要人处理（告诉人去 `corral attach <名字>`）；`stopped-quiet` 只有加了 `--quiet 秒` 才会出现，表示 agent 在 working 状态下长时间没动静，可能被打断，但不能据此确定。
 - `status.interrupted` 是布尔值：已识别最近这一轮被打断为 `true`，状态仍是 `idle`；新输入开始下一轮就回到 `false`。没有可靠中断事件的 agent 不能据此排除打断，仍要核实回复。
-- 已实测可识别：Codex、amp、加载新采集器的 pi（旧 pi 需要重开；amp 要连续两次 Esc）。omp、Claude Code 和 agy 未报中断钩子的路径仍有识别限制，不能仅凭 `interrupted: false` 或旧回复判断完成。
+- 已实测可识别：Codex、amp、加载新采集器的 pi（旧 pi 需要重开；amp 要连续两次 Esc）。Claude Code 从对话记录末尾识别晚于最近一次输入的明确打断标记；调用方和提醒进程需用新版，且该 CORRAL_HOME 的 `.runtime/helper` 要经新版 `corral upgrade` 等方式切到能记录路径的版本；单纯切换 CLI 或重开不够，记录读不到或格式不认识时仍认不出。omp 和 agy 未报中断钩子的路径仍有识别限制，不能仅凭 `interrupted: false` 或旧回复判断完成。
 - `idle` 只表示这一轮结束，agent 之后可能自己再开一轮。拿到 `reply` 后如果 `last_input_source` 是 `agent`，说明这一轮是它自己开的。
 - `wait` 默认最多等 600 秒，可用 `--timeout` 改；超时退出码 4。你的 shell 工具如果有超时（常见是两分钟），就用 `--timeout 90` 反复调用，直到返回结果。状态一直是 `starting`，说明它启动时卡在对话框里，让人接入去看。
 

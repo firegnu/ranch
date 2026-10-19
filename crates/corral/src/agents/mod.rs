@@ -86,6 +86,10 @@ pub(crate) trait Adapter: Sync {
     fn adopts_session(&self) -> bool {
         false
     }
+    /// An explicit interruption in the current turn's transcript, when hooks cannot report it.
+    fn transcript_interrupt(&self, _snapshot: &Value) -> Option<f64> {
+        None
+    }
     /// The list of directories the agent trusts, for an agent that trusts only the directories
     /// listed there, not what lies under them (R13).
     fn trust(&self) -> Option<Trust> {

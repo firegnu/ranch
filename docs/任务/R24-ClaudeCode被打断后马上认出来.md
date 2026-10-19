@@ -79,3 +79,32 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：钩子保留 `transcript_path`，状态缓存只保存主会话的路径。Claude 适配器在 `working` 时最多读取对话记录末尾 64 KiB，只认本会话最近用户记录中的两种明确标记，且时间戳严格晚于最近一次 `UserPromptSubmit`。识别后复用 R22 的 Interrupt 处理并保存状态，后续空闲通知不清掉打断原因；新输入或正常结束照原规则更新。别家适配器默认不读对话记录，没有新增公开字段或状态值。更新 corral guide、两份技能相关句子和 CONTRACT 的识别范围、旧钩子升级边界；paddock 不用动。
+- 针对验证：先加合成集成测试，实际看到 `status` 为 working、期望 idle 的失败，再实现至通过。覆盖两种标记、wait=interrupted、reply=no_reply/interrupted=true、提醒继续等、send 文字实际到达合成程序且输入钩子确认、新输入钩子先到而旧标记仍在、随后正常回复及原提醒送达。边角检查覆盖时间相等或早于新输入、缺文件、坏格式、未知标记、旧缓存重放、正常 Stop、别家不读该标记、有界末尾与不完整写入。
+- 全套验证：`cargo test --all-targets` 首次因测试夹具的 send 确认预期写错中止，修正后补跑通过，170 passed、0 failed、11 ignored（原有跳过项）。`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。收尾自查发现只做当前查询覆盖会在后续空闲通知时丢失打断原因，补充回归先得到 interrupted=false 的失败，再改为保存识别结果；最终 `--test interrupted` 10 项、`--lib events::` 4 项、protocol 的状态时间与缓存重放 1 项通过，corral 全 targets 的 clippy、fmt 和 diff 检查通过。收尾修正后没有重复全套或真人实测。
+- 真人实测：同一个 `ranch/test-interrupt-claude`，隔离 CORRAL_HOME、本分支程序、role=test、CAIRN_DISABLE=1、默认模型及免确认参数。用户分别在写长文和前台 `ping -c 90 127.0.0.1` 时按 Esc，未用 keys 代替。两次均查到 idle/interrupted=true、wait=interrupted、reply=no_reply/interrupted=true，原 `--after` 记录一直 waiting/wait_done=false；对话记录分别为任务书中的两种标记，工具场景也有 User rejected tool use。第一次打断后普通 send（不带 force）成功确认下一句，清除打断标记并进入 Bash。用户最后在真终端输入继续指令，正常 Stop 后 interrupted=false、wait=idle、reply=R24-CONTINUED；同一条原提醒变为 sent、wait_result=idle，合成 `/bin/cat` 接收端收到文字。
+- 实测证据边界：真人 Esc 后是在用户转述回来时查询，没有独立记录从按键到首次状态采样的秒数；查询同步读取标记，没有静默等待。最终正常输入的来源由用户确认，未把 `last_input_source` 当作真人输入的证明（退出 attach 后它显示 agent）。如主控要求严格的真人秒级计时证据，需要另行决定，本轮未加测。
+- 拿主意的地方：沿用适配器边界，共用状态判断不写 Claude 特判；不增加依赖，用已有 libc 按 Claude 的 UTC 毫秒格式转换并拒绝无效日期。cursor 5 升到 6，防止旧 reader 已消费路径字段却未缓存；旧 reader 仍重放自己的缓存，事件格式不变。快照只改 cursor 版本。标记不完整、超出有界末尾或不认识时不猜，不按输出内容、静默时间或读屏推断。仅当前查询覆盖的初版改成保留已识别状态，以维持 R22 的回复和提醒保护。
+- 没做的事：没有改 pen、sandbox、fence、升级或 attach，没有改 Claude 设置、其他仓库或别家识别，没有部署、安装技能、升级用户 agent、合并 main 或推送。没有开审查 agent。真实 Claude 和合成提醒接收端均已停止，隔离 corral ls 为空；证据与检查日志在 `/tmp/r24.zZTsxw`，未提交运行数据。本任务限定范围不含 DESIGN，主控合并时可补其 R22 后的 R24 说明。
+- 踩过的坑：合成 `/bin/cat` 不会发 UserPromptSubmit，最初错误地期待 send 自动确认，导致首次全套中止；改为先看到输入实际到达，再补合成钩子，明确断言 confirmed=true。只在查询中覆盖状态会丢掉已识别的打断原因，收尾回归复现后改为缓存。没有把失败运行写成通过，也没有删测试、放宽断言或缩短超时。
+- 主控需决定的事：上述真人秒级计时证据是否需要补充；其余没有新待决定项。本分支留给主控及规定的交叉审查，不自行合并。
+
+### 返工 1
+
+- 四条审查意见均已修复。新增内部 `turn_open`，由当前实例、主会话的输入及明确结束事件重放得到，空闲通知不关闭它；未结束的一轮即使状态已是 idle，也可从同一份对话记录恢复打断证据。正常 Stop/StopFailure、会话结束关闭该轮，换主会话重置，新输入仍用严格时间比较排除旧标记。不新增事件文件写入方。cursor 升到 7，避免沿用缺少轮次边界的旧缓存。
+- 读对话记录改为 `O_NONBLOCK` 打开后对实际 FD 检查普通文件，FIFO 及指向它的符号链接立即退回未识别。显式 `isSidechain:true` 的用户记录即使 sessionId 相同也不作为打断证据。CONTRACT、guide、两份技能同步说明：调用方及提醒进程需用新版，该命名空间的 `.runtime/helper` 也需切到能记录路径的版本；新版 upgrade 会切换 helper，单纯重开不足。没有改 pen 或 helper 选择逻辑，paddock 不用动。
+- 先补四条回归并运行：同版过期回写、旧版缓存重建后 interrupted=false；FIFO 查询超过 2 秒截止时间；同 sessionId 的侧链使状态错误变 idle，四条均在目标缺陷上失败。缓存回归控制写入顺序，并构造旧版 v5 缓存触发重放，不依赖真实旧程序或随机并发；同一用例还核对 wait/reply 保护，以及 Stop/StopFailure、新输入后再通知及重建不会误判。FIFO 用例对普通 FIFO 和符号链接分别检查 status 返回与 wait 的 0.2 秒超时，超出 2 秒就按子进程句柄终止并回收。
+- 修正后只跑指定范围：interrupted 集成测试 14 项、Claude 适配器单元测试 1 项、events 回归 4 项、protocol 状态时间与缓存重放 1 项，全部通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 通过。快照仅更新 cursor 版本和新增内部 turn_open；去掉这两项后与提交前快照逐字比较一致，没有改其他期望值。
+- 踩过的坑：FIFO 修复后的首次复跑发现新测试误把 wait 超时当作 result=timeout；实际约定是退出码 4、error=timeout，已按该约定修正断言，2 秒截止时间保留。初始 FIFO 阻塞的测试进程已按句柄杀掉并回收，合成 agent 由夹具停止。
+- 未重复全套或真人实测，未打开真实 agent、读取真实 Claude 对话、部署、合并或推送；没有改主仓库审查文件。主控已决定不补真人精确计时，本次不重开该问题，没有新的待决定项。
+
+### 返工 2
+
+- 修复复核指出的晚到工具钩子回归：`observe_transcript` 对 working 状态在本轮仍开放或已确认 interrupted 时核对原标记；idle 状态仍只在本轮开放时读取。正常 Stop/StopFailure 会同时关闭轮次并清除 interrupted，仍阻止旧标记重新识别；稳定的已识别 idle 不重复读取。不改变工具钩子本身的归属和状态规则，不新增字段、不升级缓存版本、不改快照。CONTRACT 补明同轮工具事件后的恢复边界，paddock 不用动。
+- 先补 PreToolUse、PostToolUse 两条回归，均经过本分支真实 `__hook` 入口，带相同 session_id、主 transcript_path 及 background-agent 的 agent_id。修复前两条都在预期 idle、实际 working/interrupted=true 处失败；修复后连续查询为 idle/interrupted=true，wait 返回 interrupted，reply 仍受保护，普通 send 实际到达合成 cat 并在新输入钩子后 confirmed=true。接着核对旧标记仍在时新输入清除 interrupted、正常 Stop 给出新回复，以及 Stop/StopFailure 后再来同类工具钩子不会重新识别旧标记。
+- 只跑针对性及直接相关验证：interrupted 集成测试 16 项、Claude 适配器单元测试 1 项、events 回归 4 项、protocol 状态时间与缓存重放 1 项，全部通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 通过。未重跑全套或真人实测。
+- 拿主意的地方：仅修正读取门槛，恢复时仍要求原对话记录的明确标记，不直接把所有 working/interrupted 状态改成 idle，也不放开所有 idle 的读取。新输入、正常结束和别家适配器的原有行为保留。踩过的坑：没有新增工具或环境问题；这次修的是返工 1 将合成 Interrupt 关闭轮次后误当成正常结束的门槛问题。
+- 合成测试由隔离 HOME/CORRAL_HOME 和 /bin/cat 完成，进程由夹具停止；没有打开真实 agent、读取真实对话、改主仓库审查文件或其他仓库，没有部署、合并或推送。没有新的待主控决定事项。

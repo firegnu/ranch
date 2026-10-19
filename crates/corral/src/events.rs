@@ -18,7 +18,7 @@ pub fn digest(s: &str) -> String {
     format!("{:x}", Sha256::digest(normalize(s).as_bytes()))
 }
 fn fresh(instance: &str) -> Value {
-    json!({"cursor":5,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","interrupted":false,"state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
+    json!({"cursor":7,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","interrupted":false,"state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
 }
 fn string(v: &Value) -> String {
     match v {
@@ -30,6 +30,9 @@ fn string(v: &Value) -> String {
     }
 }
 fn update(s: &mut Value, e: &Value) {
+    if let Some(path) = e["transcript_path"].as_str().filter(|p| !p.is_empty()) {
+        s["transcript_path"] = json!(path);
+    }
     let previous = s["state"].clone();
     let ev = e["ev"].as_str().unwrap_or("");
     s["last_event"] = e["ev"].clone();
@@ -37,10 +40,12 @@ fn update(s: &mut Value, e: &Value) {
     match ev {
         "SessionStart" => {
             if e["source"] != "compact" {
+                s["turn_open"] = json!(false);
                 s["state"] = json!("idle")
             }
         }
         "UserPromptSubmit" => {
+            s["turn_open"] = json!(true);
             s["state"] = json!("working");
             s["interrupted"] = json!(false);
             s["turn_started"] = e["t"].clone();
@@ -80,6 +85,7 @@ fn update(s: &mut Value, e: &Value) {
             s["state"] = json!("idle");
             // Closing an idle UI prompt is not the end of a new model turn.
             if ev != "Stop" || e["idle_only"] != true {
+                s["turn_open"] = json!(false);
                 s["interrupted"] = json!(ev == "Interrupt");
             }
             if ev == "Stop" {
@@ -90,7 +96,10 @@ fn update(s: &mut Value, e: &Value) {
                 }
             }
         }
-        "SessionEnd" => s["state"] = json!("exiting"),
+        "SessionEnd" => {
+            s["turn_open"] = json!(false);
+            s["state"] = json!("exiting");
+        }
         _ => {}
     }
     if s["state"] != previous {
@@ -108,6 +117,8 @@ fn same_dir(e: &Value, cwd: &Path) -> bool {
 /// Makes `sid` the main session and takes its pending events, oldest first.
 fn make_main(s: &mut Value, sid: &Value) -> Vec<Value> {
     if sid != &s["main_session"] {
+        s.as_object_mut().unwrap().remove("transcript_path");
+        s["turn_open"] = json!(false);
         s["main_session"] = sid.clone();
         s["other_sessions"]
             .as_array_mut()
@@ -205,9 +216,9 @@ pub fn read(dir: &Path, instance: &str, cwd: &Path, adopt_session: bool) -> Resu
     };
     let size = f.metadata()?.len();
     let mut s = state::read(dir.join("cursor"));
-    // Old readers rebuild version 4; replay it here so their cached end-of-turn judgement
-    // cannot hide an interruption. The event format stays unchanged in both directions.
-    if s["cursor"] != 5
+    // Older readers do not retain the transcript path or the explicit turn boundary.
+    // Replay their caches; the event format is unchanged in both directions.
+    if s["cursor"] != 7
         || s["inst"] != instance
         || s["offset"].as_u64().is_none_or(|n| n > size)
         || ["pending", "other_sessions", "inputs"]
@@ -260,6 +271,27 @@ pub fn read(dir: &Path, instance: &str, cwd: &Path, adopt_session: bool) -> Resu
         state::write(&dir.join("cursor"), &s)?
     }
     Ok(s)
+}
+
+/// Recover interruption evidence for an unfinished turn, including one made idle by a
+/// notification. A normal end closes the turn; new input and session selection bind its evidence.
+/// Late tool hooks can make an interrupted turn working again; recheck its evidence then,
+/// while a stable interrupted idle needs no further reads.
+pub(crate) fn observe_transcript(
+    dir: &Path,
+    s: &mut Value,
+    adapter: &dyn crate::agents::Adapter,
+) -> Result<()> {
+    let needs_transcript = match s["state"].as_str() {
+        Some("working") => s["turn_open"] == true || s["interrupted"] == true,
+        Some("idle") => s["turn_open"] == true,
+        _ => false,
+    };
+    if needs_transcript && let Some(t) = adapter.transcript_interrupt(s) {
+        update(s, &json!({"ev":"Interrupt", "t":t}));
+        state::write(&dir.join("cursor"), s)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

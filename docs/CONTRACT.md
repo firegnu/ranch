@@ -10,9 +10,12 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 - `corral wait NAME` 在这一轮返回 `ok: true, result: "interrupted"`（退出码 0），不返回 `idle`；原有暂停、blocked、超时等规则不变。
 - `corral reply NAME` 在这一轮返回 `ok: false, error: "no_reply", interrupted: true`（退出码 1），不给出上一轮的回复。下一轮开始后恢复原有回复读取规则。
 - `send --after NAME` 不因这次中断结束等待，原提醒继续等下一轮正常结束；原有 `--timeout` 截止时间不延长，到期仍照旧送。收到提醒仍要查状态和回复，不能当成做完。
-- 识别范围：Codex、amp 的 Interrupt 和 pi 的 `agent_settled.aborted` 已通过真人打断、真人继续后的完整实测。amp 的中断快捷键是连续两次 Esc。agy 保留 USER_CANCELED → Interrupt 映射，收到时适用上述行为，但本次 Esc 实测没有结束钩子，仍报 working、reply 仍可能返回旧回复；用户同意本轮保留此限制。omp 实测 Esc 只取消当前工具，随后模型正常回复并报 Stop，没有可靠标记，用户同意本轮不改。Claude Code 本次 Esc 没有可靠中断事件，不改变其原有规则；working 时 wait 可超时，后续 idle_prompt 也不等于已完成任务，仍须核实回复。
+- 识别范围：Codex、amp 的 Interrupt 和 pi 的 `agent_settled.aborted` 已通过真人打断、真人继续后的完整实测。amp 的中断快捷键是连续两次 Esc。agy 保留 USER_CANCELED → Interrupt 映射，收到时适用上述行为，但本次 Esc 实测没有结束钩子，仍报 working、reply 仍可能返回旧回复；用户同意本轮保留此限制。omp 实测 Esc 只取消当前工具，随后模型正常回复并报 Stop，没有可靠标记，用户同意本轮不改。
+- Claude Code（R24）：新版钩子记录 `transcript_path`。新版命令行对仍未收到明确结束事件的一轮，在状态为 `working` 或被空闲通知变为 `idle` 时，只读该主会话对话记录末尾最多 64 KiB。最近的用户记录须为明确的 `[Request interrupted by user]` 或 `[Request interrupted by user for tool use]`，且其 UTC 毫秒时间戳严格晚于最近一次 `UserPromptSubmit`；显式 `isSidechain: true`、其他会话、后面已有新的用户或 assistant 记录时不认旧标记。识别后按 `Interrupt` 处理并保留到后续输入或结束事件，状态为 `idle`、`interrupted: true`，适用本节的 wait、reply、提醒规则，send 可送入新话。已确认打断后若同轮工具钩子将状态拉回 working，会重新核对标记并恢复 interrupted idle；稳定的已识别 idle 不重复读取，正常 Stop 或 StopFailure 后仍不重新识别。wait 和提醒沿用原轮询，不等待空闲通知或静默超时。新输入钩子已到、对话记录尚未写入时，时间比较排除旧标记。路径缺失、文件读不到、末尾没有完整标记、格式不认识时退回原有行为，不猜打断；使用非阻塞打开并检查实际 FD 为普通文件，FIFO 及指向 FIFO 的链接不阻塞查询。`interrupted: false` 不能保证没有被打断。
 - 对 paddock：兼容新增字段和 wait 结果值；现有状态显示不用动，reply 报错时不显示旧预览即可。要显示「被打断」或区分 wait 的新结果值，在 paddock 自己的任务里接；本任务不改 paddock。
 - 事件格式仍为 v1/v2，旧版可忽略新增字段。内部 cursor 缓存由 4 升到 5，新旧 reader 交替读取时各自重放事件，不沿用对方的缓存判断；这是可重建缓存，不迁移或删除原事件。旧版命令行和已启动的旧版提醒进程仍不识别中断，不能保证本节行为，使用前需让调用方和提醒进程使用新版。pi 的新采集器补记 `agent_settled.aborted`；已经运行的旧采集器不会因此获得该字段，需重开 pi 才能识别这类打断。
+- R24 的 cursor 缓存升到 7，重放旧缓存以恢复主会话的对话记录路径和本轮是否已有明确结束事件。识别结果可缓存，但持久证据仍是对话记录：同版 reader 过期回写或新旧 reader 交替重建导致缓存判断丢失后，即使已收到 idle_prompt，也能重新识别同一轮。正常 Stop、StopFailure、会话结束会关闭该轮，新输入与切换主会话重新限定证据范围，不重新覆盖正常结束；不新增事件文件写入方。旧版命令行忽略事件新增的 `transcript_path` 字段，重建自己的缓存，仍不会识别 Claude Code 的打断。
+- R24 部署边界：调用方和提醒进程需使用新版，该 CORRAL_HOME 命名空间的 `.runtime/helper` 也必须指向能记录路径的新版程序。Claude 的钩子调用这个共享 helper；新启动在链接已存在时保留其目标，所以只切 CLI 或停止再重开 Claude 并不足够。用新版执行相应 `corral upgrade` 会切换该命名空间的 helper，后续钩子才可记录路径；空 CORRAL_HOME 首次启动会创建指向启动程序的 helper。本轮不改 helper 选择逻辑，不实际部署。R24 不增加公开字段或状态值，paddock 不用动。
 
 ## `corral integration status`（R4）
 
