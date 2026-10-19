@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     time::{Duration, Instant},
 };
 struct Lab {
@@ -66,6 +66,131 @@ impl Drop for Lab {
             }
         }
     }
+}
+
+struct StoppedPen(i32);
+impl StoppedPen {
+    fn new(pid: i32) -> Self {
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
+        Self(pid)
+    }
+}
+impl Drop for StoppedPen {
+    fn drop(&mut self) {
+        unsafe { libc::kill(self.0, libc::SIGCONT) };
+    }
+}
+
+#[test]
+fn child_sandbox_does_not_wait_for_parent_pen_without_a_setting() {
+    let l = Lab::new();
+    let parent = l.json(&["start", "test/parent", "--", "/bin/cat"]);
+    let status = l.json(&["status", "test/parent"]);
+    let _stopped = StoppedPen::new(status["pen_pid"].as_i64().unwrap() as i32);
+    let before = Instant::now();
+    let out = l
+        .caller(&parent)
+        .args(["start", "test/child", "--", "/bin/cat"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(out.status.success(), "{v}");
+    assert_eq!(v["sandbox"], Value::Null);
+    assert!(
+        before.elapsed() < Duration::from_secs(5),
+        "start waited for the parent pen"
+    );
+}
+
+#[test]
+fn child_sandbox_keeps_setting_when_parent_pen_is_unresponsive() {
+    let l = Lab::new();
+    l.script(
+        "fence",
+        r#"
+if [ "$1" = check ]; then echo '{"ok":true}'; exit; fi
+while [ "$1" != -- ]; do shift; done
+shift
+exec "$@"
+"#,
+    );
+    let parent = l.json(&["start", "test/parent", "--", "/bin/cat"]);
+    l.json(&["child-sandbox", "test/parent", "dev"]);
+    let status = l.json(&["status", "test/parent"]);
+    let _stopped = StoppedPen::new(status["pen_pid"].as_i64().unwrap() as i32);
+    let before = Instant::now();
+    let out = l
+        .caller(&parent)
+        .args(["start", "test/child", "--", "/bin/cat"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(out.status.success(), "{v}");
+    assert_eq!(v["sandbox"], json!({"profile":"dev"}));
+    assert!(
+        before.elapsed() < Duration::from_secs(5),
+        "start waited for the parent pen"
+    );
+}
+
+#[test]
+fn child_sandbox_cannot_start_when_live_caller_identity_is_unreadable() {
+    let l = Lab::new();
+    l.script("fence", "echo '{\"ok\":true}'");
+    let parent = l.json(&["start", "test/parent", "--", "/bin/cat"]);
+    l.json(&["child-sandbox", "test/parent", "dev"]);
+    let path = l.root.path().join("pens/test/parent/meta.json");
+    let saved = fs::read(&path).unwrap();
+    for content in ["{", "{}", r#"{"instance":""}"#] {
+        fs::write(&path, content).unwrap();
+        let out = l
+            .caller(&parent)
+            .args(["start", "test/child", "--", "/bin/cat"])
+            .output()
+            .unwrap();
+        fs::write(&path, &saved).unwrap();
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(1), "{v}");
+        assert_eq!(v["error"], "child_sandbox_unreadable");
+        assert!(!l.root.path().join("pens/test/child/meta.json").exists());
+    }
+}
+
+#[test]
+fn child_sandbox_slow_check_cannot_overwrite_reopened_parent_setting() {
+    let l = Lab::new();
+    l.script(
+        "fence",
+        r#"
+if [ "$3" = slow ]; then
+    touch "$HOME/check-started"
+    attempts=0
+    while [ ! -f "$HOME/check-continue" ]; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 100 ]; then echo '{"ok":false}'; exit 1; fi
+        sleep 0.05
+    done
+fi
+echo '{"ok":true}'
+"#,
+    );
+    l.json(&["start", "test/parent", "--", "/bin/cat"]);
+    let request = l
+        .command()
+        .args(["child-sandbox", "test/parent", "slow"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    eventually(|| l.root.path().join("check-started").exists());
+    l.json(&["stop", "test/parent"]);
+    l.json(&["start", "test/parent", "--", "/bin/cat"]);
+    let saved = l.json(&["child-sandbox", "test/parent", "dev"]);
+    fs::write(l.root.path().join("check-continue"), "").unwrap();
+    let out = request.wait_with_output().unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(1), "{v}");
+    assert_eq!(v["error"], "restarted");
+    assert_eq!(l.json(&["child-sandbox", "test/parent"]), saved);
 }
 
 #[test]

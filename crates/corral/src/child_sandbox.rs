@@ -10,15 +10,40 @@ pub fn inherited() -> Result<Option<String>> {
     ) else {
         return Ok(None);
     };
-    let Ok(st) = state::require(&name, json!({"op":"status"})) else {
+    let Ok(dir) = state::dir(&name) else {
         return Ok(None);
     };
-    if st["instance"].as_str() != Some(&instance) {
+    // Snapshot the policy before checking liveness. Missing/cleared/stale policies
+    // need no parent status; a damaged policy is ignored only for a proven old run.
+    let policy = read(&dir, &json!(instance));
+    if matches!(&policy, Ok(Value::Null)) || !current_instance(&dir, &instance)? {
         return Ok(None);
     }
-    Ok(read(&state::dir(&name)?, &st["instance"])?["profile"]
+    Ok(policy?["profile"].as_str().map(str::to_owned))
+}
+
+fn current_instance(dir: &Path, instance: &str) -> Result<bool> {
+    let lock = dir.join("lock");
+    if state::lock(&lock, false)
+        .map_err(|e| unreadable(format!("cannot check caller lock: {}", e.value["message"])))?
+        .is_some()
+        || !lock.try_exists().map_err(unreadable)?
+    {
+        return Ok(false);
+    }
+    // The pen holds the run lock even when it cannot answer socket requests.
+    // Missing or invalid metadata while it is held cannot prove the caller exited.
+    let meta: Value = serde_json::from_slice(&fs::read(dir.join("meta.json")).map_err(unreadable)?)
+        .map_err(unreadable)?;
+    let current = meta["instance"]
         .as_str()
-        .map(str::to_owned))
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| unreadable("cannot confirm caller instance"))?;
+    Ok(current == instance)
+}
+
+fn unreadable(message: impl ToString) -> Error {
+    Error::new(1, "child_sandbox_unreadable", message)
 }
 
 pub fn public(dir: &Path, instance: &Value) -> Value {
@@ -26,7 +51,6 @@ pub fn public(dir: &Path, instance: &Value) -> Value {
 }
 
 fn read(dir: &Path, instance: &Value) -> Result<Value> {
-    let unreadable = |message: String| Error::new(1, "child_sandbox_unreadable", message);
     let bytes = match fs::read(dir.join("child-sandbox.json")) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Value::Null),
@@ -35,14 +59,14 @@ fn read(dir: &Path, instance: &Value) -> Result<Value> {
     let record: Value = serde_json::from_slice(&bytes).map_err(|e| unreadable(e.to_string()))?;
     let recorded_instance = record["instance"]
         .as_str()
-        .ok_or_else(|| unreadable("missing or invalid instance".into()))?;
+        .ok_or_else(|| unreadable("missing or invalid instance"))?;
     if Some(recorded_instance) != instance.as_str() {
         return Ok(Value::Null);
     }
     match record.get("child_sandbox") {
         Some(Value::Null) => Ok(Value::Null),
         Some(value) if value["profile"].is_string() => Ok(json!({"profile":value["profile"]})),
-        _ => Err(unreadable("missing or invalid child_sandbox".into())),
+        _ => Err(unreadable("missing or invalid child_sandbox")),
     }
 }
 
@@ -56,6 +80,13 @@ pub fn run(name: &str, profile: Option<&str>, clear: bool) -> Result<Value> {
         } else {
             Value::Null
         };
+        if !current_instance(&dir, st["instance"].as_str().unwrap_or(""))? {
+            return Err(Error::new(
+                1,
+                "restarted",
+                "agent stopped or restarted before saving child sandbox",
+            ));
+        }
         state::write(
             &dir.join("child-sandbox.json"),
             &json!({"instance":st["instance"],"child_sandbox":value}),

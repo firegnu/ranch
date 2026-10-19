@@ -80,3 +80,11 @@ ranch/main 定的做法：
 - 没做的事：未改 fence、技能、paddock 或其他仓库，未操作用户 agent，未起真实 agent，未部署、打包、升级、合并或推送。按任务约定未改 DESIGN 和项目级 HANDOFF。现有验证足够覆盖本任务，没有追加验收要求。
 - 踩过的坑：第一次定向测试误用了二进制名 `corral` 作 Cargo 包名，实际包名是 `corral-core`；纠正后才取得有效 RED 证据。全量测试首次被状态文件清单快照拦住，核对 actual 与 expected 只有新增的 `child-sandbox.json` 一项后更新快照，移除生成的 actual 文件，重跑全量通过。
 - 交主控：自查完成，无阻塞实现的待定事项。合并时需同步 DESIGN §8 的“不加就是现在的样子”：补充“默认不设子 agent 档案；设定后后续 start 继承，可显式覆盖”，并记下本次运行级设定，不改变 fence 插件边界；这里按任务要求只记录建议，未直接改 DESIGN。
+
+### 返工 1
+
+- 按主仓库 `R18-审查.md` 的审查意见与主控判断修正第 1、3 条，采纳第 4 条：继承时先读取设置快照，没有文件、已清除或设置属于别的 instance 就直接返回；需要确认调用者时改查本地运行锁和 metadata，不再向 pen 发 status。锁或 metadata 无法确认状态时以 `child_sandbox_unreadable` 拒绝启动，不再吞掉错误而不套墙。
+- 第 3 条仅改 CONTRACT：新版 `ls` 只清理仍有 lock 的已退出目录；旧 CLI 删掉 lock 后的残留不会被新版 `ls` 发现，要等同名新版 `start` 清理。未增加对无 lock 目录的扫描。同步写清设置读取时点与状态无法确认时的错误。
+- 第 2 条按主控建议顺手补了设置／清除写入前的 instance 复核；检查期间停掉并同名重开的旧请求返回 `restarted`，不覆盖新设置。这只是复核，不是受锁保护的事务；复核与写入之间仍有很小的竞争窗口，未声称完整修复，CONTRACT 已注明此限制。
+- 验证：先复现两个父 pen 暂停测试的失败（约 31 秒；默认路径延迟、已设档案却返回 sandbox:null），以及慢 fence 检查跨重开的覆盖失败，再修正至通过。新增 4 项定向测试，包括活跃调用者 metadata 损坏时不起子 agent。`cargo test -p corral-core --test sandbox` 15 项通过；直接相关的 `protocol::concurrent_unique_starts_and_listing_preserve_live_locks` 1 项通过。仅格式化本次编辑的两个 Rust 文件，按要求未重跑全套测试或静态检查。命令均前台等待结束，仍使用隔离目录、合成进程、假 fence；暂停测试只按记录的测试 pen PID 发信号，并用析构恢复。
+- 无新增阻塞事项；第 2 条剩余的极小窗口按主控已定的建议级别保留。未部署、合并、推送，未操作用户 agent，未改主仓库审查文件或其他仓库。
