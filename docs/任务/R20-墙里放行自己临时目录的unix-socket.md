@@ -74,3 +74,7 @@
 - 照开发建议在 DESIGN §8 补了 R20 一条。
 - 部署后由 paddock/main 用 Claude Code、Codex 测试 agent 跑 paddock 全量测试复验（验收的最后一条，在部署之后）。
 - 结果：一次过
+
+## 部署后复验
+
+10-19 paddock/main 复验通过（用户转来）：fence `versions/aa3676b`，从 paddock main 开的 worktree，Claude Code、Codex 各套 `--sandbox dev`、各用自己的编译目录跑 `cargo test --all-targets --no-fail-fast`，两家都 792 过、0 失败（墙外也是 792）；两家墙里的 `TMPDIR` 都是各自的 `~/.cache/fence/tmp/<实例>`，Codex 不再是 `/tmp/claude`；原先 14 个建 unix socket 的测试全过；paddock 没改 `.fence.toml`。验收全部达到。
