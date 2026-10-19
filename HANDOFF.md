@@ -6,8 +6,8 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过）；R17（sandbox，fence 接 srt，DESIGN §8）进行中：R17a 本机小试验、R17b fence 本体和 `corral start --sandbox` 都已收尾，R17b 已部署（10-19），R17c（5090 上验 Linux）暂缓，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
-  - 待部署：`versions/eff7a40`（10-19 打包，R18 `corral child-sandbox`；工作区干净；两份技能 dry-run 都是 same，不用重装；R18 不改 pen 协议，不用 `corral upgrade --all`）。部署：三个链接 `corral`、`ranch`、`fence` 切到 `versions/eff7a40/bin/`。
-  - `~/.local/bin/corral`、`~/.local/bin/ranch`、`~/.local/bin/fence` → `~/.local/share/ranch/versions/7fbb76d/bin/`（10-19 用户部署，R17b：fence 和 `corral start --sandbox`；工作区干净，srt 0.0.80，fence 用的 node 是 `~/.nvm/versions/node/v24.13.1/bin/node`，这个版本不能卸；技能没变，没重装；没跑 `corral upgrade --all`，R17b 的 pen 改动只对新开的 sandbox agent 起作用，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。部署后起 `ranch/test-sandbox`（claude，`--sandbox dev`）核对过：工作目录能写，写主仓库被拦，访问 example.com 被代理拒，两条都进了 `fence denials`；测完已停。退回：`corral`、`ranch` 切回 `versions/9683ab4/bin/`，删掉 `~/.local/bin/fence`。
+  - 现装 `versions/eff7a40`（10-19 用户部署，部署后主控用合成程序实测：设 dev 后子 agent 继承、`--no-sandbox` 不套、清除后不套；10-19 打包，R18 `corral child-sandbox`；工作区干净；两份技能 dry-run 都是 same，不用重装；R18 不改 pen 协议，不用 `corral upgrade --all`）。退回：三个链接切回 `versions/7fbb76d/bin/`。
+  - 上一版 7fbb76d（10-19 上午 用户部署，R17b：fence 和 `corral start --sandbox`；工作区干净，srt 0.0.80，fence 用的 node 是 `~/.nvm/versions/node/v24.13.1/bin/node`，这个版本不能卸；技能没变，没重装；没跑 `corral upgrade --all`，R17b 的 pen 改动只对新开的 sandbox agent 起作用，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。部署后起 `ranch/test-sandbox`（claude，`--sandbox dev`）核对过：工作目录能写，写主仓库被拦，访问 example.com 被代理拒，两条都进了 `fence denials`；测完已停。退回：`corral`、`ranch` 切回 `versions/9683ab4/bin/`，删掉 `~/.local/bin/fence`。
   - 上一版 9683ab4（10-17 用户部署，R9：pen 和提醒进程启动时关掉继承来的描述符；只改内部实现，技能没变，没重装；部署后起测试 agent 核对过，新 pen 只开着锁、日志、pty、socket，没有多余管道；没跑 `corral upgrade --all`，部署前起的 pen 还是旧版）。打包时主仓库有两个未跟踪的任务草稿（R14、R15），BUILD.txt 记成 `working-tree: modified`，程序和 9683ab4 的代码一致。退回：两个链接切回 `versions/59705a4/bin/`。
   - 9683ab4 之前是 59705a4（R13：agy 状态兜底、corral 技能里 agy 免确认、pen 临时信任工作目录，部署后真实 agy 验收通过；技能三处都是 `same`）。退回到它之前：两个链接切回 `versions/9b69e4d/bin/`，重跑 `corral install-skills`。再上一版 9b69e4d（R12：corral-dispatch 技能换成分工表和新分档表，`ranch dispatch route` 用 jev-1.14.0；corral 代码和 `f86d1c2` 一样，没跑 `corral upgrade --all`，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。退回：两个链接切回 `versions/8299e39/bin/`，再跑 `ranch dispatch install-skills`。旧版本目录都保留，不删。
   - corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）都在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/` 下。
@@ -26,7 +26,7 @@
 
 ## 下一步
 
-1. 部署 R18（用户在场，切三个链接到 `versions/eff7a40/bin/`），之后告诉 paddock 照 CONTRACT「`corral child-sandbox`（R18）」一节接 P5-141（主控卡片上的勾）。P5-120 界面 paddock 已做完（用户 10-19）。10-17 起 ranch 的活由主控派出去（R15，AGENTS.md「开发方式（主控分派）」）。
+1. R18 已部署（10-19）；告诉 paddock 照 CONTRACT「`corral child-sandbox`（R18）」一节接 P5-141（主控卡片上的勾）。P5-120 界面 paddock 已做完（用户 10-19）。10-17 起 ranch 的活由主控派出去（R15，AGENTS.md「开发方式（主控分派）」）。
 2. R19（fence 小活，用户 10-19 定在 R18 之后）：墙启动后才失败（125）的原因写进运行记录、`fence denials` 的 `exit` 带 `message`、改掉 CONTRACT 里“可用 `corral read` 读取”；`denials` 按类型给条数；`dev` 档案设 `TMPPREFIX`（zsh heredoc 临时文件不走 `TMPDIR`，在墙里写 `/private/tmp/zsh*` 被拦）；CONTRACT 写明墙里调 corral 通常报 127（`~/.local/bin/corral` 在 HOME 禁读里）；查清 worktree 里 `git count-objects` 报 `.git/worktrees/<wt>/refs` 为 garbage 的原因。
 3. R17c 暂缓（用户 10-19：“先不做R17c了，先把全部的在macos上跑通”），草稿在 `docs/任务/R17c-Linux上验sandbox.md`；重开前先定那边谁来执行、代码怎么过去、验收。
 
