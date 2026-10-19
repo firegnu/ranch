@@ -66,3 +66,11 @@
 - 没做的事：未改 corral、技能、paddock 或用户配置，未部署、合并、推送；未跑 Linux 真实 sandbox（留 R17c）或部署后的 paddock 全量测试（由 paddock/main 用 Claude Code、Codex 复验）。未改 DESIGN；建议主控在 §8 补充 R20 的默认 `${tmp}` unix socket 放行、Linux 忽略，以及四家墙内 TMPDIR 的实际取值。
 - 踩过的坑：最初环境测试没准备种类程序，先报 `program_not_found`；补了隔离 PATH 下的合成程序后才取得有效 RED。真实 srt 中 bind/connect 已成功，但探针额外设置读取超时返回 EINVAL；改为等待客户端写完退出后非阻塞读取，未改 sandbox 规则或放宽断言。首次全量检查发现既有四家设置快照尚未包含新项，精确补上 macOS `allowUnixSockets` 预期后全量重跑通过。
 - 要主控决定的事：没有新增实现决策；交主控审查，并同步上述 DESIGN 内容、安排合并部署后的 paddock 复验。
+
+## 主控审查
+
+- 看了 diff 和完成记录：只动了 `crates/fence`、CONTRACT、fence README，没用 `allowAllUnixSockets`，「不要做」里的一件没做。重跑标准测试 158 通过、0 失败、11 跳过，clippy、fmt 通过。
+- 交叉审查（`R20-审查.md`）：可以合并，必须改 0、建议改 1。建议改那条（`~/.cache` 是指向 HOME 外的符号链接时，墙里连临时目录都建不了）是 R20 之前就有的限制，旧版同样复现；用户的 `~/.cache` 不是链接，本轮不改，记进 HANDOFF。
+- 照开发建议在 DESIGN §8 补了 R20 一条。
+- 部署后由 paddock/main 用 Claude Code、Codex 测试 agent 跑 paddock 全量测试复验（验收的最后一条，在部署之后）。
+- 结果：一次过
