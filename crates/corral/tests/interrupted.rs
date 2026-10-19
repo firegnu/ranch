@@ -5,7 +5,7 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::PermissionsExt,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -69,6 +69,43 @@ impl Lab {
         self.event("UserPromptSubmit", json!({"prompt":"second"}));
         self.event("Interrupt", json!({}));
     }
+    fn transcript_turn(&self) {
+        let instance = self.json(&["status", "test/work"])["instance"].clone();
+        let mut hook = Command::new(self.0.path().join("corral"))
+            .args(["__hook", "UserPromptSubmit"])
+            .env("CORRAL_EVENTS", self.0.path().join("pens/test/work/events"))
+            .env("CORRAL_INSTANCE", instance.as_str().unwrap())
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        writeln!(
+            hook.stdin.take().unwrap(),
+            "{}",
+            json!({
+                "session_id":"main", "prompt":"second",
+                "transcript_path":self.0.path().join("transcript.jsonl")
+            })
+        )
+        .unwrap();
+        assert!(hook.wait().unwrap().success());
+        self.event(
+            "UserPromptSubmit",
+            json!({"prompt":"second", "t":1704067200.0}),
+        );
+    }
+    fn transcript(&self, text: &str, timestamp: &str) {
+        fs::write(
+            self.0.path().join("transcript.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "type":"user", "sessionId":"main", "timestamp":timestamp,
+                    "message":{"role":"user", "content":[{"type":"text", "text":text}]}
+                })
+            ),
+        )
+        .unwrap();
+    }
     fn pi_event(&self, ev: &str, body: Value, idle: bool) {
         self.event(
             ev,
@@ -102,6 +139,65 @@ impl Lab {
             assert!(Instant::now() < deadline, "{r}");
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+}
+
+#[test]
+fn claude_transcript_interrupt_uses_r22_behavior_and_recovers() {
+    let lab = Lab::new();
+    lab.event("Stop", json!({"background_running":0}));
+    for marker in [
+        "[Request interrupted by user]",
+        "[Request interrupted by user for tool use]",
+    ] {
+        lab.transcript_turn();
+        let id = lab.reminder("15");
+        lab.transcript(marker, "2024-01-01T00:00:01.000Z");
+        let st = lab.json(&["status", "test/work"]);
+        assert_eq!(st["state"], "idle");
+        assert_eq!(st["interrupted"], true);
+        // A later idle notification must not turn a detected interruption into completion.
+        lab.event(
+            "Notification",
+            json!({"notification_type":"idle_prompt", "background_running":0}),
+        );
+        assert_eq!(lab.json(&["status", "test/work"])["interrupted"], true);
+        assert_eq!(
+            lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+            "interrupted"
+        );
+        let out = lab.out(&["reply", "test/work"]);
+        assert_eq!(out.status.code(), Some(1));
+        let error: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(error["error"], "no_reply");
+        assert_eq!(error["interrupted"], true);
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(lab.record(&id)["wait_done"], false);
+        // Acknowledge only after the synthetic agent actually receives this input.
+        let text = format!("continue {marker}");
+        std::thread::scope(|scope| {
+            let send = scope.spawn(|| lab.json(&["send", "test/work", &text, "--timeout", "5"]));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let output = lab.out(&["read", "test/work"]);
+                if String::from_utf8_lossy(&output.stdout).contains(&text) {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "input did not reach cat");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            lab.event("UserPromptSubmit", json!({"prompt":text}));
+            assert_eq!(send.join().unwrap()["confirmed"], true);
+        });
+        // The new hook can arrive before Claude writes the new user record.
+        let st = lab.json(&["status", "test/work"]);
+        assert_eq!(st["state"], "working");
+        assert_eq!(st["interrupted"], false);
+        lab.transcript("continue", "2024-01-01T00:00:02.000Z");
+        lab.event("Stop", json!({"last_assistant_message":"new reply"}));
+        assert_eq!(lab.json(&["status", "test/work"])["interrupted"], false);
+        assert_eq!(lab.json(&["reply", "test/work"])["text"], "new reply");
+        assert_eq!(lab.delivered(&id)["wait_result"]["result"], "idle");
     }
 }
 impl Drop for Lab {
@@ -244,4 +340,43 @@ fn pi_ui_open_after_interruption_still_notifies_blocked() {
     );
     let id = lab.reminder("1.5");
     assert_eq!(lab.delivered(&id)["wait_result"]["result"], "blocked");
+}
+
+#[test]
+fn claude_transcript_fallback_and_other_agents_keep_hook_behavior() {
+    let lab = Lab::new();
+    lab.transcript_turn();
+    // No transcript, malformed transcript, and unrecognised markers do not end a turn.
+    assert_eq!(lab.json(&["status", "test/work"])["state"], "working");
+    fs::write(lab.0.path().join("transcript.jsonl"), "not json\n").unwrap();
+    assert_eq!(lab.json(&["status", "test/work"])["state"], "working");
+    lab.transcript("[Request cancelled]", "2024-01-01T00:00:01.000Z");
+    assert_eq!(lab.json(&["status", "test/work"])["state"], "working");
+    lab.transcript("[Request interrupted by user]", "2024-01-01T00:00:01.000Z");
+    // R22's reader cached the hook without its path. R24 must replay it.
+    let cursor_path = lab.0.path().join("pens/test/work/cursor");
+    let mut cursor: Value = serde_json::from_slice(&fs::read(&cursor_path).unwrap()).unwrap();
+    cursor["cursor"] = json!(5);
+    cursor.as_object_mut().unwrap().remove("transcript_path");
+    fs::write(cursor_path, cursor.to_string()).unwrap();
+    assert_eq!(lab.json(&["status", "test/work"])["interrupted"], true);
+    let meta_path = lab.0.path().join("pens/test/work/meta.json");
+    let mut meta: Value = serde_json::from_slice(&fs::read(&meta_path).unwrap()).unwrap();
+    for kind in ["codex", "pi", "omp", "amp", "agy"] {
+        meta["kind"] = json!(kind);
+        fs::write(&meta_path, meta.to_string()).unwrap();
+        // A different agent kind starts with its own cursor, never Claude's cached state.
+        fs::remove_file(lab.0.path().join("pens/test/work/cursor")).unwrap();
+        let st = lab.json(&["status", "test/work"]);
+        assert_eq!(st["state"], "working", "{kind}");
+        assert_eq!(st["interrupted"], false, "{kind}");
+    }
+    meta["kind"] = json!("claude");
+    fs::write(&meta_path, meta.to_string()).unwrap();
+    // An actual Stop stays authoritative even when the tail still contains a marker.
+    lab.event("Stop", json!({"last_assistant_message":"normal reply"}));
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "idle");
+    assert_eq!(st["interrupted"], false);
+    assert_eq!(lab.json(&["reply", "test/work"])["text"], "normal reply");
 }

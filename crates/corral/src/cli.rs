@@ -133,12 +133,15 @@ pub(crate) fn status(name: &str) -> Result<Status> {
         }
     }
     let snapshot = if agents::known(m["kind"].as_str().unwrap_or("")) {
-        let snap = events::read(
+        let mut snap = events::read(
             &d,
             st["instance"].as_str().unwrap_or(""),
             Path::new(m["cwd"].as_str().unwrap_or("")),
             agents::adopts_session(m["kind"].as_str().unwrap_or("")),
         )?;
+        if let Some(adapter) = agents::find(m["kind"].as_str().unwrap_or("")) {
+            events::observe_transcript(&d, &mut snap, adapter)?;
+        }
         // Started with a first prompt: idle only once that prompt was taken. An agent whose
         // session was adopted (`events::adopt`) may have lost the prompt's hook with the session
         // start; a later event than the session start shows its turn went on anyway.

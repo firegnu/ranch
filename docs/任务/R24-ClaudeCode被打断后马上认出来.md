@@ -79,3 +79,15 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：钩子保留 `transcript_path`，状态缓存只保存主会话的路径。Claude 适配器在 `working` 时最多读取对话记录末尾 64 KiB，只认本会话最近用户记录中的两种明确标记，且时间戳严格晚于最近一次 `UserPromptSubmit`。识别后复用 R22 的 Interrupt 处理并保存状态，后续空闲通知不清掉打断原因；新输入或正常结束照原规则更新。别家适配器默认不读对话记录，没有新增公开字段或状态值。更新 corral guide、两份技能相关句子和 CONTRACT 的识别范围、旧钩子升级边界；paddock 不用动。
+- 针对验证：先加合成集成测试，实际看到 `status` 为 working、期望 idle 的失败，再实现至通过。覆盖两种标记、wait=interrupted、reply=no_reply/interrupted=true、提醒继续等、send 文字实际到达合成程序且输入钩子确认、新输入钩子先到而旧标记仍在、随后正常回复及原提醒送达。边角检查覆盖时间相等或早于新输入、缺文件、坏格式、未知标记、旧缓存重放、正常 Stop、别家不读该标记、有界末尾与不完整写入。
+- 全套验证：`cargo test --all-targets` 首次因测试夹具的 send 确认预期写错中止，修正后补跑通过，170 passed、0 failed、11 ignored（原有跳过项）。`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。收尾自查发现只做当前查询覆盖会在后续空闲通知时丢失打断原因，补充回归先得到 interrupted=false 的失败，再改为保存识别结果；最终 `--test interrupted` 10 项、`--lib events::` 4 项、protocol 的状态时间与缓存重放 1 项通过，corral 全 targets 的 clippy、fmt 和 diff 检查通过。收尾修正后没有重复全套或真人实测。
+- 真人实测：同一个 `ranch/test-interrupt-claude`，隔离 CORRAL_HOME、本分支程序、role=test、CAIRN_DISABLE=1、默认模型及免确认参数。用户分别在写长文和前台 `ping -c 90 127.0.0.1` 时按 Esc，未用 keys 代替。两次均查到 idle/interrupted=true、wait=interrupted、reply=no_reply/interrupted=true，原 `--after` 记录一直 waiting/wait_done=false；对话记录分别为任务书中的两种标记，工具场景也有 User rejected tool use。第一次打断后普通 send（不带 force）成功确认下一句，清除打断标记并进入 Bash。用户最后在真终端输入继续指令，正常 Stop 后 interrupted=false、wait=idle、reply=R24-CONTINUED；同一条原提醒变为 sent、wait_result=idle，合成 `/bin/cat` 接收端收到文字。
+- 实测证据边界：真人 Esc 后是在用户转述回来时查询，没有独立记录从按键到首次状态采样的秒数；查询同步读取标记，没有静默等待。最终正常输入的来源由用户确认，未把 `last_input_source` 当作真人输入的证明（退出 attach 后它显示 agent）。如主控要求严格的真人秒级计时证据，需要另行决定，本轮未加测。
+- 拿主意的地方：沿用适配器边界，共用状态判断不写 Claude 特判；不增加依赖，用已有 libc 按 Claude 的 UTC 毫秒格式转换并拒绝无效日期。cursor 5 升到 6，防止旧 reader 已消费路径字段却未缓存；旧 reader 仍重放自己的缓存，事件格式不变。快照只改 cursor 版本。标记不完整、超出有界末尾或不认识时不猜，不按输出内容、静默时间或读屏推断。仅当前查询覆盖的初版改成保留已识别状态，以维持 R22 的回复和提醒保护。
+- 没做的事：没有改 pen、sandbox、fence、升级或 attach，没有改 Claude 设置、其他仓库或别家识别，没有部署、安装技能、升级用户 agent、合并 main 或推送。没有开审查 agent。真实 Claude 和合成提醒接收端均已停止，隔离 corral ls 为空；证据与检查日志在 `/tmp/r24.zZTsxw`，未提交运行数据。本任务限定范围不含 DESIGN，主控合并时可补其 R22 后的 R24 说明。
+- 踩过的坑：合成 `/bin/cat` 不会发 UserPromptSubmit，最初错误地期待 send 自动确认，导致首次全套中止；改为先看到输入实际到达，再补合成钩子，明确断言 confirmed=true。只在查询中覆盖状态会丢掉已识别的打断原因，收尾回归复现后改为缓存。没有把失败运行写成通过，也没有删测试、放宽断言或缩短超时。
+- 主控需决定的事：上述真人秒级计时证据是否需要补充；其余没有新待决定项。本分支留给主控及规定的交叉审查，不自行合并。

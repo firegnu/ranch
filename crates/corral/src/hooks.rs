@@ -25,6 +25,7 @@ pub fn run(event: &str) {
         let mut record = json!({"v":1,"t":crate::now(),"ev":event,"inst":std::env::var("CORRAL_INSTANCE").unwrap_or_default(),"has_transcript":body["transcript_path"].as_str().is_some_and(|s|!s.is_empty())});
         for key in [
             "session_id",
+            "transcript_path",
             "cwd",
             "source",
             "tool_name",

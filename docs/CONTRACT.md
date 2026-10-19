@@ -10,9 +10,11 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 - `corral wait NAME` 在这一轮返回 `ok: true, result: "interrupted"`（退出码 0），不返回 `idle`；原有暂停、blocked、超时等规则不变。
 - `corral reply NAME` 在这一轮返回 `ok: false, error: "no_reply", interrupted: true`（退出码 1），不给出上一轮的回复。下一轮开始后恢复原有回复读取规则。
 - `send --after NAME` 不因这次中断结束等待，原提醒继续等下一轮正常结束；原有 `--timeout` 截止时间不延长，到期仍照旧送。收到提醒仍要查状态和回复，不能当成做完。
-- 识别范围：Codex、amp 的 Interrupt 和 pi 的 `agent_settled.aborted` 已通过真人打断、真人继续后的完整实测。amp 的中断快捷键是连续两次 Esc。agy 保留 USER_CANCELED → Interrupt 映射，收到时适用上述行为，但本次 Esc 实测没有结束钩子，仍报 working、reply 仍可能返回旧回复；用户同意本轮保留此限制。omp 实测 Esc 只取消当前工具，随后模型正常回复并报 Stop，没有可靠标记，用户同意本轮不改。Claude Code 本次 Esc 没有可靠中断事件，不改变其原有规则；working 时 wait 可超时，后续 idle_prompt 也不等于已完成任务，仍须核实回复。
+- 识别范围：Codex、amp 的 Interrupt 和 pi 的 `agent_settled.aborted` 已通过真人打断、真人继续后的完整实测。amp 的中断快捷键是连续两次 Esc。agy 保留 USER_CANCELED → Interrupt 映射，收到时适用上述行为，但本次 Esc 实测没有结束钩子，仍报 working、reply 仍可能返回旧回复；用户同意本轮保留此限制。omp 实测 Esc 只取消当前工具，随后模型正常回复并报 Stop，没有可靠标记，用户同意本轮不改。
+- Claude Code（R24）：新版钩子记录 `transcript_path`，新版命令行在钩子状态仍为 `working` 时，只读该主会话对话记录末尾最多 64 KiB。最近的用户记录须为明确的 `[Request interrupted by user]` 或 `[Request interrupted by user for tool use]`，且其 UTC 毫秒时间戳严格晚于最近一次 `UserPromptSubmit`；后面已有新的用户或 assistant 记录时不认旧标记。识别后按 `Interrupt` 处理并保留到后续输入或结束事件，状态为 `idle`、`interrupted: true`，适用本节的 wait、reply、提醒规则，send 可送入新话。wait 和提醒沿用原轮询，不等待空闲通知或静默超时。新输入钩子已到、对话记录尚未写入时，时间比较排除旧标记。路径缺失、文件读不到、末尾没有完整标记、格式不认识时退回原有行为，不猜打断；`interrupted: false` 不能保证没有被打断。
 - 对 paddock：兼容新增字段和 wait 结果值；现有状态显示不用动，reply 报错时不显示旧预览即可。要显示「被打断」或区分 wait 的新结果值，在 paddock 自己的任务里接；本任务不改 paddock。
 - 事件格式仍为 v1/v2，旧版可忽略新增字段。内部 cursor 缓存由 4 升到 5，新旧 reader 交替读取时各自重放事件，不沿用对方的缓存判断；这是可重建缓存，不迁移或删除原事件。旧版命令行和已启动的旧版提醒进程仍不识别中断，不能保证本节行为，使用前需让调用方和提醒进程使用新版。pi 的新采集器补记 `agent_settled.aborted`；已经运行的旧采集器不会因此获得该字段，需重开 pi 才能识别这类打断。
+- R24 的 cursor 缓存升到 6，重放旧缓存以恢复主会话的对话记录路径；打断识别结果保存在缓存中，后续空闲通知不清掉，避免将已识别的打断重新当作正常完成。旧版命令行忽略事件新增的 `transcript_path` 字段，重建自己的缓存，仍不会识别 Claude Code 的打断。部署前就开着的 Claude Code，其钩子仍调用旧程序、不记录路径，需要 `corral upgrade` 或重开才生效；调用方与提醒进程也需使用新版。R24 不增加公开字段或状态值，paddock 不用动。
 
 ## `corral integration status`（R4）
 
