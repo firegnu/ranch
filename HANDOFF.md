@@ -6,6 +6,7 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过）；R17（sandbox，fence 接 srt，DESIGN §8）进行中：R17a 本机小试验、R17b fence 本体和 `corral start --sandbox` 都已收尾，R17b 已部署（10-19），R17c（5090 上验 Linux）暂缓，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
+  - 待部署：`versions/aa3676b`（10-19 打包，R20：`dev` 放行自己 `${tmp}` 下的 unix socket（macOS），四家墙内 `TMPDIR` 都是自己的临时目录；工作区干净；两份技能 dry-run 都是 same，不用重装；不改 pen，不用 `corral upgrade --all`）。部署：三个链接切到 `versions/aa3676b/bin/`；部署后告诉 paddock/main，它用 Claude Code、Codex 测试 agent 跑 paddock 全量测试复验（R20 验收最后一条）。
   - 现装 `versions/cb57e07`（10-19 用户部署，部署后主控实测：旧记录 `--limit 0` 给出 counts、check 的 env 有 TMPPREFIX、墙里 zsh heredoc 正常；10-19 打包，R19 fence 小修；工作区干净；两份技能 dry-run 都是 same，不用重装；不改 pen，不用 `corral upgrade --all`）。退回：三个链接切回 `versions/eff7a40/bin/`。
   - 上一版 eff7a40（10-19 用户部署，部署后主控用合成程序实测：设 dev 后子 agent 继承、`--no-sandbox` 不套、清除后不套；10-19 打包，R18 `corral child-sandbox`；工作区干净；两份技能 dry-run 都是 same，不用重装；R18 不改 pen 协议，不用 `corral upgrade --all`）。退回：三个链接切回 `versions/7fbb76d/bin/`。
   - 上一版 7fbb76d（10-19 上午 用户部署，R17b：fence 和 `corral start --sandbox`；工作区干净，srt 0.0.80，fence 用的 node 是 `~/.nvm/versions/node/v24.13.1/bin/node`，这个版本不能卸；技能没变，没重装；没跑 `corral upgrade --all`，R17b 的 pen 改动只对新开的 sandbox agent 起作用，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。部署后起 `ranch/test-sandbox`（claude，`--sandbox dev`）核对过：工作目录能写，写主仓库被拦，访问 example.com 被代理拒，两条都进了 `fence denials`；测完已停。退回：`corral`、`ranch` 切回 `versions/9683ab4/bin/`，删掉 `~/.local/bin/fence`。
@@ -45,3 +46,5 @@
 - R17b 留下的：srt 的文件拦截日志会漏条（Codex、pi 写主仓库被拦没记进 `fence denials`，只在终端可见）；全套测试偶有 1 个失败、再跑就过（像原有 hook 协议测试的偶发超时，没认出名字）；corral 对 Codex 在同一轮里会短暂报 idle，派活时提醒会提前到（没查）。`corral start --help` 的用法行没列 `--sandbox`（CONTRACT 有）。
 - R18 交叉审查第 2 条（旧运行的慢 `child-sandbox` 设定请求在 fence 检查期间遇到同名重开，可能冲掉新运行的设定）：主控改判建议改，与审查者有分歧，已列给用户；返工加了写入前复核 instance，复核和写入之间还剩很小的窗口，CONTRACT 写明了。用户没说要再修。
 - `~/.fence/local.toml`（10-19 用户同意、主控写）：放行 IP Guardian 的 4 个查 IP 网站，允许读 `~/.ip_guardian_bin`、`~/.ip_guardian_allowed`；不写会让墙里的 codex、claude 被 IP Guardian 拦下（退出码 1）。
+- R20 交叉审查建议改（R20 之前就有）：`~/.cache` 是指向 HOME 外的符号链接时，`${tmp}` 的环境值和文件规则用链接拼写、socket 规则用真实路径，墙里连临时目录都建不了。用户的 `~/.cache` 不是链接，不受影响；要支持时把三处统一到同一物理路径。
+- Linux 上墙里的 unix socket 仍全拦（srt 不能按路径放行），R17c 时再定。
