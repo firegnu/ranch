@@ -4,6 +4,7 @@ mod adapter_snapshot;
 mod after;
 mod agents;
 mod attach;
+mod child_sandbox;
 mod cli;
 mod environment;
 mod events;

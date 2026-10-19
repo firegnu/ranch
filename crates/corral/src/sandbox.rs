@@ -3,10 +3,10 @@ use crate::{Error, Result, agents, state};
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
 
-pub fn check(profile: &str, program: &str, cwd: &Path, name: &str, extra: &Value) -> Result<Value> {
+fn executable() -> Result<PathBuf> {
     let fence = std::env::var_os("CORRAL_FENCE")
         .map(PathBuf::from)
         .unwrap_or(crate::executable()?.with_file_name("fence"));
@@ -17,6 +17,30 @@ pub fn check(profile: &str, program: &str, cwd: &Path, name: &str, extra: &Value
             "CORRAL_FENCE must be absolute",
         ));
     }
+    Ok(fence)
+}
+
+fn checked(out: std::io::Result<Output>) -> Result<()> {
+    let out = out.map_err(|e| Error::new(1, "sandbox_unavailable", e))?;
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(
+        |_| json!({"ok":false,"error":"bad_reply","message":"fence check did not return JSON"}),
+    );
+    if !out.status.success() || value["ok"] != true {
+        return Err(Error::new(1, "sandbox_failed", "fence check failed").with("fence", value));
+    }
+    Ok(())
+}
+
+pub fn check_profile(profile: &str) -> Result<()> {
+    checked(
+        Command::new(executable()?)
+            .args(["check", "--profile", profile])
+            .output(),
+    )
+}
+
+pub fn check(profile: &str, program: &str, cwd: &Path, name: &str, extra: &Value) -> Result<Value> {
+    let fence = executable()?;
     let (environment, _) =
         crate::environment::build(name, "", &state::home().join("events"), extra);
     let out = Command::new(&fence)
@@ -31,14 +55,8 @@ pub fn check(profile: &str, program: &str, cwd: &Path, name: &str, extra: &Value
         .arg(cwd)
         .env_clear()
         .envs(environment)
-        .output()
-        .map_err(|e| Error::new(1, "sandbox_unavailable", e))?;
-    let value: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(
-        |_| json!({"ok":false,"error":"bad_reply","message":"fence check did not return JSON"}),
-    );
-    if !out.status.success() || value["ok"] != true {
-        return Err(Error::new(1, "sandbox_failed", "fence check failed").with("fence", value));
-    }
+        .output();
+    checked(out)?;
     Ok(json!({"profile":profile,"fence":fence}))
 }
 

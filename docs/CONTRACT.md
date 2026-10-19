@@ -118,9 +118,9 @@ corral integration uninstall --agent <kind> [--dry-run] [--yes]
 
 这些都是兼容新增。paddock 当前用法不用改；P5-120 接入档案选择、卡片小锁、拒绝记录及 Settings 规则展示。前端通过 PATH 找 `fence`；远端先 `command -v fence`，再试 `~/.local/bin/fence`，检查 `--version` 的 `contract`。未安装时不提供 sandbox 选项。
 
-### `corral start NAME --sandbox <档案> … -- <命令>`
+### `corral start NAME [--sandbox <档案> | --no-sandbox] … -- <命令>`
 
-加参数就通过 fence 起 agent；不加保持原行为，派活技能不默认加。corral 不依赖 fence 包，只调用以下命令：
+加 `--sandbox` 就通过 fence 起 agent；没设子 agent 档案时，不加参数保持原行为，派活技能不默认加。R18 起也可继承调用者当下的子 agent 档案，或用 `--no-sandbox` 让这一次不套墙（见下节）。corral 不依赖 fence 包，只调用以下命令：
 
 ```text
 fence check --profile <档案> --kind <原种类> --cwd <目录>
@@ -140,6 +140,41 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 墙内继承 `FENCE_RUN`，再调 corral 用户命令报 `sandbox`，退出码 6，message 为 `running inside fence`；`__hook`、`guide` 仍可用。因此这个阶段墙内 agent 不能再派活。
 
 检查与运行之间条件变化、srt 初始化失败时，start 可能已经返回成功；随后 agent 停止，退出码 125，原因在终端中，可用 `corral read` 读取。fence 不会回退成无 sandbox 运行。runner 正常结束时透传原程序的退出码或信号；runner 意外先死时 pen 清理剩余进程组。
+
+### `corral child-sandbox NAME [<档案> | --clear]`（R18）
+
+给正在运行的 NAME 设定它之后通过 `corral start` 派出去的 agent 用哪个 fence 档案。随时可改，从下一次 start 起生效；不改变 NAME 自己或已经运行的子 agent。默认没有设定。corral 自己保存设置，不依赖任何前端或技能指令。
+
+- `corral child-sandbox NAME <档案>`：先执行一次 `fence check --profile <档案>`（不带种类），成功才保存。fence 的定位和检查成功条件与 `start --sandbox` 一致；失败报 `sandbox_failed`、找不到或无法执行报 `sandbox_unavailable`，退出码 1，原设置不变。
+- `corral child-sandbox NAME --clear`：清除设定，不需要 fence。
+- `corral child-sandbox NAME`：只查，不需要 fence。
+
+三种操作成功都输出一行 JSON、退出码 0：
+
+```json
+{"ok":true,"name":"ranch/main","instance":"0123abcd4567","child_sandbox":{"profile":"dev"}}
+```
+
+没有设定时 `child_sandbox:null`。NAME 不在运行时三种操作都报 `not_found`、退出码 2。档案与 `--clear` 同时给、多余或缺少参数报 `usage`、退出码 1。
+
+`status` 和 `ls` 的每个 agent 增加 `child_sandbox`，同样为 `{"profile":"dev"}` 或 `null`。没设、旧记录没有这个文件、记录的 instance 对不上、记录读不了或格式坏时，查询显示 `null`；启动时对坏记录的处理更严格，见下文。
+
+设置保存在 agent 状态目录的 `child-sandbox.json`，原子写入，内容为 `{"instance":"0123abcd4567","child_sandbox":{"profile":"dev"}}`；清除写成同 instance 的 `child_sandbox:null`。只认同一次运行，不向 pen 增加请求；旧 pen 管的 agent 也可设定。文件列入状态目录的清理清单，agent 退出后由新版 `ls` 随目录清理。
+
+`corral start` 的优先次序：
+
+1. 同时带 `--sandbox <档案>` 与 `--no-sandbox`，报 `usage`（退出码 1），不起 agent。
+2. 显式 `--sandbox <档案>` 使用指定档案；显式 `--no-sandbox` 这次不套墙。两者都会跳过调用者的设置读取。
+3. 否则，以调用环境中的 `CORRAL_NAME`、`CORRAL_INSTANCE` 识别调用者，确认它仍在运行且 instance 相同，读取它当下的 `child-sandbox.json`。记录 instance 匹配且设了档案，等同 `--sandbox <档案>`，照常再次执行带种类、工作目录的 fence 检查，错误码也相同。
+4. 没有这两个环境变量、调用者不在跑、instance 不匹配、没有文件或已清除，都保持原行为，不额外失败。
+
+确认调用者仍是同一次运行后，文件在但读不了、JSON 无法解析、没有有效 instance，或匹配 instance 的设置格式错误，报 `child_sandbox_unreadable`（退出码 1），不起 agent，不当作不套墙。能读出不同 instance 的旧记录直接忽略。坏记录可用设定或清除命令覆盖。
+
+`start` 输出和之后 `status` 的 `sandbox` 仍表示这个 agent 实际使用的档案，不另加是否继承的字段。`FENCE_RUN` 防护不变，墙内也不能靠 `--no-sandbox` 再派活。
+
+兼容新增：旧 CLI 不认识 `child-sandbox` 命令和 `--no-sandbox`，也不读取这个文件；用旧 CLI 发起的 `start` 不会继承档案。旧 CLI 的 `ls` 不清理这个文件，依靠 instance 不匹配防止同名重开后误用，留待下次新版 CLI 清理。要让设定生效，派活所用的 CLI 必须是 R18 或更新版本，无需升级父 agent 的 pen。
+
+对 paddock：P5-141 调用 `corral child-sandbox`，读取 `ls` 的 `child_sandbox` 做勾选；paddock 现有调用保持兼容，在自己的任务中接入。
 
 ### fence 输出约定
 

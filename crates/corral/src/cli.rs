@@ -117,6 +117,7 @@ pub(crate) fn status(name: &str) -> Result<Status> {
     };
     let mut public = json!({"ok":true,"name":name,"instance":st["instance"],"kind":m["kind"],"proto":st["proto"],"state":"unknown","state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_at":null,"last_input_at":null,"last_input_source":null,"title":st["title"],"last_output":st["last_output"],"idle_for":st["last_output"].as_f64().map(|t|((now()-t)*1000.0).round()/1000.0),"attached":st["attached"],"last_human_input":st["last_human_input"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"]});
     public["sandbox"] = crate::sandbox::public(&m);
+    public["child_sandbox"] = crate::child_sandbox::public(&d, &st["instance"]);
     for key in [
         "exe",
         "custody",
@@ -409,9 +410,10 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
     }
     let help = match op {
         "start" => Some(
-            "NAME [--cwd DIR] [--unique] [--prompt TEXT] [--env KEY=VALUE] [--label KEY=VALUE] -- COMMAND [ARG ...]",
+            "NAME [--cwd DIR] [--unique] [--prompt TEXT] [--env KEY=VALUE] [--label KEY=VALUE] [--sandbox PROFILE | --no-sandbox] -- COMMAND [ARG ...]",
         ),
         "send" => Some("NAME TEXT [--force] [--timeout SECONDS] [--after NAME] [--request-id ID]"),
+        "child-sandbox" => Some("NAME [PROFILE | --clear]"),
         "keys" => Some("NAME KEY [KEY ...]"),
         "status" | "reply" | "where" | "pause" | "resume" => Some("NAME"),
         "wait" => Some("NAME [--timeout SECONDS] [--quiet SECONDS]"),
@@ -520,9 +522,20 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             op == "recover",
         )?));
     }
+    if op == "child-sandbox" {
+        let p = Args::parse(&args[1..], &["--clear"], &[])?;
+        if p.has("--clear") || p.words.len() != 2 {
+            p.count(1)?;
+        }
+        return Ok(Some(crate::child_sandbox::run(
+            &p.words[0],
+            p.words.get(1).map(String::as_str),
+            p.has("--clear"),
+        )?));
+    }
     let (flags, values): (&[&str], &[&str]) = match op {
         "start" => (
-            &["--unique"],
+            &["--unique", "--no-sandbox"],
             &["--cwd", "--prompt", "--env", "--label", "--sandbox"],
         ),
         "send" => (&["--force"], &["--timeout", "--after", "--request-id"]),
@@ -556,6 +569,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
     state::validate(name)?;
     let value = match op {
         "start" => {
+            if parsed.has("--sandbox") && parsed.has("--no-sandbox") {
+                return Err(usage("--sandbox and --no-sandbox cannot be used together"));
+            }
             if args.len() <= sep + 1 {
                 return Err(usage("missing agent command"));
             }
@@ -580,7 +596,12 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             }
             let extra = parsed.pairs("--env", false)?;
             let labels = parsed.pairs("--label", true)?;
-            let sandbox = match parsed.get("--sandbox") {
+            let profile = match parsed.get("--sandbox") {
+                Some(profile) => Some(profile.to_owned()),
+                None if parsed.has("--no-sandbox") => None,
+                None => crate::child_sandbox::inherited()?,
+            };
+            let sandbox = match profile.as_deref() {
                 Some(profile) => crate::sandbox::check(profile, &argv[0], &cwd, name, &extra)?,
                 None => Value::Null,
             };

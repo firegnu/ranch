@@ -70,3 +70,13 @@ ranch/main 定的做法：
 
 ## 做完
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：新增 `corral child-sandbox NAME [<档案> | --clear]`，设定先执行不带种类的 fence check，原子保存带 instance 的 `child-sandbox.json`，加入状态清理清单。`ls/status` 加 `child_sandbox`；`start` 按调用者的两个环境变量读取当下设定，复用现有 sandbox 检查和启动路径；新增 `--no-sandbox`，显式参数优先且互斥。补齐命令帮助和 CONTRACT，未改 pen 协议。
+- 验证了什么：新增 6 个 CLI 集成测试，用隔离 HOME、CORRAL_HOME、FENCE_HOME、合成程序和假 fence，覆盖任务列出的全部边角。合成父进程在实际运行中调用本次编译的 CLI，验证身份变量可继承、设定切换从下一次 start 生效、已在跑的子 agent 不变。按命令新增、继承、坏记录和显式覆盖四个切片先见目标失败再实现；相关 sandbox 测试 11 项全部通过。`cargo test --all-targets` 147 项通过、9 项既有测试忽略（3 项需外部旧 CLI 基线、6 项需真实 srt）；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 全通过。全部命令在前台等待结束，使用本分支专用编译目录。
+- 拿主意的地方：清除用同 instance 的 `child_sandbox:null` 原子覆盖，避免删除记录的竞争；可识别为旧 instance 的记录直接忽略。确认调用者仍是同一次运行后，无法读取或解析、缺少有效 instance、匹配 instance 但档案结构错误，都阻止隐式 start；只查、ls/status 对坏记录显示 null，显式参数跳过读取，可通过设定或清除修复。上述行为已写进 CONTRACT。
+- 对 paddock 的影响：兼容新增；P5-141 调 `corral child-sandbox`、读 `ls.child_sandbox` 做勾。父 agent 的 pen 无需升级，但派活使用的 CLI 必须为 R18 或更新版本；旧 CLI 不读取设定，因此不会继承套墙。
+- 没做的事：未改 fence、技能、paddock 或其他仓库，未操作用户 agent，未起真实 agent，未部署、打包、升级、合并或推送。按任务约定未改 DESIGN 和项目级 HANDOFF。现有验证足够覆盖本任务，没有追加验收要求。
+- 踩过的坑：第一次定向测试误用了二进制名 `corral` 作 Cargo 包名，实际包名是 `corral-core`；纠正后才取得有效 RED 证据。全量测试首次被状态文件清单快照拦住，核对 actual 与 expected 只有新增的 `child-sandbox.json` 一项后更新快照，移除生成的 actual 文件，重跑全量通过。
+- 交主控：自查完成，无阻塞实现的待定事项。合并时需同步 DESIGN §8 的“不加就是现在的样子”：补充“默认不设子 agent 档案；设定后后续 start 继承，可显式覆盖”，并记下本次运行级设定，不改变 fence 插件边界；这里按任务要求只记录建议，未直接改 DESIGN。
