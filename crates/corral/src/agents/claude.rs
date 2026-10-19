@@ -43,8 +43,14 @@ impl Adapter for Claude {
     }
     fn transcript_interrupt(&self, snapshot: &Value) -> Option<f64> {
         use std::io::{Read, Seek, SeekFrom};
+        use std::os::unix::fs::OpenOptionsExt;
         let input_t = snapshot["turn_started"].as_f64()?;
-        let mut file = std::fs::File::open(snapshot["transcript_path"].as_str()?).ok()?;
+        // Validate the opened FD, including symlink targets, without waiting for a FIFO writer.
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(snapshot["transcript_path"].as_str()?)
+            .ok()?;
         let metadata = file.metadata().ok()?;
         if !metadata.is_file() {
             return None;
@@ -67,7 +73,9 @@ impl Adapter for Claude {
             match record["type"].as_str()? {
                 "assistant" => return None,
                 "user" => {
-                    if record["sessionId"] != snapshot["main_session"] {
+                    if record["sessionId"] != snapshot["main_session"]
+                        || record["isSidechain"] == true
+                    {
                         return None;
                     }
                     let content = &record["message"]["content"];

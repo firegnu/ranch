@@ -380,3 +380,144 @@ fn claude_transcript_fallback_and_other_agents_keep_hook_behavior() {
     assert_eq!(st["interrupted"], false);
     assert_eq!(lab.json(&["reply", "test/work"])["text"], "normal reply");
 }
+
+fn claude_cursor_recovery(legacy: bool) {
+    let lab = Lab::new();
+    lab.event("Stop", json!({"background_running":0}));
+    lab.transcript_turn();
+    let cursor_path = lab.0.path().join("pens/test/work/cursor");
+    lab.json(&["status", "test/work"]);
+    let stale = fs::read(&cursor_path).unwrap();
+    lab.transcript("[Request interrupted by user]", "2024-01-01T00:00:01.000Z");
+    assert_eq!(lab.json(&["status", "test/work"])["interrupted"], true);
+    // Reader A's delayed write overwrites reader B's detected interruption.
+    fs::write(&cursor_path, &stale).unwrap();
+    lab.event("Notification", json!({"notification_type":"idle_prompt"}));
+    if legacy {
+        // A v5 reader replays these hooks, producing idle without interruption evidence.
+        let mut old: Value = serde_json::from_slice(&stale).unwrap();
+        old["cursor"] = json!(5);
+        old["state"] = json!("idle");
+        old["last_event"] = json!("Notification");
+        old["offset"] = json!(
+            fs::metadata(lab.0.path().join("pens/test/work/events"))
+                .unwrap()
+                .len()
+        );
+        old.as_object_mut().unwrap().remove("transcript_path");
+        old.as_object_mut().unwrap().remove("turn_open");
+        fs::write(&cursor_path, old.to_string()).unwrap();
+    } else {
+        // event() queries status first; restore A again so no intermediate detection survives.
+        fs::write(&cursor_path, &stale).unwrap();
+    }
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "idle");
+    assert_eq!(st["interrupted"], true);
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+        "interrupted"
+    );
+    let reply = lab.out(&["reply", "test/work"]);
+    assert_eq!(reply.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&reply.stdout).unwrap()["interrupted"],
+        true
+    );
+    // A real end remains authoritative even after another notification and a cache rebuild.
+    for end in ["Stop", "StopFailure"] {
+        lab.event(
+            end,
+            json!({"last_assistant_message":"finished", "background_running":0}),
+        );
+        lab.event("Notification", json!({"notification_type":"idle_prompt"}));
+        fs::remove_file(&cursor_path).unwrap();
+        assert_eq!(lab.json(&["status", "test/work"])["interrupted"], false);
+    }
+    lab.event(
+        "UserPromptSubmit",
+        json!({"prompt":"continue", "t":1704067202.0}),
+    );
+    lab.event("Notification", json!({"notification_type":"idle_prompt"}));
+    fs::remove_file(&cursor_path).unwrap();
+    assert_eq!(lab.json(&["status", "test/work"])["interrupted"], false);
+}
+
+#[test]
+fn claude_recovers_interruption_after_stale_reader_write() {
+    claude_cursor_recovery(false);
+}
+
+#[test]
+fn claude_recovers_interruption_after_legacy_cursor_rebuild() {
+    claude_cursor_recovery(true);
+}
+
+#[test]
+fn claude_fifo_and_symlink_do_not_block_status_or_wait() {
+    use std::{ffi::CString, os::unix::fs::symlink};
+    let lab = Lab::new();
+    lab.transcript_turn();
+    let transcript = lab.0.path().join("transcript.jsonl");
+    let fifo = lab.0.path().join("fifo");
+    let name = CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    for linked in [false, true] {
+        if linked {
+            fs::rename(&transcript, &fifo).unwrap();
+            symlink(&fifo, &transcript).unwrap();
+        } else {
+            fs::rename(&fifo, &transcript).unwrap();
+        }
+        for args in [
+            vec!["status", "test/work"],
+            vec!["wait", "test/work", "--timeout", "0.2"],
+        ] {
+            let mut command = Command::new(lab.0.path().join("corral"));
+            command
+                .args(&args)
+                .env("HOME", lab.0.path())
+                .env("CORRAL_HOME", lab.0.path().join("pens"))
+                .env("SHELL", "/bin/sh")
+                .env_remove("CODEX_SANDBOX")
+                .stdout(Stdio::piped());
+            let mut child = command.spawn().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if child.try_wait().unwrap().is_some() {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("{args:?} blocked on FIFO (symlink={linked})");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let out = child.wait_with_output().unwrap();
+            let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+            if args[0] == "status" {
+                assert_eq!(value["state"], "working");
+                assert_eq!(value["interrupted"], false);
+            } else {
+                assert_eq!(out.status.code(), Some(4), "{value}");
+                assert_eq!(value["error"], "timeout");
+            }
+        }
+    }
+}
+
+#[test]
+fn claude_sidechain_with_main_session_id_is_not_an_interruption() {
+    let lab = Lab::new();
+    lab.transcript_turn();
+    lab.transcript("[Request interrupted by user]", "2024-01-01T00:00:01.000Z");
+    let path = lab.0.path().join("transcript.jsonl");
+    let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    record["isSidechain"] = json!(true);
+    record["agentId"] = json!("subagent");
+    fs::write(path, format!("{record}\n")).unwrap();
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "working");
+    assert_eq!(st["interrupted"], false);
+}

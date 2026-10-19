@@ -91,3 +91,12 @@
 - 没做的事：没有改 pen、sandbox、fence、升级或 attach，没有改 Claude 设置、其他仓库或别家识别，没有部署、安装技能、升级用户 agent、合并 main 或推送。没有开审查 agent。真实 Claude 和合成提醒接收端均已停止，隔离 corral ls 为空；证据与检查日志在 `/tmp/r24.zZTsxw`，未提交运行数据。本任务限定范围不含 DESIGN，主控合并时可补其 R22 后的 R24 说明。
 - 踩过的坑：合成 `/bin/cat` 不会发 UserPromptSubmit，最初错误地期待 send 自动确认，导致首次全套中止；改为先看到输入实际到达，再补合成钩子，明确断言 confirmed=true。只在查询中覆盖状态会丢掉已识别的打断原因，收尾回归复现后改为缓存。没有把失败运行写成通过，也没有删测试、放宽断言或缩短超时。
 - 主控需决定的事：上述真人秒级计时证据是否需要补充；其余没有新待决定项。本分支留给主控及规定的交叉审查，不自行合并。
+
+### 返工 1
+
+- 四条审查意见均已修复。新增内部 `turn_open`，由当前实例、主会话的输入及明确结束事件重放得到，空闲通知不关闭它；未结束的一轮即使状态已是 idle，也可从同一份对话记录恢复打断证据。正常 Stop/StopFailure、会话结束关闭该轮，换主会话重置，新输入仍用严格时间比较排除旧标记。不新增事件文件写入方。cursor 升到 7，避免沿用缺少轮次边界的旧缓存。
+- 读对话记录改为 `O_NONBLOCK` 打开后对实际 FD 检查普通文件，FIFO 及指向它的符号链接立即退回未识别。显式 `isSidechain:true` 的用户记录即使 sessionId 相同也不作为打断证据。CONTRACT、guide、两份技能同步说明：调用方及提醒进程需用新版，该命名空间的 `.runtime/helper` 也需切到能记录路径的版本；新版 upgrade 会切换 helper，单纯重开不足。没有改 pen 或 helper 选择逻辑，paddock 不用动。
+- 先补四条回归并运行：同版过期回写、旧版缓存重建后 interrupted=false；FIFO 查询超过 2 秒截止时间；同 sessionId 的侧链使状态错误变 idle，四条均在目标缺陷上失败。缓存回归控制写入顺序，并构造旧版 v5 缓存触发重放，不依赖真实旧程序或随机并发；同一用例还核对 wait/reply 保护，以及 Stop/StopFailure、新输入后再通知及重建不会误判。FIFO 用例对普通 FIFO 和符号链接分别检查 status 返回与 wait 的 0.2 秒超时，超出 2 秒就按子进程句柄终止并回收。
+- 修正后只跑指定范围：interrupted 集成测试 14 项、Claude 适配器单元测试 1 项、events 回归 4 项、protocol 状态时间与缓存重放 1 项，全部通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 通过。快照仅更新 cursor 版本和新增内部 turn_open；去掉这两项后与提交前快照逐字比较一致，没有改其他期望值。
+- 踩过的坑：FIFO 修复后的首次复跑发现新测试误把 wait 超时当作 result=timeout；实际约定是退出码 4、error=timeout，已按该约定修正断言，2 秒截止时间保留。初始 FIFO 阻塞的测试进程已按句柄杀掉并回收，合成 agent 由夹具停止。
+- 未重复全套或真人实测，未打开真实 agent、读取真实 Claude 对话、部署、合并或推送；没有改主仓库审查文件。主控已决定不补真人精确计时，本次不重开该问题，没有新的待决定项。
