@@ -242,7 +242,8 @@ echo "<摘要>" | ranch dispatch route
 
   免确认也就没有安全网：能约束它的只剩任务文件里「不要做」那几条，所以那一节要写全。免确认跳不过「是否信任这个目录」的框，见下一条。
 - 开完运行 `corral wait <名字> --timeout 60`，不要用 sleep 等。60 秒到了状态还是 `starting`，就是卡在「是否信任这个目录」这类对话框上（新项目、新仓库第一次开时常见；amp、agy 还可能是 corral 的插件没装好或被停用，见 corral 技能）。这时请用户在另一个终端窗口运行 `corral attach <名字>`，或者在看板里选中它去点。不要替它点，也不要让用户在你这里用 `!` 运行。卡在启动中时，提醒不会来，不要干等。
-- 写代码都是长任务：按 corral 技能「长任务」一节挂提醒，交出去就结束这一轮。
+- 前台这次 wait 如果对方已经停了，按第 5 节收到提醒的规则查状态和回复、判断 DONE，不能当成「起来了」就结束；没写 DONE 且仍在的，告诉用户并挂提醒（Claude Code 连后台 wait 一起）；被打断的照原规则处理，已经退出或不在了的不再挂。
+- 写代码都是长任务：仍在干活的，按 corral 技能「长任务」一节挂提醒（Claude Code 连后台 wait 一起），交出去就结束这一轮。
 - 已识别为被打断的这一轮不触发 `--after` 提醒，原提醒继续等下一轮正常结束；等满 `--timeout` 仍会送。Claude Code 从对话记录末尾识别晚于最近一次输入的明确打断标记；调用方和提醒进程需用新版，且该 CORRAL_HOME 的 `.runtime/helper` 要经新版 `corral upgrade` 等方式切到能记录路径的版本；单纯切换 CLI 或重开不够，记录读不到或格式不认识时仍认不出。收到提醒先查 `status`，不能只凭提醒认为完成。
 - omp 最终 `agent_end` 的最后一条 assistant 消息同时带 `stopReason: "aborted"`、`errorMessage: "Interrupted by user"`、`errorId` 的 UserInterrupt 位（67108864）时按打断处理，wait 返回 `interrupted`，reply 报 `no_reply` 带 `interrupted: true`。调用方和提醒进程用新版即可，采集器不用换、omp 不用重开。Esc 只取消命令、模型继续正常结束不算打断；其他中止和 `willContinue` 照旧。
 - 告诉用户：开了谁、哪家哪一档、在哪个 worktree、做什么、做完怎么通知。
@@ -252,7 +253,8 @@ echo "<摘要>" | ranch dispatch route
 
 每件都审，按这件活影响面那一档的预算审（第 3 节），不超出。重点是核实对方说的，不是自己再证一遍：
 
-- 收到提醒先查 `corral status <名字>`；`interrupted: true`、wait 的 `result: "interrupted"`，或 reply 的 `no_reply` 带 `interrupted: true`，都表示这一轮被打断，不进入完成审查。告诉用户，等它继续；没有中断标记时再读 reply，核实 DONE 和完成记录。
+- 收到提醒（或被后台 wait 叫醒）先查 `corral status <名字>`；`interrupted: true`、wait 的 `result: "interrupted"`，或 reply 的 `no_reply` 带 `interrupted: true`，都表示这一轮被打断，不进入完成审查。告诉用户，等它继续；没有中断标记时再读 reply，核实回复最后一行是 DONE 和完成记录。
+- 空闲或 blocked 但回复最后一行不是 DONE（如等人操作、问问题），照旧告诉用户去 `corral attach <名字>` 看，同时按 corral 技能「长任务」一节再挂一次提醒（Claude Code 连后台 wait 一起），结束这一轮。用户在对方窗口里直接聊，或通过主控转话，都要继续盯；下次被叫醒仍按同样规则判断，直到看到 DONE。对方又在干活，是被叫早了，同样重挂；对方已经退出或不在了但没有 DONE，告诉用户，不再挂提醒或后台 wait。
 - 对方的完成回复是待核对的说明，不替代代码和检查结果。重点核对任务目标和关键行为断言，不因此另列审计清单或加验证。
 - 读完成记录和回复，看 diff：只动了该动的，「不要做」里的一件都没做，「怎么算做完」逐条达到。
 - 测试：看得见的活不重跑套件；改行为、碰要害的重跑一次项目的标准测试，核对数字和对方说的一致。

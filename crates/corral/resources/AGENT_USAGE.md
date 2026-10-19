@@ -48,7 +48,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 - 提醒的话写成「<名字> 这一轮结束了，去看它的状态和回复」。`send --after` 立即返回；告诉人已经交出去，然后结束这一轮。
 - 对方这一轮结束（或卡在对话框、退出、等满 `--timeout`）时，这句话会像人打字一样送进你的输入框；你正在干活、人刚在你的窗口里操作过时，它会等一会儿再送。
 - 已识别为被打断的这一轮不触发提醒，原提醒继续等下一轮正常结束；等满 `--timeout` 仍照旧送，所以收到提醒不代表做完。
-- 收到后先 `corral status <名字>`：`interrupted: true` 表示被打断，告诉人，不当成做完；否则再看 `corral reply <名字>`。reply 报 `no_reply` 且带 `interrupted: true` 时也按打断处理。回复最后一行是 DONE，取结果告诉人，不要 stop；对方又在干活，是被叫早了，再挂一次 `send --after`；没有 DONE 但对方已经停了，告诉人去 attach 看。
+- 收到提醒（或被后台 wait 叫醒）后先 `corral status <名字>`：`interrupted: true` 表示被打断，告诉人，不当成做完；否则再看 `corral reply <名字>`。reply 报 `no_reply` 且带 `interrupted: true` 时也按打断处理。回复最后一行是 DONE，取结果告诉人，不要 stop；对方又在干活，是被叫早了，再挂一次 `send --after`（Claude Code 连后台 wait 一起，见 corral 技能「长任务」一节）；空闲或 blocked 但回复最后一行不是 DONE（如等人操作、问问题），告诉人去 attach 看，同时再挂一次提醒（Claude Code 连后台 wait 一起），结束这一轮。人在对方窗口里直接聊，或通过你转话，都要继续盯；下次被叫醒仍按同样规则判断，直到看到 DONE。对方已经退出或不在了但没有 DONE，告诉人，不再挂提醒或后台 wait。
 - corral 只知道「这一轮结束」，不知道「做完」，所以一定要靠 DONE 判断。
 - 让已经开着的对方接着做长活：用 `send` 把新任务交过去（末尾同样带 DONE 约定），再挂 `send --after`，不要重新 start。
 - 新提醒返回 `request_id`。用 `corral after <接收者名字> --request-id <ID>` 查 waiting/sending/sent/confirmed/not_delivered/unknown/expired；pending 不是送达。unknown 表示不能证实原请求，不能重发或换 ID 再送。
