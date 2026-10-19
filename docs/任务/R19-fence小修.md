@@ -55,3 +55,24 @@
 
 ## 做完
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话；第 5 项的结论单列。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：fence 执行 runner 失败及 runner 捕获的自身/srt 错误写入 `exit.json.message`，`denials` 原样返回；agent 自己退出 125 不加 message。`denials.counts` 统计全部已记录类型，固定四键补零、未知类型保留，支持 `--limit 0`。dev 增加 `TMPPREFIX=${tmp}/zsh`，不放宽路径。CONTRACT 改准错误读取位置、墙内 corral 的 127/6，说明 paddock P5-120 可忽略兼容新增字段，采用 counts 在前端自己的任务里做。
+- 针对验证：三项各新增一条测试，均先得到目标缺陷的 RED，再改为 GREEN。错误测试先因 `exit.message` 缺失失败，最终覆盖 srt 初始化错误、fence exec 失败、agent 自退 125 及命令/首句不落入记录；计数测试先因 counts 缺失失败，最终覆盖空记录、未知类型、limit 0/1/200、truncated。heredoc 测试放在 `tests/srt.rs` 的 ignore 组，本机用已安装的 srt 0.0.80（仅借用库，未修改安装）实跑：先报 `can't create temp file for here document: operation not permitted`，改后输出 `heredoc works`。测试使用隔离 HOME/FENCE_HOME 和合成程序；fence CLI 相关测试 12 条通过。
+- 拿主意的地方：沿用现有错误捕获点，只保存运行时错误说明，不采集子进程 stderr；创建运行记录之前的错误仍走 stderr，CONTRACT 明示该边界。TMPPREFIX 用已有临时目录下的 `zsh` 前缀。没有改设计；DESIGN §8 原句“墙里调 corral 报 sandbox”建议主控同步为 CONTRACT 的“通常 127，能执行 corral 时 6”，按任务要求本分支未改 DESIGN。
+- 标准验证：`CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r19-fence-fixes` 下，`cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各跑一次，全部通过；命令均在前台运行并等待退出。自查差异仅涉及 fence、CONTRACT 和本任务完成记录，`git diff --check` 通过。
+- 没做的事：没有改 corral、paddock、技能或用户规则，没有部署、升级、合并或推送；没有修第 5 项，没有增加真实 agent 验证。
+- 踩过的坑：错误测试的合成 srt 最初直接返回传入命令，和 runner 外层的 exec 拼成 `exec exec`，agent-125 分支得到 127；改为现有 runner 测试同样的 shell 包装后通过。此夹具错误不作为 RED 依据；此前 srt-error 分支已经因缺少 message 得到有效 RED。墙内 git 提交仍会打印已有的 `packed-refs.lock` 禁写错误，但提交成功，与本次 garbage 无关。
+
+### 第 5 项：count-objects 的 garbage（只查不修）
+
+结论：本机 Git 2.56.0 自身创建 worktree 的 refs 目录、又把它报成 garbage，不是 fence 的预建目录或 srt/墙内命令留下的垃圾。隔离合成仓库中先 `git init -b main`、空提交，再各建 outside/inside 两个 worktree；尚未运行 fence、尚未在 worktree 提交，两个 `git count-objects -v` 都已报 `.git/worktrees/<wt>/refs`，`garbage: 1`、`size-garbage: 0`。随后墙外和真 srt 墙内各空提交一次，均成功，两个结果仍为同样的告警和数字；墙外再次读 inside 结果一致。两处 refs 均为空目录。
+
+直接源码依据（Git v2.56.0）：
+
+- [`refs/files-backend.c` 的 `files_ref_store_create_on_disk`](https://github.com/git/git/blob/v2.56.0/refs/files-backend.c#L3425-L3465) 无条件创建 refs，只对 worktree 跳过 heads/tags 子目录。
+- [`path.c` 的 `common_list` 和 `report_linked_checkout_garbage`](https://github.com/git/git/blob/v2.56.0/path.c#L344-L364) 将 refs 列为不忽略的条目，只要目录存在就上报。
+- [`builtin/count-objects.c`](https://github.com/git/git/blob/v2.56.0/builtin/count-objects.c#L39-L50) 只打印 warning、增加计数和目录大小；最终返回 0，不删除内容。`size-garbage` 按 KiB 向下取整，所以显示 0 不表示目录本身占用为零。
+
+影响：就这条空 refs 告警而言，是统计误报，不能据此判定对象损坏；实验中的两次提交均成功。建议保留目录，不在 fence 增加删除逻辑或放宽 `.git`；若要消掉告警，另行向 Git 上游反馈，让 linked-checkout garbage 检查识别合法的 worktree refs（并覆盖 worktree 专有 refs），或在确认新版修复后单独升级 Git。本轮未改。

@@ -93,6 +93,35 @@ impl Lab {
 
 #[test]
 #[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
+fn zsh_heredoc_uses_the_sandbox_temporary_directory() {
+    let l = Lab::new();
+    let out = l
+        .command()
+        .env_remove("TMPPREFIX")
+        .args([
+            "run",
+            "--profile",
+            "dev",
+            "--kind",
+            "claude",
+            "--agent",
+            "test/srt",
+            "--instance",
+            "zsh-heredoc",
+            "--",
+            "/bin/zsh",
+            "-f",
+            "-c",
+            "cat <<'EOF'\nheredoc works\nEOF\n",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.stdout, b"heredoc works\n");
+}
+
+#[test]
+#[ignore = "requires local srt 0.0.80 and its OS sandbox dependencies"]
 fn real_srt_enforces_files_network_and_reports_denials() {
     let l = Lab::new();
     fs::write(l.home.join("fake-key"), "not-a-real-secret").unwrap();

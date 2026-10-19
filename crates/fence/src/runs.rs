@@ -199,7 +199,7 @@ pub fn run(args: &[String]) -> Result<Value> {
     let e = command.exec();
     let _ = write(
         &dir.join("exit.json"),
-        &json!({"code":125,"signal":null,"t":now()}),
+        &json!({"code":125,"signal":null,"t":now(),"message":e.to_string()}),
     );
     Err(error("runtime_missing", e))
 }
@@ -260,6 +260,13 @@ pub fn denials(args: &[String]) -> Result<Value> {
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect();
+    let mut counts = json!({"network":0,"file-read":0,"file-write":0,"other":0});
+    for entry in &entries {
+        if let Some(kind) = entry["type"].as_str() {
+            counts[kind] = json!(counts[kind].as_u64().unwrap_or(0) + 1);
+        }
+    }
+    record["counts"] = counts;
     record["denials"] = json!(&entries[entries.len().saturating_sub(limit)..]);
     for key in ["pid", "layers", "cwd", "tmp"] {
         record.as_object_mut().unwrap().remove(key);

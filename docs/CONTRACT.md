@@ -137,9 +137,9 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 - `sandbox_unavailable`：找不到或无法执行 fence，或 `CORRAL_FENCE` 非绝对路径。
 - `sandbox_failed`：fence 检查未同时返回退出码 0 与 `ok:true`；`fence` 字段携带其原始 JSON 错误。
 
-墙内继承 `FENCE_RUN`，再调 corral 用户命令报 `sandbox`，退出码 6，message 为 `running inside fence`；`__hook`、`guide` 仍可用。因此这个阶段墙内 agent 不能再派活。
+墙内继承 `FENCE_RUN`。PATH 上的 `~/.local/bin/corral` 通常处于 HOME 禁读范围，shell 常报找不到或没权限（通常退出码 127）；corral 程序读得到、能执行时，用户命令才报 `sandbox`、退出码 6，message 为 `running inside fence`，`__hook`、`guide` 仍可用。两种情况都不能再派活，不为保证退出码 6 放开 HOME。
 
-检查与运行之间条件变化、srt 初始化失败时，start 可能已经返回成功；随后 agent 停止，退出码 125，原因在终端中，可用 `corral read` 读取。fence 不会回退成无 sandbox 运行。runner 正常结束时透传原程序的退出码或信号；runner 意外先死时 pen 清理剩余进程组。
+检查与运行之间条件变化、srt 初始化失败时，start 可能已经返回成功；随后 agent 停止，退出码 125。已有运行记录的 fence 执行 runner 失败、runner 捕获的自身或 srt 错误，原因保存在 `fence denials` 的 `exit.message`；agent 退出、状态目录被清理后，`corral read` 读不到终端。创建运行记录前的失败仍只向 stderr 报错。fence 不会回退成无 sandbox 运行。runner 正常结束时透传原程序的退出码或信号；runner 意外先死时 pen 清理剩余进程组。
 
 ### `corral child-sandbox NAME [<档案> | --clear]`（R18）
 
@@ -201,7 +201,7 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 `fence check --profile <档案> [--kind <种类>] [--cwd <目录>]`：只读，不创建运行记录或 mkdir 目录。cwd 默认当前目录；不带 kind 只检查档案和本机补充；带 kind 再合并种类、模型服务与工作区 `.fence.toml`。检查程序、固定 node/srt 和 Linux 的 bwrap/socat/rg。
 
 ```json
-{"ok":true,"profile":"dev","kind":"codex","platform":"macos","cwd":"/Users/u/w/x","layers":[{"source":"profile","name":"dev","origin":"builtin"},{"source":"agent","name":"codex","origin":"builtin"},{"source":"service","name":"openai","origin":"builtin"},{"source":"repo","path":"/Users/u/w/x/.fence.toml"}],"settings":{"network":{"allowedDomains":["chatgpt.com"],"deniedDomains":[]},"filesystem":{"denyRead":["/Users/u"],"allowRead":["/Users/u/w/x"],"allowWrite":["/Users/u/w/x"],"denyWrite":["/Users/u/w/x/.fence.toml","/Users/u/.fence"]},"allowPty":true,"enableWeakerNetworkIsolation":true},"env":{"TMPDIR":"<运行时才有>"},"args":["-c","projects={\"/Users/u/w/x\"={trust_level=\"trusted\"}}"],"skipped":[],"warnings":["weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）"],"runtime":{"node":{"path":"/Users/u/.nvm/versions/node/v24.13.1/bin/node","version":"v24.13.1","ok":true},"srt":{"version":"0.0.80","ok":true}}}
+{"ok":true,"profile":"dev","kind":"codex","platform":"macos","cwd":"/Users/u/w/x","layers":[{"source":"profile","name":"dev","origin":"builtin"},{"source":"agent","name":"codex","origin":"builtin"},{"source":"service","name":"openai","origin":"builtin"},{"source":"repo","path":"/Users/u/w/x/.fence.toml"}],"settings":{"network":{"allowedDomains":["chatgpt.com"],"deniedDomains":[]},"filesystem":{"denyRead":["/Users/u"],"allowRead":["/Users/u/w/x"],"allowWrite":["/Users/u/w/x"],"denyWrite":["/Users/u/w/x/.fence.toml","/Users/u/.fence"]},"allowPty":true,"enableWeakerNetworkIsolation":true},"env":{"TMPDIR":"<运行时才有>","TMPPREFIX":"<运行时才有>/zsh"},"args":["-c","projects={\"/Users/u/w/x\"={trust_level=\"trusted\"}}"],"skipped":[],"warnings":["weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）"],"runtime":{"node":{"path":"/Users/u/.nvm/versions/node/v24.13.1/bin/node","version":"v24.13.1","ok":true},"srt":{"version":"0.0.80","ok":true}}}
 ```
 
 示例的路径和域名列表已缩短。`settings` 为实际合并规则；运行时专有的 `${tmp}` 显示为 `<运行时才有>`。`skipped:[{entry,reason}]` 列出缺值或不存在的读路径，`warnings` 列出环境覆盖与平台差异。Codex 默认 trustd 规则会削弱 macOS 网络隔离。
@@ -210,19 +210,23 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 
 `check` 在合并时校验域名和可选端口，错误返回 `invalid_data`，附规则来源和 `domains[索引]`；`run` 复用同一校验，在创建运行记录和启动程序前失败。允许 `*.example.com`、`example.com:443`、`[::1]`、`[2001:db8::1]:443` 等 srt 格式；端口为 1–65535，不带前导零。
 
-`fence denials --agent <名字> [--instance <实例>] [--limit <n>]`：只读，未给实例时取该名字最近一次运行；前端宜传 `corral status` 的 instance，避免重名混淆。limit 默认 200，取最后 n 条并保持时间顺序；没有匹配记录返回 `not_found`。
+`fence denials --agent <名字> [--instance <实例>] [--limit <n>]`：只读，未给实例时取该名字最近一次运行；前端宜传 `corral status` 的 instance，避免重名混淆。limit 默认 200，取最后 n 条并保持时间顺序；`--limit 0` 返回 `denials:[]`，仍给出 `counts`；没有匹配记录返回 `not_found`。
 
 ```json
-{"ok":true,"agent":"ranch/dev-x","instance":"0123abcd4567","profile":"dev","kind":"codex","started":1760760000.1,"running":false,"exit":{"code":0,"signal":null,"t":1760760200.1},"monitors":{"network":true,"files":true},"denials":[{"t":1760760123.4,"type":"network","target":"example.com:443","detail":"deny network-outbound example.com:443 (not on the allow list)"}],"truncated":false}
+{"ok":true,"agent":"ranch/dev-x","instance":"0123abcd4567","profile":"dev","kind":"codex","started":1760760000.1,"running":false,"exit":{"code":0,"signal":null,"t":1760760200.1},"monitors":{"network":true,"files":true},"counts":{"network":1,"file-read":0,"file-write":0,"other":0},"denials":[{"t":1760760123.4,"type":"network","target":"example.com:443","detail":"deny network-outbound example.com:443 (not on the allow list)"}],"truncated":false}
 ```
 
 类型为 `network`、`file-read`、`file-write`、`other`；不认识目标时 `target:null`。running 表示 runner 尚在运行；exit 来自 runner 的退出记录，没有则为 null。网络记录来自 srt 代理，macOS 文件记录来自系统日志，Linux 文件记录是 seccomp 对写尝试的诊断提示，路径可能不准且没有读记录。srt 没有监视器健康接口，因此 `files` 只有收到文件事件后才为 true；false 表示尚未证实能记录，文件拒绝还可看 agent 终端。
 
 Linux 的 `deny <syscall> <路径>` 事件归为 `file-write`，`target` 为上游报告的路径，收到后同样置 `monitors.files:true`；不因此把写尝试诊断视为准确的文件访问审计。
 
+R19：`counts` 按 `type` 统计这次运行全部已记录条目，不受 `--limit` 影响；`network`、`file-read`、`file-write`、`other` 四个键总在，没有为 0，未知类型按原值另加键。`truncated:true` 时也只统计已记下的条目。fence/runner 自身或 srt 失败的退出记录可带 `message`，例如 `{"code":125,"signal":null,"t":1760760200.1,"message":"srt initialization failed"}`；只保存运行时自身错误说明，不保存 agent 命令或首句。agent 自己退出（包括退出码 125）不加 `message`。旧记录可能没有这些字段。对 paddock：P5-120 按约定忽略新增字段，不改也能用；卡片若要省掉拉全量，在 paddock 自己的任务里改用 `counts`。
+
 记录在 `$FENCE_HOME/runs/<实例>/`（默认 `~/.fence/runs/`），由墙外的 fence/runner 写：`run.json`、0600 的 `settings.json`、`denials.jsonl`、`monitor.json`、`exit.json`。拒绝日志最多 5 MiB，满了停写并报 `truncated:true`；不保存完整 agent 命令或首句。`--limit` 仅限制返回条数，不改变 truncated。文件事件可能漏记，`files:true` 只证明收到了文件事件，不保证覆盖每次拒绝；`truncated:false` 也不代表上游日志没有遗漏。
 
 临时目录在 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，与记录分开，起 agent 前创建并按档案放行读写。每次启动清理已结束超过 7 天的记录和它对应的临时目录。整个 `$FENCE_HOME` 及工作区 `.fence.toml` 始终禁止写。
+
+内置 `dev` 档案设 `TMPDIR=${tmp}`、`TMPPREFIX=${tmp}/zsh`，让 zsh 的 heredoc 临时文件也写在已放行的临时目录；用户整份替换的同名档案需自行补上 `TMPPREFIX`。
 
 这些强制保护路径以及数据层所有 `deny_write` 同时保护原路径、解析途中每一个符号链接节点和最终真实目标，包含中间目录组件及多跳链接，防止通过替换中间链接更换规则。末级路径尚不存在时，解析已有父目录后保留不存在的后缀；链接自身的目标必须存在，断链、循环或其他解析错误返回 `invalid_data`，拒绝启动。
 

@@ -28,6 +28,166 @@ impl Fixture {
 }
 
 #[test]
+fn runtime_failures_keep_messages_but_agent_exit_125_does_not() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let root = f.0.path();
+    let module = root.join("lib/srt/node_modules/@anthropic-ai/sandbox-runtime");
+    fs::create_dir_all(module.join("dist")).unwrap();
+    fs::create_dir_all(root.join("share/fence")).unwrap();
+    fs::write(module.join("package.json"), r#"{"type":"module"}"#).unwrap();
+    fs::write(
+        module.join("dist/index.js"),
+        r#"
+export const SandboxRuntimeConfigSchema = { parse: value => value };
+export const SandboxManager = {
+  getSandboxViolationStore: () => ({ subscribe: () => {} }),
+  initialize: async () => {
+    if (process.env.FAIL_SRT) throw new Error('srt initialization failed');
+  },
+  wrapWithSandbox: async command => "/bin/sh -c '" + command.replaceAll("'", "'\\''") + "'",
+  reset: async () => {}
+};
+"#,
+    )
+    .unwrap();
+    let runner = root.join("share/fence/runner.mjs");
+    fs::copy(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/resources/runner.mjs"),
+        &runner,
+    )
+    .unwrap();
+    let node = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .unwrap();
+    assert!(node.status.success());
+    let wrapper = root.join("runner");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexec '{}' '{}' \"$@\"\n",
+            String::from_utf8(node.stdout).unwrap().trim(),
+            runner.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let broken = root.join("broken-runner");
+    fs::write(&broken, "#!/nonexistent/fence-interpreter\n").unwrap();
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o700)).unwrap();
+    for (id, executable, fail_srt, expected) in [
+        (
+            "srt-error",
+            &wrapper,
+            true,
+            Some("srt initialization failed"),
+        ),
+        (
+            "exec-error",
+            &broken,
+            false,
+            Some("No such file or directory"),
+        ),
+        ("agent-125", &wrapper, false, None),
+    ] {
+        let mut command = f.command();
+        command.env("FENCE_RUNNER", executable);
+        if fail_srt {
+            command.env("FAIL_SRT", "1");
+        }
+        let out = command
+            .args([
+                "run",
+                "--profile",
+                "dev",
+                "--kind",
+                "claude",
+                "--agent",
+                "test/errors",
+                "--instance",
+                id,
+                "--",
+                "/bin/sh",
+                "-c",
+                "exit 125",
+                "private-first-prompt",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125), "{out:?}");
+        let result = f.call(&["denials", "--agent", "test/errors", "--instance", id]);
+        assert_eq!(result["exit"]["code"], 125, "{result}");
+        assert!(result["exit"]["t"].is_number());
+        assert_eq!(result["exit"]["signal"], Value::Null);
+        match expected {
+            Some(message) => assert!(
+                result["exit"]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains(message)),
+                "{result}"
+            ),
+            None => assert!(result["exit"].get("message").is_none(), "{result}"),
+        }
+        assert!(!result.to_string().contains("private-first-prompt"));
+        assert!(!result.to_string().contains("exit 125"));
+    }
+}
+
+#[test]
+fn denial_counts_cover_all_recorded_types_independently_of_limit() {
+    let f = Fixture::new();
+    let dir = f.0.path().join("fence/runs/counts");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("run.json"),
+        r#"{"agent":"test/counts","instance":"counts","started":1,"pid":0}"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("monitor.json"),
+        r#"{"monitors":{"network":true,"files":true},"truncated":true}"#,
+    )
+    .unwrap();
+    fs::write(dir.join("denials.jsonl"), "").unwrap();
+    let empty = f.call(&["denials", "--agent", "test/counts"]);
+    assert_eq!(
+        empty["counts"],
+        json!({"network":0,"file-read":0,"file-write":0,"other":0})
+    );
+    let entries = ["network", "network", "file-write", "future-type", "other"];
+    fs::write(
+        dir.join("denials.jsonl"),
+        entries
+            .map(|kind| format!("{}\n", json!({"type":kind})))
+            .concat(),
+    )
+    .unwrap();
+    for limit in ["0", "1", "200"] {
+        let result = f.call(&[
+            "denials",
+            "--agent",
+            "test/counts",
+            "--instance",
+            "counts",
+            "--limit",
+            limit,
+        ]);
+        assert_eq!(
+            result["counts"],
+            json!({"network":2,"file-read":0,"file-write":1,"other":1,"future-type":1})
+        );
+        assert_eq!(result["truncated"], true);
+        let expected = match limit {
+            "0" => json!([]),
+            "1" => json!([{"type":"other"}]),
+            _ => json!(entries.map(|kind| json!({"type":kind}))),
+        };
+        assert_eq!(result["denials"], expected);
+    }
+}
+
+#[test]
 fn deny_write_resolves_linked_parents_and_rejects_unresolvable_targets() {
     let f = Fixture::new();
     let root = f.0.path();
