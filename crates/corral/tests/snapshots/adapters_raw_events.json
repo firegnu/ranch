@@ -2,11 +2,12 @@
   "omp/no-ui": {
     "settled": {
       "background_running": null,
-      "cursor": 4,
+      "cursor": 5,
       "fmt": 1,
       "input_count": 0,
       "inputs": [],
       "inst": "inst",
+      "interrupted": false,
       "last_event": "SessionEnd",
       "last_event_t": 106.0,
       "last_prompt": null,
@@ -47,11 +48,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": null,
           "last_event_t": null,
           "last_prompt": null,
@@ -86,11 +88,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": null,
           "last_event_t": null,
           "last_prompt": null,
@@ -125,11 +128,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": null,
           "last_event_t": null,
           "last_prompt": null,
@@ -164,11 +168,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 104.0,
           "last_prompt": null,
@@ -209,11 +214,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Notification",
           "last_event_t": 105.0,
           "last_prompt": null,
@@ -254,11 +260,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionEnd",
           "last_event_t": 106.0,
           "last_prompt": null,
@@ -286,7 +293,7 @@
   "omp/turns": {
     "settled": {
       "background_running": null,
-      "cursor": 4,
+      "cursor": 5,
       "fmt": 1,
       "input_count": 1,
       "inputs": [
@@ -296,6 +303,7 @@
         }
       ],
       "inst": "inst",
+      "interrupted": false,
       "last_event": "SessionEnd",
       "last_event_t": 122.6,
       "last_prompt": "hi",
@@ -336,11 +344,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 101.0,
           "last_prompt": null,
@@ -381,11 +390,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 101.0,
           "last_prompt": null,
@@ -428,7 +438,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -438,6 +448,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 103.0,
           "last_prompt": "hi",
@@ -476,7 +487,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -486,6 +497,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 103.0,
           "last_prompt": "hi",
@@ -526,7 +538,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -536,6 +548,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Notification",
           "last_event_t": 105.0,
           "last_prompt": "hi",
@@ -576,7 +589,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -586,6 +599,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 106.0,
           "last_prompt": "hi",
@@ -626,7 +640,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -636,6 +650,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PreToolUse",
           "last_event_t": 107.0,
           "last_prompt": "hi",
@@ -676,7 +691,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -686,6 +701,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Notification",
           "last_event_t": 108.0,
           "last_prompt": "hi",
@@ -726,7 +742,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -736,6 +752,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 109.0,
           "last_prompt": "hi",
@@ -776,7 +793,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -786,6 +803,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 110.0,
           "last_prompt": "hi",
@@ -838,7 +856,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -848,6 +866,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 110.0,
           "last_prompt": "hi",
@@ -888,7 +907,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -898,6 +917,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 110.0,
           "last_prompt": "hi",
@@ -947,7 +967,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -957,6 +977,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 110.0,
           "last_prompt": "hi",
@@ -1004,7 +1025,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1014,6 +1035,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 110.0,
           "last_prompt": "hi",
@@ -1060,7 +1082,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1070,6 +1092,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 110.0,
           "last_prompt": "hi",
@@ -1131,7 +1154,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1141,6 +1164,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 110.0,
           "last_prompt": "hi",
@@ -1196,7 +1220,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1206,6 +1230,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 114.75,
           "last_prompt": "hi",
@@ -1253,7 +1278,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1263,6 +1288,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Notification",
           "last_event_t": 118.6,
           "last_prompt": "hi",
@@ -1301,7 +1327,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1311,6 +1337,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 119.6,
           "last_prompt": "hi",
@@ -1349,7 +1376,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1359,6 +1386,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 120.6,
           "last_prompt": "hi",
@@ -1399,7 +1427,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1409,6 +1437,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 121.6,
           "last_prompt": "hi",
@@ -1449,7 +1478,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1459,6 +1488,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionEnd",
           "last_event_t": 122.6,
           "last_prompt": "hi",
@@ -1486,7 +1516,7 @@
   "pi/agent-end": {
     "settled": {
       "background_running": null,
-      "cursor": 4,
+      "cursor": 5,
       "fmt": 1,
       "input_count": 1,
       "inputs": [
@@ -1496,6 +1526,7 @@
         }
       ],
       "inst": "inst",
+      "interrupted": false,
       "last_event": "Stop",
       "last_event_t": 104.44999999999999,
       "last_prompt": "p",
@@ -1536,11 +1567,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 101.0,
           "last_prompt": null,
@@ -1581,7 +1613,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1591,6 +1623,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 102.0,
           "last_prompt": "p",
@@ -1643,7 +1676,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1653,6 +1686,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 102.0,
           "last_prompt": "p",
@@ -1691,7 +1725,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1701,6 +1735,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 102.0,
           "last_prompt": "p",
@@ -1762,7 +1797,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1772,6 +1807,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 102.0,
           "last_prompt": "p",
@@ -1819,7 +1855,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1829,6 +1865,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 102.0,
           "last_prompt": "p",
@@ -1865,7 +1902,7 @@
   "pi/no-ui": {
     "settled": {
       "background_running": null,
-      "cursor": 4,
+      "cursor": 5,
       "fmt": 1,
       "input_count": 1,
       "inputs": [
@@ -1875,6 +1912,7 @@
         }
       ],
       "inst": "inst",
+      "interrupted": false,
       "last_event": "Stop",
       "last_event_t": 103.0,
       "last_prompt": "p",
@@ -1915,11 +1953,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 101.0,
           "last_prompt": null,
@@ -1960,7 +1999,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -1970,6 +2009,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 102.0,
           "last_prompt": "p",
@@ -2008,7 +2048,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2018,6 +2058,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 103.0,
           "last_prompt": "p",
@@ -2045,11 +2086,12 @@
   "pi/shutdown-without-reason": {
     "settled": {
       "background_running": null,
-      "cursor": 4,
+      "cursor": 5,
       "fmt": 1,
       "input_count": 0,
       "inputs": [],
       "inst": "inst",
+      "interrupted": false,
       "last_event": "SessionEnd",
       "last_event_t": 102.0,
       "last_prompt": null,
@@ -2090,11 +2132,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 101.0,
           "last_prompt": null,
@@ -2133,11 +2176,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionEnd",
           "last_event_t": 102.0,
           "last_prompt": null,
@@ -2165,7 +2209,7 @@
   "pi/turns": {
     "settled": {
       "background_running": null,
-      "cursor": 4,
+      "cursor": 5,
       "fmt": 1,
       "input_count": 4,
       "inputs": [
@@ -2187,6 +2231,7 @@
         }
       ],
       "inst": "inst",
+      "interrupted": false,
       "last_event": "SessionEnd",
       "last_event_t": 126.0,
       "last_prompt": "z",
@@ -2227,11 +2272,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 101.0,
           "last_prompt": null,
@@ -2272,11 +2318,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 101.0,
           "last_prompt": null,
@@ -2319,7 +2366,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2329,6 +2376,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 103.0,
           "last_prompt": "hi",
@@ -2369,7 +2417,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2379,6 +2427,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PreToolUse",
           "last_event_t": 104.0,
           "last_prompt": "hi",
@@ -2419,7 +2468,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2429,6 +2478,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 105.0,
           "last_prompt": "hi",
@@ -2469,7 +2519,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2479,6 +2529,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PreToolUse",
           "last_event_t": 106.0,
           "last_prompt": "hi",
@@ -2517,7 +2568,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2527,6 +2578,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Notification",
           "last_event_t": 107.0,
           "last_prompt": "hi",
@@ -2565,7 +2617,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2575,6 +2627,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 108.0,
           "last_prompt": "hi",
@@ -2631,7 +2684,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2641,6 +2694,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 108.0,
           "last_prompt": "hi",
@@ -2689,7 +2743,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2699,6 +2753,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 108.0,
           "last_prompt": "hi",
@@ -2737,7 +2792,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2747,6 +2802,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 111.0,
           "last_prompt": "hi",
@@ -2787,7 +2843,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2797,6 +2853,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 111.0,
           "last_prompt": "hi",
@@ -2840,7 +2897,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2850,6 +2907,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 111.0,
           "last_prompt": "hi",
@@ -2894,7 +2952,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2904,6 +2962,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 111.0,
           "last_prompt": "hi",
@@ -2947,7 +3006,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 1,
           "inputs": [
@@ -2957,6 +3016,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 111.0,
           "last_prompt": "hi",
@@ -3000,7 +3060,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 2,
           "inputs": [
@@ -3014,6 +3074,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 116.0,
           "last_prompt": "q3",
@@ -3056,7 +3117,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 3,
           "inputs": [
@@ -3074,6 +3135,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 117.0,
           "last_prompt": "q4",
@@ -3114,7 +3176,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3136,6 +3198,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "UserPromptSubmit",
           "last_event_t": 118.0,
           "last_prompt": "z",
@@ -3174,7 +3237,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3196,6 +3259,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Notification",
           "last_event_t": 119.0,
           "last_prompt": "z",
@@ -3234,7 +3298,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3256,6 +3320,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Stop",
           "last_event_t": 120.0,
           "last_prompt": "z",
@@ -3296,7 +3361,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3318,6 +3383,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "Notification",
           "last_event_t": 121.0,
           "last_prompt": "z",
@@ -3358,7 +3424,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3380,6 +3446,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 122.0,
           "last_prompt": "z",
@@ -3418,7 +3485,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3440,6 +3507,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "PostToolUse",
           "last_event_t": 122.0,
           "last_prompt": "z",
@@ -3480,7 +3548,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3502,6 +3570,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 124.0,
           "last_prompt": "z",
@@ -3542,7 +3611,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3564,6 +3633,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionStart",
           "last_event_t": 124.0,
           "last_prompt": "z",
@@ -3604,7 +3674,7 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 4,
           "inputs": [
@@ -3626,6 +3696,7 @@
             }
           ],
           "inst": "inst",
+          "interrupted": false,
           "last_event": "SessionEnd",
           "last_event_t": 126.0,
           "last_prompt": "z",
@@ -3653,11 +3724,12 @@
   "unknown-adapters": {
     "settled": {
       "background_running": null,
-      "cursor": 4,
+      "cursor": 5,
       "fmt": 1,
       "input_count": 0,
       "inputs": [],
       "inst": "inst",
+      "interrupted": false,
       "last_event": null,
       "last_event_t": null,
       "last_prompt": null,
@@ -3696,11 +3768,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": null,
           "last_event_t": null,
           "last_prompt": null,
@@ -3739,11 +3812,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": null,
           "last_event_t": null,
           "last_prompt": null,
@@ -3782,11 +3856,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": null,
           "last_event_t": null,
           "last_prompt": null,
@@ -3825,11 +3900,12 @@
         },
         "state": {
           "background_running": null,
-          "cursor": 4,
+          "cursor": 5,
           "fmt": 1,
           "input_count": 0,
           "inputs": [],
           "inst": "inst",
+          "interrupted": false,
           "last_event": null,
           "last_event_t": null,
           "last_prompt": null,
