@@ -136,6 +136,6 @@
   - corral 只调两条命令：起 pen 前 `fence check`，pen 里用 `fence run … -- <原命令>` 代替直接起 agent。fence 用同一版本目录里的那份（可用 `CORRAL_FENCE` 改），剥离时只改这一处。出错一律启动失败，不悄悄不套墙。
   - fence 用 Node 小脚本 `runner.mjs` 调 srt 的库接口起 agent（和 `hook_pi.ts` 同类，是跑在 srt 运行时里的代码，不算工具），被拦记录单独写进 `~/.fence/runs/<实例>/`，由 `fence denials` 读。agent 的临时目录 `${tmp}` 在 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`（R17b 实现时主控定：srt 的禁止写压过放行写，放在整个禁止写的 `~/.fence` 里就写不进；方案原写 `runs/<实例>/tmp`）。规则文件和数据里的禁止写连同符号链接途中每个节点、最终目标一起保护（R17b 交叉审查）。
   - 规则是 TOML：内置档案（只有 `dev`）、各家数据、模型服务编进 fence；用户在 `~/.fence/` 下放同名文件整份替换，`~/.fence/local.toml` 补本机的；仓库补充是工作区顶层的 `.fence.toml`，只许额外放行，墙里写不了。路径用 `${…}` 占位符、不许通配符，macOS 专有项写在 `[macos]` 段。Codex 默认开 trustd（削弱网络隔离，用户同意）。
-  - 套了墙的 agent 在墙里调 corral 报 `sandbox`，不能再开 agent。
+  - 套了墙的 agent 在墙里不能再开 agent：PATH 上的 `~/.local/bin/corral` 在 HOME 禁读里，通常报 127；corral 程序读得到时报 `sandbox`（退出码 6）。不为凑出 6 放开 HOME（R19，用户 10-19 同意）。
   - `packed-refs.lock` 报错不消除：提交不受影响，删除已打包的分支、`gc`、建新分支或 worktree 在墙里会失败。
 - 来历：`docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`、`docs/调研/R17b-fence方案.md`。

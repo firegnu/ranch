@@ -76,3 +76,10 @@
 - [`builtin/count-objects.c`](https://github.com/git/git/blob/v2.56.0/builtin/count-objects.c#L39-L50) 只打印 warning、增加计数和目录大小；最终返回 0，不删除内容。`size-garbage` 按 KiB 向下取整，所以显示 0 不表示目录本身占用为零。
 
 影响：就这条空 refs 告警而言，是统计误报，不能据此判定对象损坏；实验中的两次提交均成功。建议保留目录，不在 fence 增加删除逻辑或放宽 `.git`；若要消掉告警，另行向 Git 上游反馈，让 linked-checkout garbage 检查识别合法的 worktree refs（并覆盖 worktree 专有 refs），或在确认新版修复后单独升级 Git。本轮未改。
+
+## 主控审查
+
+- 看了 diff 和完成记录：只动了 `crates/fence` 和 CONTRACT，1–6 项都做到，「不要做」里的一件没做。`exit.message` 只取 runner 捕获的错误和 exec 的系统错误，不带 agent 命令和首句。第 5 项结论（Git 2.56.0 自身误报，墙外新建 worktree 同样复现）证据充分，同意不改。
+- 重跑标准测试：153 通过、0 失败、10 跳过（含新加的真 srt heredoc 测试），clippy、fmt 通过，和完成记录一致。
+- 照开发建议同步了 DESIGN §8 墙内调 corral 的说法（127／6）。
+- 结果：一次过
