@@ -6,7 +6,8 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过）；R17（sandbox，fence 接 srt，DESIGN §8）进行中：R17a 本机小试验、R17b fence 本体和 `corral start --sandbox` 都已收尾，R17b 已部署（10-19），R17c（5090 上验 Linux）暂缓，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
-  - 现装 `versions/aa3676b`（10-19 用户部署，部署后主控用 pi 数据在真墙里实测：`TMPDIR` 是实例临时目录，临时目录里 socket 能建能连，工作目录里建 socket 被拦并进了 denials；10-19 打包，R20：`dev` 放行自己 `${tmp}` 下的 unix socket（macOS），四家墙内 `TMPDIR` 都是自己的临时目录；工作区干净；两份技能 dry-run 都是 same，不用重装；不改 pen，不用 `corral upgrade --all`）。退回：三个链接切回 `versions/cb57e07/bin/`。10-19 paddock/main 复验通过：Claude Code、Codex 墙里跑 paddock 全量测试 792 过、0 失败，TMPDIR 都是各自实例目录。
+  - 现装 `versions/86e5c4a`（10-19 用户部署，部署前问过 paddock/main 没在实测；R22：被人打断的一轮 `status.interrupted`、`wait` 返回 `interrupted`、`reply` 报 `no_reply`、`--after` 跳过；两份技能已重装，主控核对三处都是 same，`status` 已带 `interrupted`；不改 pen，不用 `corral upgrade --all`；已开着的 pi 要重开才认得出打断）。退回：三个链接切回 `versions/aa3676b/bin/`，重装两份技能。
+  - 上一版 `versions/aa3676b`（10-19 用户部署，部署后主控用 pi 数据在真墙里实测：`TMPDIR` 是实例临时目录，临时目录里 socket 能建能连，工作目录里建 socket 被拦并进了 denials；10-19 打包，R20：`dev` 放行自己 `${tmp}` 下的 unix socket（macOS），四家墙内 `TMPDIR` 都是自己的临时目录；工作区干净；两份技能 dry-run 都是 same，不用重装；不改 pen，不用 `corral upgrade --all`）。退回：三个链接切回 `versions/cb57e07/bin/`。10-19 paddock/main 复验通过：Claude Code、Codex 墙里跑 paddock 全量测试 792 过、0 失败，TMPDIR 都是各自实例目录。
   - 上一版 cb57e07（10-19 用户部署，部署后主控实测：旧记录 `--limit 0` 给出 counts、check 的 env 有 TMPPREFIX、墙里 zsh heredoc 正常；10-19 打包，R19 fence 小修；工作区干净；两份技能 dry-run 都是 same，不用重装；不改 pen，不用 `corral upgrade --all`）。退回：三个链接切回 `versions/eff7a40/bin/`。
   - 上一版 eff7a40（10-19 用户部署，部署后主控用合成程序实测：设 dev 后子 agent 继承、`--no-sandbox` 不套、清除后不套；10-19 打包，R18 `corral child-sandbox`；工作区干净；两份技能 dry-run 都是 same，不用重装；R18 不改 pen 协议，不用 `corral upgrade --all`）。退回：三个链接切回 `versions/7fbb76d/bin/`。
   - 上一版 7fbb76d（10-19 上午 用户部署，R17b：fence 和 `corral start --sandbox`；工作区干净，srt 0.0.80，fence 用的 node 是 `~/.nvm/versions/node/v24.13.1/bin/node`，这个版本不能卸；技能没变，没重装；没跑 `corral upgrade --all`，R17b 的 pen 改动只对新开的 sandbox agent 起作用，`~/.corral/.runtime/helper` 仍是 `f86d1c2`）。部署后起 `ranch/test-sandbox`（claude，`--sandbox dev`）核对过：工作目录能写，写主仓库被拦，访问 example.com 被代理拒，两条都进了 `fence denials`；测完已停。退回：`corral`、`ranch` 切回 `versions/9683ab4/bin/`，删掉 `~/.local/bin/fence`。
@@ -32,7 +33,7 @@
 2. R19 已部署（10-19）：启动失败原因进 `fence denials` 的 `exit.message`，`denials` 加 `counts`（`--limit 0` 只拿条数），`dev` 设 `TMPPREFIX`，CONTRACT／DESIGN 改准墙内调 corral 是 127／6；`count-objects` 的 garbage 查明是 Git 2.56.0 自身误报，不改。paddock 想省掉拉全量，可在自己的任务里改用 `counts`。
 3. R17c 暂缓（用户 10-19：“先不做R17c了，先把全部的在macos上跑通”），草稿在 `docs/任务/R17c-Linux上验sandbox.md`；重开前先定那边谁来执行、代码怎么过去、验收。
 4. R21（amp 接入 sandbox）不做（用户 10-19：“sandbox不加amp了，这个太特殊了”）：amp 的插件只认父进程是 pen，套墙后不报状态；agy 的钩子同样，见任务文件末尾。已清干净。
-5. R22（人按 Esc 打断被委派的 agent 后，主控误以为做完）已合并（10-19），打包 `versions/86e5c4a` 待部署：切三个链接，重装两份技能（`corral install-skills`、`ranch dispatch install-skills`，都是 overwrite）；不改 pen，不用 `corral upgrade --all`，状态由调用方那份命令行现算，切了链接就是新行为，切之前已挂着的提醒仍是旧行为；已开着的 pi 要重开才认得出打断。审查者 ranch/review-r22-1 和审查 worktree 还留着（用户 attach 在上面），收尾等用户说。
+5. R22（人按 Esc 打断被委派的 agent 后，主控误以为做完）已合并、10-19 部署到 `versions/86e5c4a`；不改 pen，不用 `corral upgrade --all`，状态由调用方那份命令行现算，切了链接就是新行为，切之前已挂着的提醒仍是旧行为；已开着的 pi 要重开才认得出打断。审查者 ranch/review-r22-1 和审查 worktree 还留着（用户 attach 在上面），收尾等用户说。
 6. agy 进 sandbox 不做（用户 10-19：“不接了，改成不做吧”）。R23 摸底已合并：agy 1.4.2 启动要在本机开 TCP 监听，墙里被拒起不来；fence 没接 srt 的 `allowLocalBinding`（一开就放行所有本地地址监听和 localhost 任意端口），钩子父进程检查也要改。都要改代码。报告 `docs/调研/R23-agy进sandbox摸底.md`。
 
 ## 悬着
