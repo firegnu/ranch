@@ -27,6 +27,7 @@ pub const FILES: &[&str] = &[
     "exit.json",
     "pen.log",
     "labels.json",
+    "child-sandbox.json",
     "upgrade.json",
     "upgrade.committed",
     "upgrade.active",
@@ -267,10 +268,10 @@ pub fn list() -> Result<Vec<Value>> {
                 } else {
                     json!({})
                 };
-                agents.push(json!({"name":name,"instance":st["instance"],"kind":m["kind"],"cwd":m["cwd"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"],"sandbox":crate::sandbox::public(&m)}));
+                agents.push(json!({"name":name,"instance":st["instance"],"kind":m["kind"],"cwd":m["cwd"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"],"sandbox":crate::sandbox::public(&m),"child_sandbox":crate::child_sandbox::public(&d, &st["instance"])}));
             }
             Err(e) if e.code == 9 => {
-                agents.push(json!({"name":name,"incompatible":true,"proto":e.value["proto"]}))
+                agents.push(json!({"name":name,"incompatible":true,"proto":e.value["proto"],"child_sandbox":null}))
             }
             Ok(_) | Err(_) => {
                 let d = dir(&name)?;
@@ -289,7 +290,7 @@ pub fn list() -> Result<Vec<Value>> {
                         p = p.parent().unwrap();
                     }
                 } else if d.join("lock").exists() {
-                    agents.push(json!({"name":name,"starting":true}));
+                    agents.push(json!({"name":name,"starting":true,"child_sandbox":null}));
                 }
             }
         }

@@ -11,6 +11,7 @@
     "exit.json",
     "pen.log",
     "labels.json",
+    "child-sandbox.json",
     "upgrade.json",
     "upgrade.committed",
     "upgrade.active"
