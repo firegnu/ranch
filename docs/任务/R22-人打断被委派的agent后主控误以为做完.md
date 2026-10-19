@@ -97,3 +97,12 @@
 - 各补一条合成回归测试并先运行：关闭对话框的测试因 interrupted=false（期望 true）失败；打开对话框的测试因提醒结果 timeout（期望 blocked）失败。修复后两条通过；关闭测试同时验证 wait=interrupted、reply=no_reply/interrupted=true、提醒不按 idle 提前送出，以及真正新输入和正常结束后恢复回复并送出原提醒。
 - 只跑针对性和直接相关回归：`cargo test -p corral-core --test interrupted` 8 项，`cargo test -p corral-core --lib events::` 4 项，暂停提醒用例 `reminders_wait_for_a_paused_agent_on_either_side` 1 项，状态与缓存用例 `state_started_tracks_transitions_and_survives_events_and_cursor_replay` 1 项，全部通过；`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过。没有重跑全套或真人实测，没有修改快照、删除测试或放宽断言。
 - 拿主意的地方：idle_only 只在 reader 内部的转换事件上使用，不增加持久事件类型、状态值或公开字段；原 ui_prompt_end 的状态、last_event 等无关行为保持原样。paddock 不用动。本次没有新的坑或待主控决定事项；未部署、未合并、未推送。
+
+## 主控审查
+
+- 10-19 ranch/main 看了 diff 和完成记录：只动了 `crates/corral`、两份技能、CONTRACT，「不要做」里的一件没做；不新增状态值，paddock 不用动。重跑 `cargo test --all-targets` 165 通过、0 失败、11 跳过，clippy、fmt 通过，和对方说的一致。
+- 「怎么算做完」：Codex、pi、amp 经用户在真终端按 Esc 实测，打断后提醒不送、`wait` 不返回 `idle`、`reply` 不给上一轮的回复，接着干、正常结束后提醒照送。omp 本轮不改、agy 保留限制，用户在开发 agent 窗口里同意，主控 10-19 向用户核实过；Claude Code 没有打断事件，按任务第 5 条不改。
+- 交叉审查（`R22-审查.md`）第一轮必须改 2 条（pi 关扩展对话框会清掉打断标记；打断标记压住了 `blocked` 的提醒），主控都认可，返工 1（`c75a9d9`）修好，复核可以合并，必须改 0、建议改 0。
+- 主控自己的疏漏：中途把按 Esc 的步骤转给用户后没重新挂提醒，开发做完时没收到消息，用户提醒才知道；之后照 corral 技能加了后台等待作第二条通道。
+- 照任务在 DESIGN §7 末尾补了 R22 一条。
+- 结果：返工 1 次

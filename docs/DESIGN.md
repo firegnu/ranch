@@ -122,6 +122,7 @@
     - 用户 10-17 同意 corral 为它开的 agy 改写 agy 的信任列表；用户自己开的 agy 不受影响。
   - corral 技能里开 agy 改成 `-- agy --dangerously-skip-permissions`，和派活技能一致；Claude Code 不改（用户 10-17）。
   - 来历：`docs/任务/R13-agy启动抢跑与免确认.md`。
+- 被人打断的一轮（R22，用户 10-19）：人在被委派 agent 的窗口里按 Esc，原先和正常结束一样置为 `idle`，提醒照送、`reply` 给上一轮的回复，主控误以为做完。现在共用状态机记下 `interrupted`（状态仍是 `idle`，不加状态值，paddock 不用动；新输入清掉；pi 关扩展对话框的空闲恢复不清）；`wait` 返回 `interrupted`，`reply` 报 `no_reply` 带 `interrupted: true`，`send --after` 只在「idle 且被打断」时跳过、`blocked` 照送、超时照送。只认明确事件，不按输出、静默时间或读屏猜：Codex、amp（连按两次 Esc）、pi（采集器补记 `agent_settled.aborted`）已真人实测；omp 的 Esc 只取消当前命令、agy 和 Claude Code 没有打断事件，保留限制（用户在开发 agent 窗口里同意）。内部 cursor 缓存 4 → 5，新旧版本交替读时各自重放。来历：`docs/任务/R22-人打断被委派的agent后主控误以为做完.md`。
 
 ## 8. sandbox（用户 10-18）
 
