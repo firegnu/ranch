@@ -32,7 +32,7 @@
 2. R19 已部署（10-19）：启动失败原因进 `fence denials` 的 `exit.message`，`denials` 加 `counts`（`--limit 0` 只拿条数），`dev` 设 `TMPPREFIX`，CONTRACT／DESIGN 改准墙内调 corral 是 127／6；`count-objects` 的 garbage 查明是 Git 2.56.0 自身误报，不改。paddock 想省掉拉全量，可在自己的任务里改用 `counts`。
 3. R17c 暂缓（用户 10-19：“先不做R17c了，先把全部的在macos上跑通”），草稿在 `docs/任务/R17c-Linux上验sandbox.md`；重开前先定那边谁来执行、代码怎么过去、验收。
 4. R21（amp 接入 sandbox）不做（用户 10-19：“sandbox不加amp了，这个太特殊了”）：amp 的插件只认父进程是 pen，套墙后不报状态；agy 的钩子同样，见任务文件末尾。已清干净。
-5. R22（人按 Esc 打断被委派的 agent 后，主控误以为做完）已合并（10-19），打包 `versions/86e5c4a` 待部署：切三个链接，重装两份技能（`corral install-skills`、`ranch dispatch install-skills`，都是 overwrite）；不改 pen，不用 `corral upgrade --all`，但已开着的 agent 由旧版命令行算状态，主控和提醒用新版命令行才有新行为；已开着的 pi 要重开才认得出打断。审查者 ranch/review-r22-1 和审查 worktree 还留着（用户 attach 在上面），收尾等用户说。
+5. R22（人按 Esc 打断被委派的 agent 后，主控误以为做完）已合并（10-19），打包 `versions/86e5c4a` 待部署：切三个链接，重装两份技能（`corral install-skills`、`ranch dispatch install-skills`，都是 overwrite）；不改 pen，不用 `corral upgrade --all`，状态由调用方那份命令行现算，切了链接就是新行为，切之前已挂着的提醒仍是旧行为；已开着的 pi 要重开才认得出打断。审查者 ranch/review-r22-1 和审查 worktree 还留着（用户 attach 在上面），收尾等用户说。
 6. agy 进 sandbox 不做（用户 10-19：“不接了，改成不做吧”）。R23 摸底已合并：agy 1.4.2 启动要在本机开 TCP 监听，墙里被拒起不来；fence 没接 srt 的 `allowLocalBinding`（一开就放行所有本地地址监听和 localhost 任意端口），钩子父进程检查也要改。都要改代码。报告 `docs/调研/R23-agy进sandbox摸底.md`。
 
 ## 悬着
