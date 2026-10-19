@@ -1,5 +1,7 @@
 # 任务：amp 也能关进 fence 里照常干活
 
+**不做**（用户 10-19：“sandbox不加amp了，这个太特殊了”）。做到一半停下，改动没提交，worktree、分支、编译目录、临时目录都已清掉，agent 已关。
+
 2026-10-19，ranch/main 交给 ranch/dev-r21（Codex，gpt-6-astra / high）。
 路由：常规 / 交叉审查要 / 影响面：碰要害（路由：常规（置信 0.14）、要、碰要害）
 类型：功能变更
@@ -73,3 +75,13 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 停下来的原因（主控记，10-19）
+
+ranch/dev-r21-1 写了 amp 的种类和服务数据，`fence check --profile dev --kind amp` 能过，fence CLI 测试 17 项过；真实起 amp 时卡住，照任务书停下来问。用户听完决定不做，改动没提交，一并丢掉。查到的：
+
+- **插件不报状态**：corral 给 amp 装的全局插件（`crates/corral/resources/amp_plugin.ts` 的 `startedByCorral`）只认 amp 的父进程是 pen（`CORRAL_PEN_PID`），用来挡住 amp 里再开的 amp。套上墙后进程链是 `pen → fence runner → amp`，插件不报，状态一直 `starting`，派不了活。要通得改这条检查，改了用户要重装插件。agy 走的 `__hook`（`crates/corral/src/hooks.rs` 的 `global`）是同样的检查，以后给 agy 套墙会卡在同一处。
+- **配置目录要写**：amp 初始化时会改 `~/.config/amp` 目录本身的权限，整目录只读它就起不来；当时改成目录可写、单独保护设置文件、插件目录、`AGENTS.md` 和凭证。
+- amp 是 Bun 编译的本机程序，在墙里的临时目录留下 `.bun-*.node` 文件。
+
+结果：不做

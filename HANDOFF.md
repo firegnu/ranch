@@ -31,7 +31,7 @@
 1. R18 已部署（10-19）；paddock 正在做 P5-141（主控卡片上的勾，照 CONTRACT「`corral child-sandbox`（R18）」一节，用户 10-19）。P5-120 界面 paddock 已做完（用户 10-19）。10-17 起 ranch 的活由主控派出去（R15，AGENTS.md「开发方式（主控分派）」）。
 2. R19 已部署（10-19）：启动失败原因进 `fence denials` 的 `exit.message`，`denials` 加 `counts`（`--limit 0` 只拿条数），`dev` 设 `TMPPREFIX`，CONTRACT／DESIGN 改准墙内调 corral 是 127／6；`count-objects` 的 garbage 查明是 Git 2.56.0 自身误报，不改。paddock 想省掉拉全量，可在自己的任务里改用 `counts`。
 3. R17c 暂缓（用户 10-19：“先不做R17c了，先把全部的在macos上跑通”），草稿在 `docs/任务/R17c-Linux上验sandbox.md`；重开前先定那边谁来执行、代码怎么过去、验收。
-4. R21（amp 接入 sandbox）10-19 派给 ranch/dev-r21（Codex high），任务文件 `docs/任务/R21-amp接入sandbox.md`；用户定先做 amp、agy 以后再说，同意真实 amp 实测花额度。和 paddock 的 P5-141 并行，部署时避开 paddock 的真墙实测。
+4. R21（amp 接入 sandbox）不做（用户 10-19：“sandbox不加amp了，这个太特殊了”）：amp 的插件只认父进程是 pen，套墙后不报状态；agy 的钩子同样，见任务文件末尾。已清干净。
 
 ## 悬着
 
