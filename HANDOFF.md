@@ -35,7 +35,7 @@
 4. R21（amp 接入 sandbox）不做（用户 10-19：“sandbox不加amp了，这个太特殊了”）：amp 的插件只认父进程是 pen，套墙后不报状态；agy 的钩子同样，见任务文件末尾。已清干净。
 5. R22（人按 Esc 打断被委派的 agent 后，主控误以为做完）已合并、10-19 部署到 `versions/86e5c4a`；不改 pen，不用 `corral upgrade --all`，状态由调用方那份命令行现算，切了链接就是新行为，切之前已挂着的提醒仍是旧行为；已开着的 pi 要重开才认得出打断。
 6. agy 进 sandbox 不做（用户 10-19：“不接了，改成不做吧”）。R23 摸底已合并：agy 1.4.2 启动要在本机开 TCP 监听，墙里被拒起不来；fence 没接 srt 的 `allowLocalBinding`（一开就放行所有本地地址监听和 localhost 任意端口），钩子父进程检查也要改。都要改代码。报告 `docs/调研/R23-agy进sandbox摸底.md`。
-7. R24（Claude Code 被 Esc 打断后马上认出来）10-19 派给 ranch/dev-r24（Codex high），任务文件 `docs/任务/R24-ClaudeCode被打断后马上认出来.md`；读 Claude Code 对话记录末尾的打断标记，标记时间要晚于最近一次输入。实测要用户在真终端按两次 Esc。
+7. R24（Claude Code 被 Esc 打断后马上认出来）已合并（10-19），打包 `versions/aef2b4a` 待部署：切三个链接，重装两份技能；另外要切共用的 `~/.corral/.runtime/helper`（现在还指 `versions/f86d1c2`，Claude Code、Codex 的钩子都走它，只有 `corral upgrade` 才切）：开一个 `/bin/cat` 测试 agent，只 `corral upgrade` 它，再关掉，不碰别的 agent。
 
 ## 悬着
 
