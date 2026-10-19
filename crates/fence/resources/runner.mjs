@@ -69,6 +69,7 @@ try {
 } catch (error) {
   console.error(`fence: ${error.message}`);
   if (manager) await manager.reset().catch(() => {});
-  save(exitPath, { code: 125, signal: null, t: Date.now() / 1000 });
+  // Only our caught runtime diagnostic, never child stderr, argv, or the prompt.
+  save(exitPath, { code: 125, signal: null, t: Date.now() / 1000, message: error.message });
   process.exitCode = 125;
 }
