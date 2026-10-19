@@ -97,3 +97,12 @@
 - 没做的事：未改其他家识别、采集器、pen、sandbox、fence、升级、attach 或其他仓库；未部署、未装技能、未操作用户现有 agent、未合并 main、未推送。测试实例已 corral stop，隔离 corral ls 确认空。原始证据和检查日志留在 `/tmp/r25.2n6yJF`，不提交运行数据。主控及交叉审查留给 ranch/main 安排。
 - 踩过的坑：真实提醒的接收者是可识别的 omp，送达后的最终 phase 是 confirmed；首次前台轮询照合成 /bin/cat 用例只等 sent，因而没把已经确认的送达当作成功。随后按 confirmed 回执及实际收到的 R25-REMINDER-RECEIVED 核实，没有重发提醒或换 request_id。
 - 主控需决定的事：没有新增待决定项；等待主控审查和任务规定的交叉审查。
+
+## 主控审查
+
+- 10-19 ranch/main 看了 diff 和完成记录：只动了 `crates/corral`、两份技能、CONTRACT 和本文件，「不要做」里的一件都没做。`raw.rs` 只在 omp 最终 `agent_end` 的最后一条 assistant 三个标记齐全时转 `Interrupt`，其余路径照旧；快照只改了 cursor 7 → 8。
+- 重跑 `cargo test --all-targets`：180 通过、0 失败、11 跳过，和完成记录一致。
+- 「怎么算做完」：用户在真终端里于 omp 写字时按 Esc，提醒不送、`wait` 返回 `interrupted`、`reply` 不给旧回复；用户接着让它干、正常结束后原提醒照送。用户是直接在开发 agent 窗口里回的「按过了」「继续过了」。
+- 取舍：同意 cursor 升到 8（旧 reader 已把同一轮读成 Stop，要重放）；同意 errorId 按位判断。
+- 交叉审查（ranch/review-r25-1，Codex xhigh）：可以合并，必须改 0 条、建议改 0 条，见 `docs/任务/R25-审查.md`。
+- 结果：一次过
