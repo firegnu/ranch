@@ -80,3 +80,11 @@
 - **踩过的坑：** 只在种类数据填 domains 会报 `no_service`，补临时服务后 check 才过；日志更新还要写 `cli.log.tmp`，补放行后仍卡在 TCP bind。start 返回成功不代表 agy 启动成功，退出太快时 read/reply 已经 not_found；TCP bind 错误后两轮没进 denials，必须对照 agy 启动日志，不能拿零条记录当通过。清理时工具拒绝带强制选项的删除命令，改成不带强制选项、逐个写明本次目录的 `rm -r` 后完成。
 - **收尾：** 三次测试 agent 均自行退出，最终 stop 返回 not_found。已删合成仓库、隔离 FENCE_HOME、假文件和临时证据，以及本次三个 fence 缓存实例 `8d4260342c25`、`e9251290e40b`、`2a18546f8466`。pen 临时加入的 trustedWorkspaces 条目是 `$HOME/.r23-agy-probe.v385Gu/repo`，第三轮运行时确认存在、退出后确认已撤回，最终无此残留；没有手改设置。agy 自己生成的常规日志保留，未提交原始日志或用户数据。
 - **要主控／用户决定：** 是否继续接入；若继续，是否接受 srt local binding 实际允许所有本地地址 bind/inbound 和 localhost 任意端口 outbound 的范围。需要先另定设计，再派 fence 配置能力和 corral 顶层身份校验的代码任务；不是仅补一份 agy 数据就能完成。
+
+## 主控审查
+
+- 10-19 ranch/main 看了 diff：只新增调研文档和完成记录，没改代码、内置数据、插件和用户设置，「不要做」里的一件没做。看得见那档，不重跑测试。
+- 挑最关键的一条核对：已装 srt 0.0.80 的 `macos-sandbox-utils.js` 在 `allowLocalBinding` 为 true 时放行 `network-bind`/`network-inbound (local ip "*:*")` 和 `network-outbound (remote ip "localhost:*")`；fence 的 `rules.rs` 没有接这个开关。和报告一致。
+- 结论照报告：agy 1.4.2 启动时要在本机开 TCP 监听（`listen tcp 127.0.0.1:0`），墙里被拒，起不来；后面还有钩子父进程检查。都要改代码，不是只加数据。接不接、接受不接受那个开关的放行范围，交用户定。
+- 6 条里 4、6 两条和第 2 条的域名没测成，原因是 agy 起不来，报告如实标了未知。测试 agent 已退出，信任条目已自动撤回，临时目录已清。
+- 结果：一次过
