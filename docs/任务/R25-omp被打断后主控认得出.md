@@ -86,3 +86,14 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：omp 最终 `agent_end` 只检查最后一条 assistant 消息，三个明确标记齐全才转 `Interrupt`，沿用 R22 的状态、wait、reply 和提醒行为。保留 `willContinue`、普通结束、非用户中止、工具取消后正常结束和重试延迟。更新 AGENT_USAGE、corral 技能、corral-dispatch 技能和 CONTRACT，写明识别条件、部署边界及 paddock 不用动。
+- 自动验证：先写原始事件回归测试，旧代码实际得到 Stop、期望 Interrupt，修复后通过。CLI 集成测试覆盖 wait=interrupted、reply=no_reply/interrupted=true、原提醒继续等待、下一轮正常结束后送达；该测试还先复现了旧 cursor 保留 interrupted=false，再升缓存版本修至通过。指定边角用例和原有 pi/omp 事件快照通过。`cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各跑一次，均通过；全套 180 passed、0 failed、11 ignored（原有 3 项外部基线兼容测试、8 项环境限定测试），git diff --check 通过。
+- 真人实测：使用本分支编出的程序副本、隔离 CORRAL_HOME，唯一真实测试实例为 `ranch/test-interrupt-omp`，omp 18.12.2 默认模型、`--approval-mode yolo`、`role=test`、`CAIRN_DISABLE=1`。先正常回复 R25-BASELINE，再开始长文本生成并挂 `r25-omp-after` 提醒；用户在真终端按 Esc，message_end 和 agent_end 的最后 assistant 都为 aborted / Interrupted by user / errorId=67112960。随后 status=idle/interrupted=true、wait=interrupted、reply 退出码 1/no_reply/interrupted=true，原提醒 wait_done=false、phase=waiting，没有送出。用户在窗口输入继续后，last_input_source=human、interrupted=false、wait=idle、reply=R25-CONTINUED；同一条提醒随后以 wait_result=idle、phase=confirmed、result.confirmed=true 送达，实例回复 R25-REMINDER-RECEIVED。没有用 keys 模拟 Esc 或继续，没有另开 agent。
+- 拿主意的地方：只在最终 agent_end 判整轮中断，message_end 不提前结束一轮；errorId 按 UserInterrupt 位判断，不写死整个 67112960。内部 cursor 缓存 7 → 8，避免旧 reader 已把同一条原始事件读成 Stop 后继续误判；快照只机械更新缓存版本，原断言和事件格式 v1/v2 不变，新旧 reader 各自重放。提醒接收者也用同一个测试 omp，避开用户 agent 并遵守不另开 agent 的范围；正常结束后等待原有 30 秒真人输入保护期再送达，没有 force 绕过。
+- 对 paddock：不新增状态值或公开字段，沿用 R22 的约定，paddock 不用动。调用方和提醒进程须用新版；omp 采集器原样保留，不用重开 omp。
+- 没做的事：未改其他家识别、采集器、pen、sandbox、fence、升级、attach 或其他仓库；未部署、未装技能、未操作用户现有 agent、未合并 main、未推送。测试实例已 corral stop，隔离 corral ls 确认空。原始证据和检查日志留在 `/tmp/r25.2n6yJF`，不提交运行数据。主控及交叉审查留给 ranch/main 安排。
+- 踩过的坑：真实提醒的接收者是可识别的 omp，送达后的最终 phase 是 confirmed；首次前台轮询照合成 /bin/cat 用例只等 sent，因而没把已经确认的送达当作成功。随后按 confirmed 回执及实际收到的 R25-REMINDER-RECEIVED 核实，没有重发提醒或换 request_id。
+- 主控需决定的事：没有新增待决定项；等待主控审查和任务规定的交叉审查。

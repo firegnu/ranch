@@ -131,14 +131,21 @@ pub(super) fn apply_raw(s: &mut Value, e: &Value, cwd: &Path) -> Result<()> {
         }
         "agent_end" => {
             if body["willContinue"] != true {
-                let retry = body["messages"]
+                let last = body["messages"]
                     .as_array()
-                    .and_then(|a| a.iter().rev().find(|m| m["role"] == "assistant"))
-                    .is_some_and(|m| {
-                        m["stopReason"] == "error"
-                            && RETRYABLE.is_match(m["errorMessage"].as_str().unwrap_or(""))
+                    .and_then(|a| a.iter().rev().find(|m| m["role"] == "assistant"));
+                let retry = last.is_some_and(|m| {
+                    m["stopReason"] == "error"
+                        && RETRYABLE.is_match(m["errorMessage"].as_str().unwrap_or(""))
+                });
+                let interrupted = adapter.kind() == "omp"
+                    && last.is_some_and(|m| {
+                        m["stopReason"] == "aborted"
+                            && m["errorMessage"] == "Interrupted by user"
+                            // omp's UserInterrupt flag; errorId also carries other bits.
+                            && m["errorId"].as_u64().is_some_and(|id| id & 67108864 != 0)
                     });
-                mapped["ev"] = json!("Stop");
+                mapped["ev"] = json!(if interrupted { "Interrupt" } else { "Stop" });
                 mapped["last_assistant_message"] = r["reply"].clone();
                 mapped["t"] =
                     json!(e["t"].as_f64().unwrap_or(0.0) + if retry { 2.5 } else { 0.25 });
@@ -210,6 +217,91 @@ mod tests {
             .collect();
         content.push(json!({"type":"thinking","thinking":"hidden"}));
         json!({"message":{"role":"assistant","content":content}})
+    }
+
+    #[test]
+    fn omp_user_interrupt_is_not_normal_completion() {
+        let message = json!({"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Interrupted by user","errorId":67112960});
+        let result = Feed::new("omp")
+            .ev("session_start", json!({"reason":"startup"}))
+            .ev("before_agent_start", json!({"prompt":"first"}))
+            .ev("message_end", assistant(&["previous reply"]))
+            .ev("agent_end", json!({}))
+            .ev("before_agent_start", json!({"prompt":"second"}))
+            .ev("message_end", json!({"message":message}))
+            .ev("agent_end", json!({"messages":[message]}))
+            .run();
+        assert_eq!(result["settled"]["state"], "idle");
+        assert_eq!(result["settled"]["last_event"], "Interrupt");
+        assert_eq!(result["settled"]["interrupted"], true);
+    }
+
+    #[test]
+    fn omp_requires_all_user_interrupt_markers_on_the_last_assistant() {
+        for message in [
+            json!({"role":"assistant","stopReason":"stop"}),
+            json!({"role":"assistant","stopReason":"aborted","errorMessage":"Request was aborted","errorId":4096}),
+            json!({"role":"assistant","stopReason":"aborted","errorMessage":"Interrupted by user","errorId":4096}),
+            json!({"role":"assistant","stopReason":"aborted","errorMessage":"Interrupted by user"}),
+            json!({"role":"assistant","stopReason":"aborted","errorMessage":"Request was aborted","errorId":67112960}),
+            json!({"role":"assistant","stopReason":"error","errorMessage":"Interrupted by user","errorId":67112960}),
+        ] {
+            let result = Feed::new("omp")
+                .ev("session_start", json!({"reason":"startup"}))
+                .ev("before_agent_start", json!({"prompt":"work"}))
+                .ev("agent_end", json!({"messages":[
+                    {"role":"assistant","stopReason":"aborted","errorMessage":"Interrupted by user","errorId":67112960},
+                    message,
+                    {"role":"toolResult","isError":true,"content":[{"type":"text","text":"[Command aborted]"}]}
+                ]}))
+                .run();
+            assert_eq!(result["settled"]["last_event"], "Stop", "{message}");
+            assert_eq!(result["settled"]["interrupted"], false, "{message}");
+        }
+    }
+
+    #[test]
+    fn omp_continuation_tool_cancel_and_retry_keep_existing_behavior() {
+        let interrupted = json!({"role":"assistant","stopReason":"aborted","errorMessage":"Interrupted by user","errorId":67112960});
+        let result = Feed::new("omp")
+            .ev("session_start", json!({"reason":"startup"}))
+            .ev("before_agent_start", json!({"prompt":"work"}))
+            .ev("message_end", json!({"message":interrupted}))
+            .ev(
+                "agent_end",
+                json!({"willContinue":true,"messages":[interrupted]}),
+            )
+            .run();
+        assert_eq!(result["settled"]["state"], "working");
+        assert_eq!(result["settled"]["interrupted"], false);
+
+        let result = Feed::new("omp")
+            .ev("session_start", json!({"reason":"startup"}))
+            .ev("before_agent_start", json!({"prompt":"work"}))
+            .ev("tool_execution_start", json!({"toolName":"bash"}))
+            .ev("tool_execution_end", json!({"toolName":"bash","isError":true}))
+            .ev("message_end", json!({"message":{"role":"toolResult","isError":true,"content":[{"type":"text","text":"[Command aborted]"}]}}))
+            .ev("message_end", assistant(&["finished after cancelling command"]))
+            .ev("agent_end", json!({"messages":[{"role":"assistant","stopReason":"stop"}]}))
+            .run();
+        assert_eq!(result["settled"]["last_event"], "Stop");
+        assert_eq!(result["settled"]["interrupted"], false);
+        assert_eq!(
+            result["settled"]["reply"],
+            "finished after cancelling command"
+        );
+
+        let result = Feed::new("omp")
+            .ev("session_start", json!({"reason":"startup"}))
+            .ev("before_agent_start", json!({"prompt":"work"}))
+            .ev("agent_end", json!({"messages":[{"role":"assistant","stopReason":"error","errorMessage":"503 Service Unavailable"}]}))
+            .at(2.4, "unknown", json!({}))
+            .at(0.2, "unknown", json!({}))
+            .run();
+        assert_eq!(result["steps"][3]["state"]["state"], "working");
+        assert_eq!(result["steps"][4]["state"]["state"], "idle");
+        assert_eq!(result["settled"]["last_event"], "Stop");
+        assert_eq!(result["settled"]["interrupted"], false);
     }
 
     #[test]

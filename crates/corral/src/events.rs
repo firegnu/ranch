@@ -18,7 +18,7 @@ pub fn digest(s: &str) -> String {
     format!("{:x}", Sha256::digest(normalize(s).as_bytes()))
 }
 fn fresh(instance: &str) -> Value {
-    json!({"cursor":7,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","interrupted":false,"state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
+    json!({"cursor":8,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","interrupted":false,"state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
 }
 fn string(v: &Value) -> String {
     match v {
@@ -216,9 +216,9 @@ pub fn read(dir: &Path, instance: &str, cwd: &Path, adopt_session: bool) -> Resu
     };
     let size = f.metadata()?.len();
     let mut s = state::read(dir.join("cursor"));
-    // Older readers do not retain the transcript path or the explicit turn boundary.
+    // Older readers do not recognise omp user interruptions (or retain Claude's turn evidence).
     // Replay their caches; the event format is unchanged in both directions.
-    if s["cursor"] != 7
+    if s["cursor"] != 8
         || s["inst"] != instance
         || s["offset"].as_u64().is_none_or(|n| n > size)
         || ["pending", "other_sessions", "inputs"]
