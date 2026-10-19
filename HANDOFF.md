@@ -33,7 +33,7 @@
 3. R17c 暂缓（用户 10-19：“先不做R17c了，先把全部的在macos上跑通”），草稿在 `docs/任务/R17c-Linux上验sandbox.md`；重开前先定那边谁来执行、代码怎么过去、验收。
 4. R21（amp 接入 sandbox）不做（用户 10-19：“sandbox不加amp了，这个太特殊了”）：amp 的插件只认父进程是 pen，套墙后不报状态；agy 的钩子同样，见任务文件末尾。已清干净。
 5. R22（人按 Esc 打断被委派的 agent 后，主控误以为做完）是草稿（用户 10-19），在 `docs/任务/R22-人打断被委派的agent后主控误以为做完.md`；派之前定提醒怎么办、状态和回复怎么表示、修哪几家、验收。
-6. R23（agy 进 sandbox 摸底）已合并（10-19）：agy 1.4.2 启动要在本机开 TCP 监听，墙里被拒起不来；fence 没接 srt 的 `allowLocalBinding`（一开就放行所有本地地址监听和 localhost 任意端口），钩子父进程检查也要改。都要改代码；接不接、接受不接受那个放行范围待用户定。报告 `docs/调研/R23-agy进sandbox摸底.md`。
+6. agy 进 sandbox 不做（用户 10-19：“不接了，改成不做吧”）。R23 摸底已合并：agy 1.4.2 启动要在本机开 TCP 监听，墙里被拒起不来；fence 没接 srt 的 `allowLocalBinding`（一开就放行所有本地地址监听和 localhost 任意端口），钩子父进程检查也要改。都要改代码。报告 `docs/调研/R23-agy进sandbox摸底.md`。
 
 ## 悬着
 
