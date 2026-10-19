@@ -130,6 +130,7 @@
 - 围栏式：agent 照常在本机跑，由 srt（Anthropic sandbox-runtime）按规则管读、写、上网，一律默认不许、按需放行。不做容器式、云端。
 - 支持 macOS 和 Linux。
 - 是 `corral start` 的一个选项，不加就是现在的样子；派出去的 agent 默认不加。
+  - R18（用户 10-19：“可以通过paddock选中的状态改为sandbox跑”）：给正在跑的 agent（一般是主控）设一个「派出去的套哪个档案」，`corral child-sandbox NAME [<档案> | --clear]`，随时可改，从它下一次 `corral start` 起生效；默认没有设定，保持上面的默认。设定是 corral 自己的状态（agent 状态目录的 `child-sandbox.json`，带 instance，只认这一次运行），corral 不读任何前端的东西。`start` 凭调用者的 `CORRAL_NAME`、`CORRAL_INSTANCE` 读当下设定；显式 `--sandbox`／`--no-sandbox` 优先。设了就要么生效、要么报错：确认调用者是否同一次运行只看本地运行锁和 `meta.json`，不问 pen（交叉审查发现问 pen 时 pen 卡住会悄悄不套墙）；确认不了报 `child_sandbox_unreadable`。fence 的插件边界不变。
 - 插件式：sandbox 叫 fence（用户 10-18：“同意B，名字就叫fence”），放在 ranch 仓库里单独一块（`crates/fence`），出自己的命令 `fence`；corral 不在 Cargo 里依赖它，只按一条窄约定调它，以后能整块剥离成独立服务。
 - 定下的边界（R17b 方案，用户 10-18：“五条都同意”；全文 `docs/调研/R17b-fence方案.md`）：
   - corral 只调两条命令：起 pen 前 `fence check`，pen 里用 `fence run … -- <原命令>` 代替直接起 agent。fence 用同一版本目录里的那份（可用 `CORRAL_FENCE` 改），剥离时只改这一处。出错一律启动失败，不悄悄不套墙。
