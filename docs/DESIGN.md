@@ -123,6 +123,7 @@
   - corral 技能里开 agy 改成 `-- agy --dangerously-skip-permissions`，和派活技能一致；Claude Code 不改（用户 10-17）。
   - 来历：`docs/任务/R13-agy启动抢跑与免确认.md`。
 - 被人打断的一轮（R22，用户 10-19）：人在被委派 agent 的窗口里按 Esc，原先和正常结束一样置为 `idle`，提醒照送、`reply` 给上一轮的回复，主控误以为做完。现在共用状态机记下 `interrupted`（状态仍是 `idle`，不加状态值，paddock 不用动；新输入清掉；pi 关扩展对话框的空闲恢复不清）；`wait` 返回 `interrupted`，`reply` 报 `no_reply` 带 `interrupted: true`，`send --after` 只在「idle 且被打断」时跳过、`blocked` 照送、超时照送。只认明确事件，不按输出、静默时间或读屏猜：Codex、amp（连按两次 Esc）、pi（采集器补记 `agent_settled.aborted`）已真人实测；omp 的 Esc 只取消当前命令、agy 和 Claude Code 没有打断事件，保留限制（用户在开发 agent 窗口里同意）。内部 cursor 缓存 4 → 5，新旧版本交替读时各自重放。来历：`docs/任务/R22-人打断被委派的agent后主控误以为做完.md`。
+- Claude Code 被人打断（R24，用户 10-19：“这么长时间肯定不行啊”）：Claude Code 被 Esc 打断时不触发任何钩子，只在自己的对话记录里写 `[Request interrupted by user]` 或 `[Request interrupted by user for tool use]`。钩子记下 `transcript_path`；算状态时，这一轮还没收到明确结束事件（内部 `turn_open`），或已认出的打断被晚到的工具钩子拉回 `working`，才读对话记录末尾最多 64 KiB，只认本主会话、非侧链、时间严格晚于最近一次输入的那条标记，认出来按 `Interrupt` 处理。对话记录是持久证据：缓存被别的 reader 冲掉或新旧版本交替重建，也能重新认出同一轮；正常 Stop/StopFailure、会话结束关上这一轮，不会被旧标记改判。非阻塞打开、对打开的 FD 查普通文件。生效要该命名空间的 `.runtime/helper` 指向新版（`corral upgrade` 才切），单纯重开 Claude Code 不够。来历：`docs/任务/R24-ClaudeCode被打断后马上认出来.md`。
 
 ## 8. sandbox（用户 10-18）
 

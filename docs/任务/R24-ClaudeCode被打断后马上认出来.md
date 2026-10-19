@@ -108,3 +108,12 @@
 - 只跑针对性及直接相关验证：interrupted 集成测试 16 项、Claude 适配器单元测试 1 项、events 回归 4 项、protocol 状态时间与缓存重放 1 项，全部通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 通过。未重跑全套或真人实测。
 - 拿主意的地方：仅修正读取门槛，恢复时仍要求原对话记录的明确标记，不直接把所有 working/interrupted 状态改成 idle，也不放开所有 idle 的读取。新输入、正常结束和别家适配器的原有行为保留。踩过的坑：没有新增工具或环境问题；这次修的是返工 1 将合成 Interrupt 关闭轮次后误当成正常结束的门槛问题。
 - 合成测试由隔离 HOME/CORRAL_HOME 和 /bin/cat 完成，进程由夹具停止；没有打开真实 agent、读取真实对话、改主仓库审查文件或其他仓库，没有部署、合并或推送。没有新的待主控决定事项。
+
+## 主控审查
+
+- 10-19 ranch/main 看了 diff 和完成记录：只动了 `crates/corral`、两份技能、CONTRACT，「不要做」里的一件没做；不加公开字段和状态值，别家走默认的「不读对话记录」，paddock 不用动。第一版重跑 `cargo test --all-targets` 170 通过；合并前在最终提交 `e829c3d` 上再跑一次，176 通过、0 失败、11 跳过，clippy、fmt 通过。
+- 「怎么算做完」：用户在真终端里分别在写字时、跑命令时按 Esc，两次都认出来（idle、`interrupted: true`、`wait` 返回 `interrupted`、`reply` 报 `no_reply`、提醒不送、`send` 能送进新话）；用户接着让它干、正常结束后原提醒照送。不补按键到认出的精确计时：每次查状态都当场读对话记录，不靠静默时间（主控定）。
+- 交叉审查（`R24-审查.md`）：第一轮必须改 3 条（打断只存在 cursor、会被别的 reader 冲掉；命名管道会让查询卡死；文档写的「升级或重开」与 helper 行为不符）加建议改 1 条（侧链），主控都认可，返工 1（`fab242b`）修好；复核发现返工 1 引入 1 条必须改（认出打断后晚到的工具钩子把状态拉回 working、再也认不回来），返工 2（`e829c3d`）修好；第二轮复核可以合并，必须改 0、建议改 0。
+- 部署要注意：Claude Code、Codex 的钩子走共用的 `~/.corral/.runtime/helper`，只有 `corral upgrade` 才切；切 `~/.local/bin` 的链接不够。
+- 照任务在 DESIGN §7 末尾补了 R24 一条。
+- 结果：返工 2 次
