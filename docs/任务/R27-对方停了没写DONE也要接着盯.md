@@ -51,3 +51,12 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：corral 技能、guide、corral-dispatch 技能统一说明：空闲或 blocked 且最后一行不是 DONE 时，告诉用户并重挂提醒，Claude Code 连后台 wait 一起；下次醒来继续判断，直到 DONE。退出或不在了的不再挂。dispatch 首次前台 wait 已停下时也进入同一判断流程。对 paddock 的影响：技能内容兼容更新，paddock 不用动；需要后续部署新版 guide 和技能后，主控才能读到新说法。
+- 验证了什么：`git diff --check` 通过。指定独立编译目录运行 corral-core 的 adapters 中两个 skills 测试、lifecycle 的 `skill_install_requires_consent_and_preserves_unowned_removal`，以及 ranch-dispatch 的 `skills::tests::creates_then_reports_same_and_leaves_extra_files`，共 4 个通过。安装内容测试在隔离 HOME 中执行，分别核对了两份技能与编译嵌入文本一致；编译目录里的 `corral guide` 输出经 diff 与更新后的 AGENT_USAGE.md 一致。自查仅改三处相关文字和本完成记录。
+- 拿主意的地方：这是说明文字修正，未制造失败测试；用现有安装内容测试和 guide 输出作为可观察验证。中断分支沿用原话，不改变处理规则；没有改程序设计，无需改 DESIGN.md。
+- 没做的事：未改程序、参数或 paddock，未操作用户 agent，未部署、合并或推送；按任务单未扩大全套验证或另做真实 agent 实测。
+- 踩过的坑：第一次 cargo test 的包名写成二进制名 `corral`，Cargo 报找不到包；读 Cargo.toml 后改用 `corral-core`，测试通过。
+- 要主控决定的事：没有。

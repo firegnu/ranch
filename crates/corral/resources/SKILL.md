@@ -52,7 +52,8 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
    - 回复最后一行是 DONE：整理结果告诉用户，说明对方还开着、名字是什么。不要 stop。
    - 状态是 working：被叫早了，再挂一次上面的提醒（Claude Code 连后台 wait 一起），结束这一轮。
    - 后台 wait 返回 `stopped-quiet`：对方 600 秒没有动静，可能被人打断了，告诉用户，不能当成做完。
-   - 空闲、blocked 或已经不在，但没有 DONE：告诉用户去 `corral attach <名字>` 看。
+   - 空闲或 blocked，但回复最后一行不是 DONE（如等人操作、问问题）：告诉用户去 `corral attach <名字>` 看，同时再挂一次上面的提醒（Claude Code 连后台 wait 一起），结束这一轮。用户在对方窗口里直接聊，或通过你转话，都要继续盯；下次被叫醒仍按本步判断，直到看到 DONE。
+   - 对方已经退出或不在了，但没有 DONE：告诉用户，不再挂提醒或后台 wait。
 5. 让已经开着的对方接着做长活：不要重新 start，改用 `corral send <名字> "<新的话>"` 交过去，末尾同样带上 DONE 约定，再挂提醒（Claude Code 同样加后台 wait）。
 
 ## 退出码
