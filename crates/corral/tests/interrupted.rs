@@ -113,6 +113,12 @@ impl Lab {
             json!({"v":2,"adapter":"pi","cwd":"/tmp","has_ui":true,"idle":idle,"event":body}),
         );
     }
+    fn omp_event(&self, ev: &str, body: Value) {
+        self.event(
+            ev,
+            json!({"v":2,"adapter":"omp","cwd":"/tmp","has_ui":true,"event":body}),
+        );
+    }
     fn reminder(&self, timeout: &str) -> String {
         self.json(&[
             "send",
@@ -141,6 +147,51 @@ impl Lab {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+}
+
+#[test]
+fn omp_interrupt_uses_r22_behavior_and_replays_legacy_completion() {
+    let lab = Lab::new();
+    lab.omp_event("before_agent_start", json!({"prompt":"second"}));
+    let id = lab.reminder("15");
+    let message = json!({"role":"assistant","content":[],"stopReason":"aborted","errorMessage":"Interrupted by user","errorId":67112960});
+    lab.omp_event("message_end", json!({"message":message}));
+    lab.omp_event("agent_end", json!({"messages":[message]}));
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+        "interrupted"
+    );
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "idle");
+    assert_eq!(st["interrupted"], true);
+    let out = lab.out(&["reply", "test/work"]);
+    assert_eq!(out.status.code(), Some(1));
+    let error: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(error["error"], "no_reply");
+    assert_eq!(error["interrupted"], true);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(lab.record(&id)["wait_done"], false);
+
+    // A pre-R25 reader has consumed these same events as a normal completion.
+    let cursor_path = lab.0.path().join("pens/test/work/cursor");
+    let mut old: Value = serde_json::from_slice(&fs::read(&cursor_path).unwrap()).unwrap();
+    old["cursor"] = json!(7);
+    old["last_event"] = json!("Stop");
+    old["interrupted"] = json!(false);
+    fs::write(cursor_path, old.to_string()).unwrap();
+    assert_eq!(lab.json(&["status", "test/work"])["interrupted"], true);
+
+    lab.omp_event("before_agent_start", json!({"prompt":"continue"}));
+    assert_eq!(lab.json(&["status", "test/work"])["interrupted"], false);
+    let message = json!({"role":"assistant","content":[{"type":"text","text":"finished now"}],"stopReason":"stop"});
+    lab.omp_event("message_end", json!({"message":message}));
+    lab.omp_event("agent_end", json!({"messages":[message]}));
+    assert_eq!(lab.delivered(&id)["wait_result"]["result"], "idle");
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+        "idle"
+    );
+    assert_eq!(lab.json(&["reply", "test/work"])["text"], "finished now");
 }
 
 #[test]

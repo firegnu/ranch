@@ -244,6 +244,7 @@ echo "<摘要>" | ranch dispatch route
 - 开完运行 `corral wait <名字> --timeout 60`，不要用 sleep 等。60 秒到了状态还是 `starting`，就是卡在「是否信任这个目录」这类对话框上（新项目、新仓库第一次开时常见；amp、agy 还可能是 corral 的插件没装好或被停用，见 corral 技能）。这时请用户在另一个终端窗口运行 `corral attach <名字>`，或者在看板里选中它去点。不要替它点，也不要让用户在你这里用 `!` 运行。卡在启动中时，提醒不会来，不要干等。
 - 写代码都是长任务：按 corral 技能「长任务」一节挂提醒，交出去就结束这一轮。
 - 已识别为被打断的这一轮不触发 `--after` 提醒，原提醒继续等下一轮正常结束；等满 `--timeout` 仍会送。Claude Code 从对话记录末尾识别晚于最近一次输入的明确打断标记；调用方和提醒进程需用新版，且该 CORRAL_HOME 的 `.runtime/helper` 要经新版 `corral upgrade` 等方式切到能记录路径的版本；单纯切换 CLI 或重开不够，记录读不到或格式不认识时仍认不出。收到提醒先查 `status`，不能只凭提醒认为完成。
+- omp 最终 `agent_end` 的最后一条 assistant 消息同时带 `stopReason: "aborted"`、`errorMessage: "Interrupted by user"`、`errorId` 的 UserInterrupt 位（67108864）时按打断处理，wait 返回 `interrupted`，reply 报 `no_reply` 带 `interrupted: true`。调用方和提醒进程用新版即可，采集器不用换、omp 不用重开。Esc 只取消命令、模型继续正常结束不算打断；其他中止和 `willContinue` 照旧。
 - 告诉用户：开了谁、哪家哪一档、在哪个 worktree、做什么、做完怎么通知。
 - 开出来的 agent 默认不关；写代码的 agent 活到它那个 worktree 被清掉为止（第 7 节）。
 
