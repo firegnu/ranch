@@ -69,25 +69,26 @@ impl Lab {
         self.event("UserPromptSubmit", json!({"prompt":"second"}));
         self.event("Interrupt", json!({}));
     }
-    fn transcript_turn(&self) {
+    fn hook(&self, event: &str, body: Value) {
         let instance = self.json(&["status", "test/work"])["instance"].clone();
         let mut hook = Command::new(self.0.path().join("corral"))
-            .args(["__hook", "UserPromptSubmit"])
+            .args(["__hook", event])
             .env("CORRAL_EVENTS", self.0.path().join("pens/test/work/events"))
             .env("CORRAL_INSTANCE", instance.as_str().unwrap())
             .stdin(Stdio::piped())
             .spawn()
             .unwrap();
-        writeln!(
-            hook.stdin.take().unwrap(),
-            "{}",
+        writeln!(hook.stdin.take().unwrap(), "{body}").unwrap();
+        assert!(hook.wait().unwrap().success());
+    }
+    fn transcript_turn(&self) {
+        self.hook(
+            "UserPromptSubmit",
             json!({
                 "session_id":"main", "prompt":"second",
                 "transcript_path":self.0.path().join("transcript.jsonl")
-            })
-        )
-        .unwrap();
-        assert!(hook.wait().unwrap().success());
+            }),
+        );
         self.event(
             "UserPromptSubmit",
             json!({"prompt":"second", "t":1704067200.0}),
@@ -520,4 +521,87 @@ fn claude_sidechain_with_main_session_id_is_not_an_interruption() {
     let st = lab.json(&["status", "test/work"]);
     assert_eq!(st["state"], "working");
     assert_eq!(st["interrupted"], false);
+}
+
+fn claude_late_tool_hook(event: &str) {
+    let lab = Lab::new();
+    lab.transcript_turn();
+    lab.transcript("[Request interrupted by user]", "2024-01-01T00:00:01.000Z");
+    assert_eq!(lab.json(&["status", "test/work"])["state"], "idle");
+    let tool = json!({
+        "session_id":"main", "transcript_path":lab.0.path().join("transcript.jsonl"),
+        "agent_id":"background-agent", "tool_name":"Bash"
+    });
+    lab.hook(event, tool.clone());
+    for _ in 0..2 {
+        let st = lab.json(&["status", "test/work"]);
+        assert_eq!(st["state"], "idle", "{event}: {st}");
+        assert_eq!(st["interrupted"], true);
+    }
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+        "interrupted"
+    );
+    let reply = lab.out(&["reply", "test/work"]);
+    assert_eq!(reply.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&reply.stdout).unwrap()["interrupted"],
+        true
+    );
+    // The real send reaches cat; a synthetic hook acknowledges the new turn after receipt.
+    std::thread::scope(|scope| {
+        let send = scope.spawn(|| lab.json(&["send", "test/work", "continue", "--timeout", "5"]));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if String::from_utf8_lossy(&lab.out(&["read", "test/work"]).stdout).contains("continue")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "input did not reach cat");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        lab.hook(
+            "UserPromptSubmit",
+            json!({
+                "session_id":"main", "prompt":"continue",
+                "transcript_path":lab.0.path().join("transcript.jsonl")
+            }),
+        );
+        assert_eq!(send.join().unwrap()["confirmed"], true);
+    });
+    // The old marker remains on disk while the new prompt hook is already visible.
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "working");
+    assert_eq!(st["interrupted"], false);
+    lab.hook(
+        "Stop",
+        json!({"session_id":"main", "last_assistant_message":"new reply"}),
+    );
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["result"],
+        "idle"
+    );
+    assert_eq!(lab.json(&["reply", "test/work"])["text"], "new reply");
+    // Even a current marker cannot reopen a normally ended turn after another tool hook.
+    for end in ["Stop", "StopFailure"] {
+        lab.transcript_turn();
+        lab.hook(
+            end,
+            json!({"session_id":"main", "last_assistant_message":"finished"}),
+        );
+        lab.hook(event, tool.clone());
+        let st = lab.json(&["status", "test/work"]);
+        assert_eq!(st["state"], "working");
+        assert_eq!(st["interrupted"], false);
+    }
+}
+
+#[test]
+fn claude_late_pre_tool_hook_preserves_interruption() {
+    claude_late_tool_hook("PreToolUse");
+}
+
+#[test]
+fn claude_late_post_tool_hook_preserves_interruption() {
+    claude_late_tool_hook("PostToolUse");
 }

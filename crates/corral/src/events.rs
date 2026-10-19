@@ -275,15 +275,19 @@ pub fn read(dir: &Path, instance: &str, cwd: &Path, adopt_session: bool) -> Resu
 
 /// Recover interruption evidence for an unfinished turn, including one made idle by a
 /// notification. A normal end closes the turn; new input and session selection bind its evidence.
+/// Late tool hooks can make an interrupted turn working again; recheck its evidence then,
+/// while a stable interrupted idle needs no further reads.
 pub(crate) fn observe_transcript(
     dir: &Path,
     s: &mut Value,
     adapter: &dyn crate::agents::Adapter,
 ) -> Result<()> {
-    if s["turn_open"] == true
-        && (s["state"] == "working" || s["state"] == "idle")
-        && let Some(t) = adapter.transcript_interrupt(s)
-    {
+    let needs_transcript = match s["state"].as_str() {
+        Some("working") => s["turn_open"] == true || s["interrupted"] == true,
+        Some("idle") => s["turn_open"] == true,
+        _ => false,
+    };
+    if needs_transcript && let Some(t) = adapter.transcript_interrupt(s) {
         update(s, &json!({"ev":"Interrupt", "t":t}));
         state::write(&dir.join("cursor"), s)?;
     }

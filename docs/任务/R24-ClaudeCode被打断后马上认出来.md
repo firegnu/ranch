@@ -100,3 +100,11 @@
 - 修正后只跑指定范围：interrupted 集成测试 14 项、Claude 适配器单元测试 1 项、events 回归 4 项、protocol 状态时间与缓存重放 1 项，全部通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 通过。快照仅更新 cursor 版本和新增内部 turn_open；去掉这两项后与提交前快照逐字比较一致，没有改其他期望值。
 - 踩过的坑：FIFO 修复后的首次复跑发现新测试误把 wait 超时当作 result=timeout；实际约定是退出码 4、error=timeout，已按该约定修正断言，2 秒截止时间保留。初始 FIFO 阻塞的测试进程已按句柄杀掉并回收，合成 agent 由夹具停止。
 - 未重复全套或真人实测，未打开真实 agent、读取真实 Claude 对话、部署、合并或推送；没有改主仓库审查文件。主控已决定不补真人精确计时，本次不重开该问题，没有新的待决定项。
+
+### 返工 2
+
+- 修复复核指出的晚到工具钩子回归：`observe_transcript` 对 working 状态在本轮仍开放或已确认 interrupted 时核对原标记；idle 状态仍只在本轮开放时读取。正常 Stop/StopFailure 会同时关闭轮次并清除 interrupted，仍阻止旧标记重新识别；稳定的已识别 idle 不重复读取。不改变工具钩子本身的归属和状态规则，不新增字段、不升级缓存版本、不改快照。CONTRACT 补明同轮工具事件后的恢复边界，paddock 不用动。
+- 先补 PreToolUse、PostToolUse 两条回归，均经过本分支真实 `__hook` 入口，带相同 session_id、主 transcript_path 及 background-agent 的 agent_id。修复前两条都在预期 idle、实际 working/interrupted=true 处失败；修复后连续查询为 idle/interrupted=true，wait 返回 interrupted，reply 仍受保护，普通 send 实际到达合成 cat 并在新输入钩子后 confirmed=true。接着核对旧标记仍在时新输入清除 interrupted、正常 Stop 给出新回复，以及 Stop/StopFailure 后再来同类工具钩子不会重新识别旧标记。
+- 只跑针对性及直接相关验证：interrupted 集成测试 16 项、Claude 适配器单元测试 1 项、events 回归 4 项、protocol 状态时间与缓存重放 1 项，全部通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 通过。未重跑全套或真人实测。
+- 拿主意的地方：仅修正读取门槛，恢复时仍要求原对话记录的明确标记，不直接把所有 working/interrupted 状态改成 idle，也不放开所有 idle 的读取。新输入、正常结束和别家适配器的原有行为保留。踩过的坑：没有新增工具或环境问题；这次修的是返工 1 将合成 Interrupt 关闭轮次后误当成正常结束的门槛问题。
+- 合成测试由隔离 HOME/CORRAL_HOME 和 /bin/cat 完成，进程由夹具停止；没有打开真实 agent、读取真实对话、改主仓库审查文件或其他仓库，没有部署、合并或推送。没有新的待主控决定事项。
