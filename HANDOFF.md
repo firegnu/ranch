@@ -6,8 +6,8 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过）；R17（sandbox，fence 接 srt，DESIGN §8）进行中：R17a 本机小试验、R17b fence 本体和 `corral start --sandbox` 都已收尾，R17b 已部署（10-19），R17c（5090 上验 Linux）暂缓，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
-  - 待部署 `versions/276107d`（10-20 主控打包，工作区干净；R29：套 dev 墙的四家 agent 都接 Exa 的 MCP（`web_search_exa`、`web_fetch_exa`，免 key 有限频），`dev` 白名单加 `mcp.exa.ai` 和 GitHub 5 个、Rust 文档 3 个域名；推送不挡（用户 10-20）。只改 fence，技能 dry-run 都是 same，不用重装；不改 pen，helper 不用切。要切三个链接）。退回：三个链接切回 `versions/735dbf3/bin/`。
-  - 现装 `versions/735dbf3`（10-20 用户部署，主控打包时工作区干净；R28：fence 内置加 opencode 服务，pi、omp 的 `dev` 默认放行 DeepSeek 和 opencode；三处技能加了套墙的 agent 停了没写 DONE 时查 `fence denials` 告诉用户。改了 fence 数据和技能文字，不改 pen，helper 不用切。三个链接已切、两份技能已重装，主控核对 dry-run 都是 same；部署后删了本机临时放行，pi、omp 在真墙里都能回复）。退回：三个链接切回 `versions/d748c7c/bin/`，重装两份技能。
+  - 现装 `versions/276107d`（10-20 用户部署，主控打包时工作区干净；R29：套 dev 墙的四家 agent 都接 Exa 的 MCP（`web_search_exa`、`web_fetch_exa`，免 key 有限频），`dev` 白名单加 `mcp.exa.ai` 和 GitHub 5 个、Rust 文档 3 个域名；推送不挡（用户 10-20）。只改 fence，技能 dry-run 都是 same，不用重装；不改 pen，helper 不用切。三个链接已切；部署后主控用 corral 套墙开四家各试一次：Claude Code、pi、omp 搜索和读网页都成功，Codex 读网页成功、搜索撞上 Exa 免费限频（四家同时开））。退回：三个链接切回 `versions/735dbf3/bin/`。
+  - 上一版 `versions/735dbf3`（10-20 用户部署，主控打包时工作区干净；R28：fence 内置加 opencode 服务，pi、omp 的 `dev` 默认放行 DeepSeek 和 opencode；三处技能加了套墙的 agent 停了没写 DONE 时查 `fence denials` 告诉用户。改了 fence 数据和技能文字，不改 pen，helper 不用切。三个链接已切、两份技能已重装，主控核对 dry-run 都是 same；部署后删了本机临时放行，pi、omp 在真墙里都能回复）。退回：三个链接切回 `versions/d748c7c/bin/`，重装两份技能。
   - 上一版 `versions/d748c7c`（10-19 用户部署；R27：技能里对方停了没写 DONE 也再挂提醒，程序和 06e2c27 一样。三个链接切到 d748c7c，两份技能已重装，主控核对 dry-run 都是 same、装好的技能是新说法；共用 helper 仍是 aef2b4a）。退回：三个链接切回 `versions/06e2c27/bin/`，重装两份技能。
   - 上一版 `versions/06e2c27`（10-19 用户部署；R25：omp 被 Esc 打断后认得出。三个链接切到 06e2c27，两份技能已重装，主控核对 dry-run 都是 same；只改 reader，共用 helper 仍是 aef2b4a，不用切，omp 不用重开）。退回：三个链接切回 `versions/aef2b4a/bin/`，重装两份技能。
   - 上一版 `versions/aef2b4a`（10-19 用户部署；R24：Claude Code 被 Esc 打断后读对话记录末尾的标记马上认出来。三个链接、两份技能、共用 `~/.corral/.runtime/helper` 都切到 aef2b4a（helper 原来指 f86d1c2，用 `/bin/cat` 测试 agent 单独 `corral upgrade` 切的，没动别的 agent）。部署后主控核对：在跑的 Claude Code 不用重开，钩子已记 `transcript_path`；真实 Claude Code 写字时按 Esc，约 0.1 秒后 `status` 为 idle、`interrupted: true`，`wait` 返回 `interrupted`，`reply` 报 `no_reply`）。退回：三个链接切回 `versions/86e5c4a/bin/`，重装两份技能，helper 用同样办法切回 `versions/f86d1c2/bin/corral`。
@@ -44,7 +44,7 @@
 8. R25（omp 被 Esc 打断后认得出）已合并、10-19 部署到 `versions/06e2c27`：omp 生成回复或调用工具时按 Esc，最后一条回复带 `aborted` / `Interrupted by user` / UserInterrupt 位，reader 认作打断；跑命令时 Esc 只停命令、接着正常结束的照旧。开发时真人实测过。
 9. R26（agy 被 Esc 打断时报什么）摸底已合并：agy 1.4.2 写字时、命令在跑时按 Esc 都不发 `Stop`/`USER_CANCELED`，对话记录也没有标记，只有 agy 自己的诊断日志记了取消请求；没接，agy 被打断仍认不出。没测到命令同步等待的前 10 秒。报告 `docs/调研/R26-agy被打断时报什么.md`。
 10. R27（被委派的 agent 停下来等人、人在它窗口里接着聊，最后写 DONE，主控接不到）已合并、10-19 部署到 `versions/d748c7c`：技能改成停了没写 DONE 也再挂提醒，开完后前台 wait 已停也照收到提醒处理。部署后下一次派活看接不接得到。
-. R29（套墙的 agent 查不了资料）已合并、打包到 `versions/276107d`，待用户部署。部署后主控套墙各开一家试一次 Exa 搜索和读网页。Codex 首次可能找不到 Exa 工具（客户端工具发现的限制），派 Codex 查资料时可能要提示它从工具目录里找；Codex 的 Exa 工具名每次运行不同。
+. R29（套墙的 agent 查不了资料）已合并、10-20 部署到 `versions/276107d`。Exa 免 key 有限频，几个 agent 同时搜会被限；常撞上再考虑注册 key（key 要在墙外注入，另开一件活）。Codex 首次可能找不到 Exa 工具（客户端工具发现的限制），派 Codex 查资料时可能要提示它从工具目录里找；Codex 的 Exa 工具名每次运行不同。
 
 ## 悬着
 
