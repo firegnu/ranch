@@ -6,8 +6,8 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过）；R17（sandbox，fence 接 srt，DESIGN §8）进行中：R17a 本机小试验、R17b fence 本体和 `corral start --sandbox` 都已收尾，R17b 已部署（10-19），R17c（5090 上验 Linux）暂缓，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
-  - 待部署 `versions/735dbf3`（10-20 主控打包，工作区干净；R28：fence 内置加 opencode 服务，pi、omp 的 `dev` 默认放行 DeepSeek 和 opencode；三处技能加了套墙的 agent 停了没写 DONE 时查 `fence denials` 告诉用户。改了 fence 数据和技能文字，不改 pen，helper 不用切。要切三个链接、重装两份技能；打包后主控用空 FENCE_HOME 核对过 pi、omp 都放行 `opencode.ai`）。退回：三个链接切回 `versions/d748c7c/bin/`，重装两份技能。
-  - 现装 `versions/d748c7c`（10-19 用户部署；R27：技能里对方停了没写 DONE 也再挂提醒，程序和 06e2c27 一样。三个链接切到 d748c7c，两份技能已重装，主控核对 dry-run 都是 same、装好的技能是新说法；共用 helper 仍是 aef2b4a）。退回：三个链接切回 `versions/06e2c27/bin/`，重装两份技能。
+  - 现装 `versions/735dbf3`（10-20 用户部署，主控打包时工作区干净；R28：fence 内置加 opencode 服务，pi、omp 的 `dev` 默认放行 DeepSeek 和 opencode；三处技能加了套墙的 agent 停了没写 DONE 时查 `fence denials` 告诉用户。改了 fence 数据和技能文字，不改 pen，helper 不用切。三个链接已切、两份技能已重装，主控核对 dry-run 都是 same；部署后删了本机临时放行，pi、omp 在真墙里都能回复）。退回：三个链接切回 `versions/d748c7c/bin/`，重装两份技能。
+  - 上一版 `versions/d748c7c`（10-19 用户部署；R27：技能里对方停了没写 DONE 也再挂提醒，程序和 06e2c27 一样。三个链接切到 d748c7c，两份技能已重装，主控核对 dry-run 都是 same、装好的技能是新说法；共用 helper 仍是 aef2b4a）。退回：三个链接切回 `versions/06e2c27/bin/`，重装两份技能。
   - 上一版 `versions/06e2c27`（10-19 用户部署；R25：omp 被 Esc 打断后认得出。三个链接切到 06e2c27，两份技能已重装，主控核对 dry-run 都是 same；只改 reader，共用 helper 仍是 aef2b4a，不用切，omp 不用重开）。退回：三个链接切回 `versions/aef2b4a/bin/`，重装两份技能。
   - 上一版 `versions/aef2b4a`（10-19 用户部署；R24：Claude Code 被 Esc 打断后读对话记录末尾的标记马上认出来。三个链接、两份技能、共用 `~/.corral/.runtime/helper` 都切到 aef2b4a（helper 原来指 f86d1c2，用 `/bin/cat` 测试 agent 单独 `corral upgrade` 切的，没动别的 agent）。部署后主控核对：在跑的 Claude Code 不用重开，钩子已记 `transcript_path`；真实 Claude Code 写字时按 Esc，约 0.1 秒后 `status` 为 idle、`interrupted: true`，`wait` 返回 `interrupted`，`reply` 报 `no_reply`）。退回：三个链接切回 `versions/86e5c4a/bin/`，重装两份技能，helper 用同样办法切回 `versions/f86d1c2/bin/corral`。
   - 上一版 `versions/86e5c4a`（10-19 用户部署，部署前问过 paddock/main 没在实测；R22：被人打断的一轮 `status.interrupted`、`wait` 返回 `interrupted`、`reply` 报 `no_reply`、`--after` 跳过；两份技能已重装，主控核对三处都是 same，`status` 已带 `interrupted`；不改 pen，不用 `corral upgrade --all`；已开着的 pi 要重开才认得出打断）。退回：三个链接切回 `versions/aa3676b/bin/`，重装两份技能。
@@ -43,7 +43,7 @@
 8. R25（omp 被 Esc 打断后认得出）已合并、10-19 部署到 `versions/06e2c27`：omp 生成回复或调用工具时按 Esc，最后一条回复带 `aborted` / `Interrupted by user` / UserInterrupt 位，reader 认作打断；跑命令时 Esc 只停命令、接着正常结束的照旧。开发时真人实测过。
 9. R26（agy 被 Esc 打断时报什么）摸底已合并：agy 1.4.2 写字时、命令在跑时按 Esc 都不发 `Stop`/`USER_CANCELED`，对话记录也没有标记，只有 agy 自己的诊断日志记了取消请求；没接，agy 被打断仍认不出。没测到命令同步等待的前 10 秒。报告 `docs/调研/R26-agy被打断时报什么.md`。
 10. R27（被委派的 agent 停下来等人、人在它窗口里接着聊，最后写 DONE，主控接不到）已合并、10-19 部署到 `versions/d748c7c`：技能改成停了没写 DONE 也再挂提醒，开完后前台 wait 已停也照收到提醒处理。部署后下一次派活看接不接得到。
-11. R28（pi、omp 套墙连不上 opencode，一轮就停；套墙的 agent 被拦停下主控看不出原因）已合并、打包到 `versions/735dbf3`，待用户部署。部署后主控删掉 `~/.fence/services/opencode.toml` 和 `~/.fence/local.toml` 里的 `[services]` 一段（本机 `[services]` 会整份盖住内置默认），再核对 pi、omp 墙里能回复。
+11. R28（pi、omp 套墙连不上 opencode，一轮就停；套墙的 agent 被拦停下主控看不出原因）已合并、10-20 部署到 `versions/735dbf3`；本机临时放行已删，pi、omp 在墙里用内置规则能回复。主控能不能从拦截记录看出原因，下次真被拦时看。
 
 ## 悬着
 
@@ -59,6 +59,5 @@
 - R17b 留下的：srt 的文件拦截日志会漏条（Codex、pi 写主仓库被拦没记进 `fence denials`，只在终端可见）；全套测试偶有 1 个失败、再跑就过（像原有 hook 协议测试的偶发超时，没认出名字）；corral 对 Codex 在同一轮里会短暂报 idle，派活时提醒会提前到（没查）。`corral start --help` 的用法行没列 `--sandbox`（CONTRACT 有）。
 - R18 交叉审查第 2 条（旧运行的慢 `child-sandbox` 设定请求在 fence 检查期间遇到同名重开，可能冲掉新运行的设定）：主控改判建议改，与审查者有分歧，已列给用户；返工加了写入前复核 instance，复核和写入之间还剩很小的窗口，CONTRACT 写明了。用户没说要再修。
 - `~/.fence/local.toml`（10-19 用户同意、主控写）：放行 IP Guardian 的 4 个查 IP 网站，允许读 `~/.ip_guardian_bin`、`~/.ip_guardian_allowed`；不写会让墙里的 codex、claude 被 IP Guardian 拦下（退出码 1）。
-- 10-20 临时加的本机放行（用户同意、主控写）：`~/.fence/services/opencode.toml` 放行 `opencode.ai`，`local.toml` 末尾 `[services]` 让 pi、omp 都用 DeepSeek 和 opencode。R28 部署后删（见下一步 11）。
 - R20 交叉审查建议改（R20 之前就有）：`~/.cache` 是指向 HOME 外的符号链接时，`${tmp}` 的环境值和文件规则用链接拼写、socket 规则用真实路径，墙里连临时目录都建不了。用户的 `~/.cache` 不是链接，不受影响；要支持时把三处统一到同一物理路径。
 - Linux 上墙里的 unix socket 仍全拦（srt 不能按路径放行），R17c 时再定。
