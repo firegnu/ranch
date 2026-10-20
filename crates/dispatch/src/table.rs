@@ -1,6 +1,7 @@
 //! Local, data-driven dispatch choices. This module never starts an agent.
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -9,6 +10,9 @@ use std::{
 };
 
 const BUILTIN: &str = include_str!("../resources/dispatch.toml");
+
+mod edit;
+pub use edit::{CellPatch, edit};
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,12 +29,18 @@ struct Agent {
     argv: Vec<String>,
     #[serde(default)]
     labels: Vec<String>,
+    #[serde(default)]
+    efforts: Vec<String>,
+    #[serde(default)]
+    models: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Cell {
     agents: Vec<String>,
+    #[serde(default)]
+    description: String,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -43,6 +53,19 @@ struct Cell {
 
 /// Reads the effective table, or one cell, using HOME without creating any files.
 pub fn read(name: Option<&str>) -> Result<Value, (u8, Value)> {
+    let path = local_path()?;
+    let text = local_text(&path).map_err(|message| invalid(&path, message))?;
+    let table = load(&path, text.as_deref()).map_err(|message| invalid(&path, message))?;
+    match name {
+        None => Ok(table),
+        Some(name) => match table["cells"].get(name) {
+            Some(cell) => Ok(json!({"ok": true, "cell": cell})),
+            None => Err(unknown_cell(name)),
+        },
+    }
+}
+
+fn local_path() -> Result<PathBuf, (u8, Value)> {
     let home = std::env::var_os("HOME")
         .filter(|v| !v.is_empty())
         .ok_or_else(|| {
@@ -51,34 +74,53 @@ pub fn read(name: Option<&str>) -> Result<Value, (u8, Value)> {
                 json!({"ok": false, "error": "invalid_data", "message": "HOME is not set"}),
             )
         })?;
-    let path = PathBuf::from(home).join(".ranch/dispatch.toml");
-    let table = load(&path).map_err(|message| {
-        (
-            1,
-            json!({"ok": false, "error": "invalid_data",
-                   "message": format!("{}: {message}", path.display())}),
-        )
-    })?;
-    match name {
-        None => Ok(table),
-        Some(name) => match table["cells"].get(name) {
-            Some(cell) => Ok(json!({"ok": true, "cell": cell})),
-            None => Err((
-                1,
-                json!({"ok": false, "error": "unknown_cell",
-                                   "message": format!("unknown cell: {name}")}),
-            )),
-        },
+    Ok(PathBuf::from(home).join(".ranch/dispatch.toml"))
+}
+
+fn invalid(path: &std::path::Path, message: impl std::fmt::Display) -> (u8, Value) {
+    (
+        1,
+        json!({"ok": false, "error": "invalid_data",
+               "message": format!("{}: {message}", path.display())}),
+    )
+}
+
+fn unknown_cell(name: &str) -> (u8, Value) {
+    (
+        1,
+        json!({"ok": false, "error": "unknown_cell",
+               "message": format!("unknown cell: {name}")}),
+    )
+}
+
+fn local_text(path: &std::path::Path) -> Result<Option<String>, String> {
+    local_bytes(path)?
+        .map(String::from_utf8)
+        .transpose()
+        .map_err(|e| e.to_string())
+}
+
+fn local_bytes(path: &std::path::Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
     }
 }
 
-fn load(path: &std::path::Path) -> Result<Value, String> {
+fn version(bytes: Option<&[u8]>) -> String {
+    match bytes {
+        Some(bytes) => format!("sha256:{:x}", Sha256::digest(bytes)),
+        None => "missing".to_owned(),
+    }
+}
+
+fn load(path: &std::path::Path, text: Option<&str>) -> Result<Value, String> {
     let mut data: Data = toml::from_str(BUILTIN).map_err(|e| format!("builtin: {e}"))?;
-    let local: Option<Data> = match fs::read_to_string(path) {
-        Ok(text) => Some(toml::from_str(&text).map_err(|e| format!("{e}"))?),
-        Err(e) if e.kind() == ErrorKind::NotFound => None,
-        Err(e) => return Err(e.to_string()),
-    };
+    let local: Option<Data> = text
+        .map(toml::from_str)
+        .transpose()
+        .map_err(|e| format!("{e}"))?;
     let mut user_agents = BTreeSet::new();
     let mut user_cells = BTreeSet::new();
     if let Some(local) = &local {
@@ -110,12 +152,16 @@ fn load(path: &std::path::Path) -> Result<Value, String> {
                 *field = None;
             }
         }
-        if cell.agents.is_empty() {
-            return Err(format!("cells.{name}.agents: needs at least one agent"));
-        }
         for agent in &cell.agents {
             if !agents.contains_key(agent) {
                 return Err(format!("cells.{name}.agents: unknown agent {agent:?}"));
+            }
+            if let Some(effort) = &cell.effort
+                && !agents[agent].efforts.contains(effort)
+            {
+                return Err(format!(
+                    "cells.{name}.effort: agent {agent:?} does not accept {effort:?}"
+                ));
             }
         }
     }
@@ -141,15 +187,30 @@ fn load(path: &std::path::Path) -> Result<Value, String> {
         for family in &cell.agents {
             let agent = &agents[family];
             let render = |values: &[String], field: &str| -> Result<Vec<String>, String> {
-                values
-                    .iter()
-                    .enumerate()
-                    .map(|(i, value)| {
-                        expand(value, cell.model.as_deref(), cell.effort.as_deref()).map_err(|e| {
-                            format!("cells.{name} / agents.{family}.{field}[{i}]: {e}")
-                        })
-                    })
-                    .collect()
+                let mut output = Vec::new();
+                for (i, value) in values.iter().enumerate() {
+                    let missing = (cell.model.is_none() && value.contains("${model}"))
+                        || (cell.effort.is_none() && value.contains("${effort}"));
+                    if missing && (field != "argv" || i != 0) {
+                        // A missing option value also removes its standalone flag.
+                        if field == "argv" && i > 1 {
+                            let previous = &values[i - 1];
+                            if previous.starts_with('-')
+                                && !previous.contains('=')
+                                && !previous.contains("${")
+                            {
+                                output.pop();
+                            }
+                        }
+                        continue;
+                    }
+                    output.push(
+                        expand(value, cell.model.as_deref(), cell.effort.as_deref()).map_err(
+                            |e| format!("cells.{name} / agents.{family}.{field}[{i}]: {e}"),
+                        )?,
+                    );
+                }
+                Ok(output)
             };
             let argv = render(&agent.argv, "argv")?;
             let labels = render(&agent.labels, "labels")?;
@@ -192,7 +253,8 @@ fn load(path: &std::path::Path) -> Result<Value, String> {
         })
         .collect();
     Ok(json!({"ok": true, "agents": families, "cells": resolved,
-              "local": {"path": path, "exists": local.is_some()}}))
+              "local": {"path": path, "exists": local.is_some(),
+                        "version": version(text.map(str::as_bytes))}}))
 }
 
 fn merge(

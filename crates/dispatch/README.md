@@ -13,6 +13,10 @@ ranch dispatch install-skills [--target all|claude|codex|gemini] [--dry-run] [--
 
 `cell` 读一格的家、模型、强度、完整命令和标签，附交叉审查启动信息与返工格子名；`table` 列出整张生效表及各家的模板和来源。两个命令只读、不联网、不启动 agent。默认数据在 `resources/dispatch.toml`，本机 `$HOME/.ranch/dispatch.toml` 按字段覆盖，也可加家或格子；每次读取立即生效，不用重编译或重装技能。格式、输出和错误见 [公开约定](../../docs/CONTRACT.md#ranch-dispatch-cell--tabler31)。对 paddock：兼容新增命令，现有调用不用改。
 
+R35 新增 `edit <格子>` 局部改表、`reset <格子>` 恢复默认；`table` 提供说明、模型建议、允许强度和 `local.version`，保存时可带 `--if-version` 检测外部改动。写入先验证全表，再原子替换；不改家模板。paddock 设置页可只靠命令与 JSON 接入，详见 [R35 公开约定](../../docs/CONTRACT.md#ranch-dispatch-edit--resetr35)。
+
+格式保留用 `toml_edit`，写入前必须确认原文解析再输出逐字节不变。交错点号键等写法可能被解析器重排，此时命令返回 `format_not_preserved`（退出 1）、原文件不动；请手改，或改成普通 `[cells.NAME]` 表写法。命令新建格子使用普通表写法。只读命令仍能读这些合法 TOML。
+
 ## 来源
 
 从 Saddle 内置 dispatch 插件迁来：Saddle 提交 `c21674a` 的 `plugins/dispatch`（用户 10-05 定：dispatch 拆到 ranch，不要遥测）。改动：

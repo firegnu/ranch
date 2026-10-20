@@ -291,3 +291,311 @@ fn invalid_local_tables_fail_with_location_instead_of_falling_back() {
         }
     }
 }
+
+#[test]
+fn descriptions_and_agent_options_are_data_in_read_output() {
+    let home = TempDir::new().unwrap();
+    let table = run(&home, &["table"], 0);
+    for cell in table["cells"].as_object().unwrap().values() {
+        assert!(!cell["description"].as_str().unwrap_or("").is_empty());
+    }
+    for name in ["claude", "codex"] {
+        assert_eq!(
+            table["agents"][name]["efforts"],
+            json!(["medium", "high", "xhigh"])
+        );
+    }
+    assert_eq!(
+        table["agents"]["claude"]["models"],
+        json!(["opus[1m]", "sonnet"])
+    );
+    assert_eq!(table["agents"]["codex"]["models"], json!(["gpt-6-astra"]));
+    for name in ["pi", "omp", "amp", "agy"] {
+        assert_eq!(table["agents"][name]["efforts"], json!([]));
+        assert_eq!(table["agents"][name]["models"], json!([]));
+    }
+    local(
+        &home,
+        "[cells.implementation]\ndescription = '本机说明'\n\
+         [agents.codex]\nefforts = ['medium', 'high', 'xhigh', 'custom']\nmodels = ['suggested']\n",
+    );
+    let table = run(&home, &["table"], 0);
+    assert_eq!(table["cells"]["implementation"]["description"], "本机说明");
+    assert_eq!(
+        run(&home, &["cell", "implementation"], 0)["cell"]["description"],
+        "本机说明"
+    );
+    assert_eq!(table["agents"]["codex"]["efforts"][3], "custom");
+    assert_eq!(table["agents"]["codex"]["models"], json!(["suggested"]));
+}
+
+#[test]
+fn edit_preserves_other_cells_templates_order_and_comments() {
+    let home = TempDir::new().unwrap();
+    let original = "# user header\n[agents.pi] # keep template\nargv = ['pi', '--local']\n\n\
+                    [cells.implementation] # target\nmodel = 'old' # model note\n\
+                    # keep description note\ndescription = 'old description'\n\n\
+                    # keep next cell\n[cells.chores]\nagents = [ 'omp', 'pi' ] # order\n";
+    local(&home, original);
+    let before = run(&home, &["table"], 0);
+    let after = run(
+        &home,
+        &[
+            "edit",
+            "implementation",
+            "--agents",
+            r#"["claude","codex"]"#,
+            "--model",
+            "unlisted-model",
+            "--effort",
+            "high",
+            "--cross-review",
+            "review",
+            "--rework",
+            "implementation-hard",
+            "--description",
+            "新的说明",
+        ],
+        0,
+    );
+    let saved = fs::read_to_string(home.path().join(".ranch/dispatch.toml")).unwrap();
+    assert!(saved.starts_with(original.split("[cells.implementation]").next().unwrap()));
+    assert!(
+        saved.ends_with("# keep next cell\n[cells.chores]\nagents = [ 'omp', 'pi' ] # order\n")
+    );
+    assert!(saved.contains("# target"));
+    assert!(saved.contains("# model note"));
+    assert!(saved.contains("# keep description note"));
+    assert_eq!(after["agents"], before["agents"]);
+    for (name, cell) in before["cells"].as_object().unwrap() {
+        if name != "implementation" {
+            assert_eq!(&after["cells"][name], cell);
+        }
+    }
+    let cell = &after["cells"]["implementation"];
+    assert_eq!(cell["agents"], json!(["claude", "codex"]));
+    assert_eq!(cell["model"], "unlisted-model");
+    assert_eq!(cell["effort"], "high");
+    assert_eq!(cell["cross_review"], "review");
+    assert_eq!(cell["review"]["name"], "review");
+    assert_eq!(cell["rework"], "implementation-hard");
+    assert_eq!(cell["description"], "新的说明");
+    assert_eq!(&run(&home, &["cell", "implementation"], 0)["cell"], cell);
+}
+
+#[test]
+fn edit_creates_missing_file_clears_fields_and_reset_restores_defaults() {
+    let home = TempDir::new().unwrap();
+    let before = run(&home, &["table"], 0);
+    let edited = run(
+        &home,
+        &[
+            "edit",
+            "core-code",
+            "--model",
+            "",
+            "--effort",
+            "",
+            "--cross-review",
+            "",
+            "--rework",
+            "",
+            "--description",
+            "",
+        ],
+        0,
+    );
+    assert!(home.path().join(".ranch/dispatch.toml").is_file());
+    let cell = &edited["cells"]["core-code"];
+    for key in ["model", "effort", "cross_review", "rework", "review"] {
+        assert!(cell[key].is_null(), "{key}");
+    }
+    assert_eq!(cell["description"], "");
+    assert_eq!(
+        cell["choices"][0]["argv"],
+        json!(["codex", "--yolo", "--disable", "memories"])
+    );
+    assert_eq!(cell["choices"][0]["labels"], json!([]));
+    assert_eq!(edited["agents"], before["agents"]);
+    let empty = run(&home, &["edit", "core-code", "--agents", "[]"], 0);
+    assert_eq!(empty["cells"]["core-code"]["agents"], json!([]));
+    assert_eq!(empty["cells"]["core-code"]["choices"], json!([]));
+    let restored = run(&home, &["reset", "core-code"], 0);
+    assert_eq!(restored["cells"], before["cells"]);
+    assert_eq!(restored["agents"], before["agents"]);
+    assert_eq!(
+        run(&home, &["cell", "core-code"], 0)["cell"],
+        before["cells"]["core-code"]
+    );
+    assert!(
+        !fs::read_to_string(home.path().join(".ranch/dispatch.toml"))
+            .unwrap()
+            .contains("core-code")
+    );
+}
+
+#[test]
+fn invalid_edits_report_field_and_leave_file_unchanged() {
+    let home = TempDir::new().unwrap();
+    let original = "# preserve exactly\n[cells.implementation]\nmodel = 'custom'\n\
+                    [cells.ui-clear]\nrework = 'implementation'\n";
+    local(&home, original);
+    for (args, location) in [
+        (
+            vec!["--agents", r#"["missing"]"#],
+            "cells.implementation.agents",
+        ),
+        (vec!["--effort", "unknown"], "cells.implementation.effort"),
+        (vec!["--agents", r#"["pi"]"#, "--effort", "high"], "pi"),
+        (
+            vec!["--cross-review", "missing"],
+            "cells.implementation.cross_review",
+        ),
+        (vec!["--rework", "missing"], "cells.implementation.rework"),
+        (vec!["--rework", "ui-clear"], "cycle"),
+    ] {
+        let mut command = vec!["edit", "implementation"];
+        command.extend(args);
+        let error = run(&home, &command, 1);
+        assert_eq!(error["error"], "invalid_data");
+        assert!(
+            error["message"].as_str().unwrap().contains(location),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(home.path().join(".ranch/dispatch.toml")).unwrap(),
+            original
+        );
+    }
+    // The same table validation also applies when reading a hand-edited file.
+    local(&home, "[cells.implementation]\neffort = 'unknown'\n");
+    assert_eq!(run(&home, &["table"], 1)["error"], "invalid_data");
+    // Options overridden in data, including non-suggested models, are honored by writes.
+    local(
+        &home,
+        "[agents.codex]\nefforts = ['medium', 'high', 'xhigh', 'custom']\n",
+    );
+    let after = run(
+        &home,
+        &[
+            "edit",
+            "implementation",
+            "--effort",
+            "custom",
+            "--model",
+            "free-form",
+        ],
+        0,
+    );
+    assert_eq!(after["cells"]["implementation"]["effort"], "custom");
+    assert_eq!(after["cells"]["implementation"]["model"], "free-form");
+}
+
+#[test]
+fn version_checks_detect_external_changes_without_writing() {
+    let home = TempDir::new().unwrap();
+    let table = run(&home, &["table"], 0);
+    let missing = table["local"]["version"]
+        .as_str()
+        .expect("missing-file version");
+    let first = run(
+        &home,
+        &[
+            "edit",
+            "implementation",
+            "--model",
+            "first",
+            "--if-version",
+            missing,
+        ],
+        0,
+    );
+    let version = first["local"]["version"].as_str().unwrap();
+    assert_ne!(version, missing);
+    assert_eq!(run(&home, &["table"], 0)["local"]["version"], version);
+    let path = home.path().join(".ranch/dispatch.toml");
+    let saved = fs::read_to_string(&path).unwrap();
+    let changed = format!("{saved}# another editor\n");
+    fs::write(&path, &changed).unwrap();
+    for args in [
+        vec![
+            "edit",
+            "implementation",
+            "--model",
+            "stale",
+            "--if-version",
+            version,
+        ],
+        vec!["reset", "implementation", "--if-version", version],
+    ] {
+        let error = run(&home, &args, 3);
+        assert_eq!(error["error"], "conflict");
+        assert_eq!(error["expected_version"], version);
+        assert_ne!(error["actual_version"], version);
+        assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+    }
+    // Staleness takes precedence even when the external edit breaks TOML.
+    local(&home, "[invalid");
+    assert_eq!(
+        run(
+            &home,
+            &["reset", "implementation", "--if-version", version],
+            3
+        )["error"],
+        "conflict"
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "[invalid");
+    local(&home, &changed);
+    let current = run(&home, &["table"], 0);
+    let reset = run(
+        &home,
+        &[
+            "reset",
+            "implementation",
+            "--if-version",
+            current["local"]["version"].as_str().unwrap(),
+        ],
+        0,
+    );
+    assert_eq!(reset["cells"]["implementation"]["model"], "gpt-6-astra");
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        run(
+            &home,
+            &[
+                "edit",
+                "implementation",
+                "--model",
+                "stale",
+                "--if-version",
+                version
+            ],
+            3
+        )["error"],
+        "conflict"
+    );
+    assert!(!path.exists());
+}
+
+#[test]
+fn edits_refuse_dotted_keys_that_cannot_preserve_original_order() {
+    let home = TempDir::new().unwrap();
+    let original = "# interleaved dotted keys\n\
+                    cells.implementation.model = 'first' # first\n\
+                    cells.chores.agents = ['pi'] # middle\n\
+                    cells.implementation.effort = 'high' # last\n";
+    local(&home, original);
+    run(&home, &["table"], 0);
+    for args in [
+        vec!["edit", "implementation", "--model", "second"],
+        vec!["reset", "implementation"],
+    ] {
+        let error = run(&home, &args, 1);
+        assert_eq!(error["error"], "format_not_preserved");
+        assert!(error["message"].as_str().unwrap().contains("dotted"));
+        assert_eq!(
+            fs::read_to_string(home.path().join(".ranch/dispatch.toml")).unwrap(),
+            original
+        );
+    }
+}
