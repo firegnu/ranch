@@ -254,6 +254,7 @@ echo "<摘要>" | ranch dispatch route
 每件都审，按这件活影响面那一档的预算审（第 3 节），不超出。重点是核实对方说的，不是自己再证一遍：
 
 - 收到提醒（或被后台 wait 叫醒）先查 `corral status <名字>`；`interrupted: true`、wait 的 `result: "interrupted"`，或 reply 的 `no_reply` 带 `interrupted: true`，都表示这一轮被打断，不进入完成审查。告诉用户，等它继续；没有中断标记时再读 reply，核实回复最后一行是 DONE 和完成记录。
+- 对方停了但回复最后一行不是 DONE（包括 `no_reply`），且 `corral status` 的 `sandbox` 不是 `null`：先看 `fence denials --agent <名字>` 的网络拦截记录（`type: "network"`），用 `corral read <名字>` 看屏幕末尾的报错，把被拦的域名和报错告诉用户；已退出读不到屏幕时说明这一点，并查看 denials 的 `exit.message`。之后仍按下面的规则告诉用户、重挂提醒或不再挂。
 - 空闲或 blocked 但回复最后一行不是 DONE（如等人操作、问问题），照旧告诉用户去 `corral attach <名字>` 看，同时按 corral 技能「长任务」一节再挂一次提醒（Claude Code 连后台 wait 一起），结束这一轮。用户在对方窗口里直接聊，或通过主控转话，都要继续盯；下次被叫醒仍按同样规则判断，直到看到 DONE。对方又在干活，是被叫早了，同样重挂；对方已经退出或不在了但没有 DONE，告诉用户，不再挂提醒或后台 wait。
 - 对方的完成回复是待核对的说明，不替代代码和检查结果。重点核对任务目标和关键行为断言，不因此另列审计清单或加验证。
 - 读完成记录和回复，看 diff：只动了该动的，「不要做」里的一件都没做，「怎么算做完」逐条达到。

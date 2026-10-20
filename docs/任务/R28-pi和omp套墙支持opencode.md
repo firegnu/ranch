@@ -62,3 +62,11 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：新增内置 `opencode` 服务，只放行 `opencode.ai`；pi、omp 的 dev 默认服务同时包含 DeepSeek 和 opencode。同步 README、域名测试和 CONTRACT 的内置服务列表示例。三处技能/guide 统一增加停下且没有 DONE（含 no_reply）时的套墙诊断：查网络拒绝、读终端末尾，把域名和报错告诉用户；原有打断、提醒规则保留。
+- 验证了什么：只改测试后跑 `cargo test -p fence --test cli four_agents_match_the_development_profile`，因 pi 缺少 opencode.ai 失败；改数据后 `cargo test -p fence` 通过（20 通过、8 个真实 srt 测试按原设置忽略），包含目标测试转绿。`cargo test -p corral-core --test adapters agy_reads_corral_skills_from_its_own_config` 和 `cargo test -p ranch-dispatch skills::tests::creates_then_reports_same_and_leaves_extra_files` 各 1 项通过；未找到针对 guide 正文的断言。编译目录里的 fence 在隔离 HOME/FENCE_HOME、合成 pi/omp 路径及 `FENCE_RUNNER=/bin/sh` 下分别运行 `check --profile dev --kind omp`、`--kind pi`，均 ok，均有 api.deepseek.com、opencode.ai。`git diff --check` 通过。命令均前台执行并等到结束。
+- 拿主意的地方：退出后可能读不到终端，三处说明都补充如实告知并看 denials 的 exit.message，沿用现有公开约定。paddock 不用改代码：只是内置服务和技能的兼容新增，命令、参数、JSON 格式、退出码均不变；规则和技能由主控后续部署。没有需要主控另作决定的事。
+- 没做的事：未改程序逻辑、其他种类数据或路径权限，未动用户配置、认证文件和现有 agent；未起真实模型服务、未部署、未合并或推送。
+- 踩过的坑：技能测试第一次误用包名 corral，改成实际包名 corral-core 后通过。直接用开发二进制跑 check 缺少打包后的 runtime.toml，改为现有测试使用的合成 runner 后通过。临时目录的 rm -rf 清理被工具拒绝，改用逐个 unlink 和 rmdir 清理。
