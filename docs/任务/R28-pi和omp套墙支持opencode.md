@@ -70,3 +70,11 @@
 - 拿主意的地方：退出后可能读不到终端，三处说明都补充如实告知并看 denials 的 exit.message，沿用现有公开约定。paddock 不用改代码：只是内置服务和技能的兼容新增，命令、参数、JSON 格式、退出码均不变；规则和技能由主控后续部署。没有需要主控另作决定的事。
 - 没做的事：未改程序逻辑、其他种类数据或路径权限，未动用户配置、认证文件和现有 agent；未起真实模型服务、未部署、未合并或推送。
 - 踩过的坑：技能测试第一次误用包名 corral，改成实际包名 corral-core 后通过。直接用开发二进制跑 check 缺少打包后的 runtime.toml，改为现有测试使用的合成 runner 后通过。临时目录的 rm -rf 清理被工具拒绝，改用逐个 unlink 和 rmdir 清理。
+
+## 主控审查
+
+- 10-20 ranch/main 看了 diff：只动了 fence 数据、测试、README、CONTRACT 的示例和三处技能/guide，程序逻辑没改；放行只加了 `opencode.ai`，只给 pi、omp。三处技能说法一致：套墙的 agent 停了没写 DONE，先查 `fence denials` 的网络拦截和屏幕末尾，把被拦的域名和报错告诉用户，其余规则不变。
+- 重跑一次：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过，`cargo test --all-targets` 180 通过、0 失败，和对方说的 fence 部分一致。
+- 建议改（不采纳）：README 里加的「对 paddock」一段属于这次改动的说明，放在 README 里略显多余；不影响使用，留着。
+- 主控能不能真从拦截记录看出原因，要部署后遇到真实被拦时看。
+- 结果：一次过
