@@ -3,6 +3,7 @@ use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
     env, fs,
+    io::Read,
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -198,7 +199,18 @@ impl Context {
             .as_ref()
             .and_then(|s| Path::new(s).parent())
             .unwrap_or(&worktree);
+        // A fresh name avoids merging a user's MCP authentication into our URL.
+        let run_nonce = if tmp.is_some() {
+            let mut bytes = [0u8; 16];
+            fs::File::open("/dev/urandom")
+                .and_then(|mut file| file.read_exact(&mut bytes))
+                .map_err(|e| error("invalid_data", e))?;
+            bytes.iter().map(|b| format!("{b:02x}")).collect()
+        } else {
+            "<运行时才有>".into()
+        };
         let values = [
+            ("run_nonce", Some(run_nonce)),
             ("home", env::var("HOME").ok()),
             ("cwd", Some(cwd.to_string_lossy().into_owned())),
             ("worktree", Some(worktree.to_string_lossy().into_owned())),

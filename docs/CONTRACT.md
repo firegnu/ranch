@@ -222,6 +222,8 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 
 R29：内置 `dev` 新增 `mcp.exa.ai`、`github.com`、`api.github.com`、`raw.githubusercontent.com`、`codeload.github.com`、`objects.githubusercontent.com`、`docs.rs`、`doc.rust-lang.org`、`static.rust-lang.org`。四家种类的 `args` 加入 Exa MCP 临时接入参数，提供免 key、有限频的 `web_search_exa` 和 `web_fetch_exa`；pi 的扩展、omp 的插件资源由 `run` 写到实例 `${tmp}/fence-exa`，不修改各家全局配置。用户同名覆盖仍整份替换。原读写权限不变，GitHub 推送不被专门阻止（用户 10-20 决定），任务书自行约束推送。兼容新增，paddock 不用改。
 
+Codex 使用每次运行独立的 `fence_exa_${run_nonce}` server 名；`${run_nonce}` 是系统随机源产生的 128 位随机值，以 32 位十六进制展开，`check` 显示 `<运行时才有>`。这是为了避免 Codex 递归合并旧同名表的认证字段；fence 不读取 Codex 配置查重。Codex 工具名为 `mcp__fence_exa_<随机值>__web_search_exa`／`mcp__fence_exa_<随机值>__web_fetch_exa`，不能固定完整名称，需使用当次工具目录；其余三家名称不变。此变化不改 corral／paddock 的命令、JSON 或退出码。
+
 错误码：`usage`、`unknown_profile`、`invalid_data`（附 `problems:[{source,path,message}]`）、`unsupported_kind`（附 `supported:[…]`）、`no_service`、`program_not_found`、`bad_cwd`、`runtime_missing`、`not_found`。amp/agy 本轮无数据，使用 sandbox 时返回 `unsupported_kind`。
 
 `check` 在合并时校验域名和可选端口，错误返回 `invalid_data`，附规则来源和 `domains[索引]`；`run` 复用同一校验，在创建运行记录和启动程序前失败。允许 `*.example.com`、`example.com:443`、`[::1]`、`[2001:db8::1]:443` 等 srt 格式；端口为 1–65535，不带前导零。

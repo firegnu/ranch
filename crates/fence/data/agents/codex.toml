@@ -4,7 +4,7 @@ write = ["${home}/.codex"]
 deny_write = ["${home}/.codex/config.toml", "${home}/.codex/auth.json"]
 args = [
   "-c", 'projects={${repo:json}={trust_level="trusted"}}',
-  "-c", 'mcp_servers.fence_exa={url="https://mcp.exa.ai/mcp"}',
+  "-c", 'mcp_servers.fence_exa_${run_nonce}={url="https://mcp.exa.ai/mcp"}',
 ]
 [macos]
 allow_pty = true

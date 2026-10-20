@@ -109,3 +109,15 @@
 - 要主控决定的事：没有新增决策项。主控审查时注意上述 Codex 工具发现限制；如果要独立修 Codex 客户端，另开任务，不在本轮扩大范围。
 
 补充依据：[pi MCP 权限与 OAuth 规则](https://pi.dev/docs/latest/mcp)、[omp Exa MCP 过滤逻辑](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/mcp/config.ts)、[Codex MCP 配置](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
+
+### 第三轮（2026-10-20，交叉审查返工）
+
+状态：**两条返工已完成，待主控复审；未合并、未部署、未推送**。第二轮的真实调用记录保留为当时事实，Codex 的固定工具名称由本轮设计替代。
+
+- 做了什么：先更新 DESIGN §8，再把 Codex MCP 名改为 `fence_exa_${run_nonce}`。每次运行从系统随机源读取 128 位随机值，以 32 位十六进制展开，同一次规则展开复用该值；`check` 仅显示 `<运行时才有>`。fence 不读取 Codex 配置查重，不改原有 server URL 或认证。新增一条 argv 记录 runner 回归，检查四家实际参数、用户参数保留、展开后的 pi／omp 路径、pi 扩展全文、插件 manifest、MCP URL 和两个工具名，并在同一测试里第二次运行 Codex 确认名称变化。同步 README、CONTRACT 的占位符和工具命名；paddock 不用改。
+- 验证了什么：新增回归在旧实现上因固定名称不符合每次运行名称要求而失败（有效 RED），改实现后单测通过（GREEN）。本轮 `cargo test -p fence` 仅跑一次，21 过、0 失败、8 个真实 srt 测试按原设置忽略。`cargo fmt --all` 格式化一次，`cargo clippy --all-targets -- -D warnings` 一次通过，最终 `git diff --check` 通过；没有重跑全量测试。
+- 离线认证验证：隔离 HOME、CODEX_HOME、FENCE_HOME 和工作目录，在测试 `config.toml` 写入审查给出的旧 `fence_exa` 条目（`https://research.example.invalid/mcp`，假值 `Authorization: Bearer review-placeholder`）。用合成 runner 将本轮 fence 实际生成的参数交给 Codex 0.163.0 的 `mcp get --json`，分别读取旧名称和随机新名称；两个命令都由 `sandbox-exec` 显式禁止全部网络。旧条目的 URL 和假认证保持原样；新条目 URL 为 Exa，`http_headers`、`env_http_headers`、`bearer_token_env_var`、`http_headers_helper` 均为 null。JSON 断言和配置文件逐字节比较通过。只读有效配置，没有 MCP 请求、模型调用或真实 agent 会话；日志留本机临时目录，不提交。
+- 拿主意的地方：用随机后缀避免靠读取用户配置寻找可用名字，也不依赖调用方实例名恰好未被用户配置采用。核对审查中的另外三家合并结论，并复核本机 pi 文档：Claude 会话配置整项覆盖，pi 文件配置同名项优先（URL 与认证保留为原条目，而非将旧认证移到 Exa），omp 插件使用插件名称空间；没有发现 Codex 这种递归继承认证再改向的行为，按返工要求不改这三家的接法。Codex 完整工具名现在随运行变化，必须按当次工具目录发现。
+- 没做的事：未连接真实 Exa 或模型服务，未启动真实 agent，未增加覆盖矩阵；未测试推送或修改已有读写权限、钥匙串、全局配置、用户认证、corral、paddock；未部署、合并到 main 或推送。
+- 踩过的坑：回归初稿误用 `toml::Value::from_str` 读取整个赋值文档，先因夹具解析错误失败；改用 `toml::from_str::<toml::Table>` 后才得到上述有效 RED，未把解析错误算作缺陷复现。实现首次编译误引用另一个模块的私有 IO 错误帮助函数，改为当前模块已有的错误构造方式后通过；未因此扩大测试范围。
+- 要主控决定的事：没有新增决策项。
