@@ -83,3 +83,29 @@
 - 要主控决定的事：是否允许另行评估“墙外仅取 Claude 登录凭证、临时传给墙内 Claude，同时禁止墙内读取钥匙串”的方案，或指定其他凭证隔离办法。尚未证明这条候选路线可用，本轮没有读取、复制或注入登录凭证。不能把此次认证失败说成 GitHub 推送隔离已完成，也不能据此断言所有其他办法都做不到。
 
 核对依据：[Exa MCP 官方说明](https://exa.ai/docs/get-started/exa-mcp)、[pi 当前会话 MCP 注册接口](https://pi.dev/docs/latest/extensions)、[omp MCP 配置](https://github.com/can1357/oh-my-pi/blob/main/docs/mcp-config.md)、[omp 内置 Exa 搜索实现](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/web/search/providers/exa.ts)。
+
+### 第二轮（2026-10-20）
+
+状态：**新版任务已完成，待主控审查；未合并、未部署、未推送**。本轮先 `git merge main` 取得取消推送限制的新任务；上面的阻塞记录保留为第一轮事实，不再是当前阻塞。
+
+- 做了什么：先改 DESIGN §8，明确推送不挡及用户理由，再实现 `dev` 九个指定域名的新增。四家通过原生 MCP 客户端接 Exa：Claude/Codex 注入启动配置，pi 加会话扩展，omp 加临时插件。资源编进 fence，每次写在实例临时目录，沿用原有七天清理；种类仍只用既有 `args` 机制选择接法。没有改各家已有读写路径和全局配置。同步 README、CONTRACT，命令和 JSON 格式不变，paddock 不用改。
+- 验证了什么：第二轮先只改规则测试期望，单测因九个域名缺失失败；实现后四家域名、参数断言通过。fence 包第一次受上轮留在编译目录的真实 srt 资源影响，“缺少运行时”的夹具失败；移开该资源后重跑，20 过、8 个真实 srt 测试按原设置忽略。`cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各跑一次均通过（全量测试 180 过、11 忽略）。之后真实实测发现 pi 文件后缀问题，参数单测再次 RED→GREEN；后续仅修正 pi 免认证头和 omp URL 工具列表，重新编译并用真实调用复验，没有扩展验证范围。最终 `git diff --check` 通过。
+- 真实实测：使用独立编译目录中的 `debug/fence` 和现装 srt 0.0.80，隔离 FENCE_HOME 与缓存目录，所有命令在前台等待退出。版本：Claude Code 2.1.304、Codex CLI 0.163.0、pi 1.3.0、omp 18.12.3。每家成功验收均完成一次搜索 `Rust official blog`、一次读取 `https://blog.rust-lang.org/`，两项都返回标题 `The Rust Programming Language Blog`；再通过 shell 执行指定 raw GitHub README 命令，四家均读到从 `<div align="center">` 开始的前五行，退出码 0。没有任何推送或推送实测。
+
+| agent | 实际搜索／读网页工具 | raw README 工具 | 结果 |
+| --- | --- | --- | --- |
+| Claude Code | `mcp__fence_exa__web_search_exa`、`mcp__fence_exa__web_fetch_exa`（先经 ToolSearch 加载） | `Bash` | 三项成功，进程退出 0 |
+| Codex | `mcp__fence_exa__web_search_exa`、`mcp__fence_exa__web_fetch_exa`（经 `functions.exec` 的工具目录发现并调用） | `functions.exec_command` | 三项成功，进程退出 0 |
+| pi | `mcp__fence_exa__web_search_exa`、`mcp__fence_exa__web_fetch_exa` | `bash` | 三项成功，进程退出 0 |
+| omp | `mcp__fence_exa_fence_exa_web_search_exa`、`mcp__fence_exa_fence_exa_web_fetch_exa`（原生 `xd://` 设备的 read 查 schema、write 调工具；不是写本地文件） | `bash` | 三项成功，进程退出 0 |
+
+- 拿主意的地方：不用 fence 自己实现 MCP 协议或上网代理。pi 原生 HTTP MCP 默认会触碰 OAuth 存储，因此显式给免认证 Exa 空 `Authorization` 头；既不提供 API key，也不新增认证文件写权限。omp 内置搜索无法替代读网页，所以显式请求这两个工具并保留临时 MCP。临时资源统一写出，实际由种类参数加载，避免在 Rust 启动流程里按 agent 名字分派。对用户同名覆盖仍维持整份替换，不悄悄改用户规则。
+- 没做的事：按新版决定不挡推送、不测推送；没改钥匙串或其他原有读写路径。未改 corral、技能、paddock、用户 agent、认证文件或全局配置；未安装、部署、合并到 main、推送。Linux 真实环境仍属于暂缓的 R17c，本轮没有额外测试。真实日志只留本机临时目录，未把插件状态、用户路径或模型会话日志提交到仓库。
+- 踩过的坑：
+  - Codex 首次通过 `tool_search.tool_search_tool` 发现工具时，客户端报 `unsupported call: tool_searchtool_search_tool`；raw 读取成功，Exa 未调用。复验提示它使用现有 `functions.exec`／`ALL_TOOLS` 目录，实际 MCP 调用成功。未修改 Codex 配置、版本或模型；这是本机当前客户端的工具发现限制，不能把首次失败省略成一次全过。
+  - pi 首次 `.mjs` 扩展被加载器跳过，改 `.ts` 后又因默认 OAuth 读取尝试创建 `~/.pi/agent/mcp-auth.json` 而失败（墙已拦住）。定位期间前台运行过一次 `/mcp` 状态命令，没有模型调用；空认证头绕过不需要的 OAuth 加载后，两项 MCP 调用成功。
+  - omp 会过滤未显式请求额外工具的 Exa MCP 配置；首次未加载工具，它自行尝试 eval/Python 和设备发现但失败，没有产生实现或测试脚本。后续提示明确禁止 eval/Python；URL 加 `tools=web_search_exa,web_fetch_exa` 后，原生 MCP 设备成功调用两项工具。
+  - Claude 仍有现有 cairn SessionEnd hook 路径被墙拒绝的提示；Codex 有其他全局 MCP／技能路径被墙拒绝的提示。没有放开这些路径或域名，三项目标操作和进程正常完成。
+- 要主控决定的事：没有新增决策项。主控审查时注意上述 Codex 工具发现限制；如果要独立修 Codex 客户端，另开任务，不在本轮扩大范围。
+
+补充依据：[pi MCP 权限与 OAuth 规则](https://pi.dev/docs/latest/mcp)、[omp Exa MCP 过滤逻辑](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/mcp/config.ts)、[Codex MCP 配置](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。

@@ -53,6 +53,20 @@ impl Lab {
             ),
         )
         .unwrap();
+        // Probes run synthetic programs, so retain the rules without agent CLI arguments.
+        fs::create_dir_all(home.join(".fence/agents")).unwrap();
+        for (kind, data) in [
+            ("claude", include_str!("../data/agents/claude.toml")),
+            ("pi", include_str!("../data/agents/pi.toml")),
+        ] {
+            let mut data: toml::Table = toml::from_str(data).unwrap();
+            data.remove("args");
+            fs::write(
+                home.join(format!(".fence/agents/{kind}.toml")),
+                toml::to_string(&data).unwrap(),
+            )
+            .unwrap();
+        }
         Self {
             _temp: temp,
             root,

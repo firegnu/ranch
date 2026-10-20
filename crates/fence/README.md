@@ -12,6 +12,12 @@
 
 对 paddock：内置服务和派活技能兼容新增，命令、参数、JSON 格式和退出码不变，paddock 不用改；新版规则随 fence 部署，诊断说明随 corral、corral-dispatch 技能部署。
 
+R29：`dev` 新增 Exa MCP、GitHub 和 Rust 文档的九个指定域名（完整列表见 `data/profiles/dev.toml`）。四家种类数据通过启动参数接 `https://mcp.exa.ai/mcp`，免 API key、有限频；搜索用 `web_search_exa`，已知网址用 `web_fetch_exa`，目标站由 Exa 服务器抓取，不要求在墙内放行目标站。Claude/Codex 直接注入 MCP 配置；pi 需要支持 `registerMcpServer` 的版本，omp 通过临时插件同时接搜索和读网页。`resources/exa/` 为本仓库新写的运行资源（pi 的会话扩展和 omp 的插件数据），编进 fence，在每次运行的 `${tmp}/fence-exa` 写出，随临时目录清理；不写用户全局配置。用户同名种类或档案覆盖仍整份替换，相应新增需用户自行接入。启动参数接法不变，paddock 不用改。
+
+用户 10-20 取消推送限制：GitHub 正常放行，Claude 的钥匙串读取照旧；是否推送由任务书约束，fence 不保证阻止 GitHub 写操作。
+
+接入细节：pi 的空 `Authorization` 头用于跳过默认 OAuth 凭证文件加载，不含 token，避免创建 `~/.pi/agent/mcp-auth.json`；扩展文件须用 pi 能识别的 `.ts` 后缀。omp 的 URL 显式请求 `web_search_exa,web_fetch_exa`，否则它会把 Exa MCP 配置作为内置搜索的重复来源过滤掉。两者均沿用各家原生 MCP 客户端。
+
 | 键 | 可写来源 |
 | --- | --- |
 | `description` | 档案、种类、服务 |

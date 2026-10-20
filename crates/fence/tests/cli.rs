@@ -151,6 +151,13 @@ fn unix_sockets_reject_wildcards_relative_paths_and_repo_permissions() {
 fn runtime_failures_keep_messages_but_agent_exit_125_does_not() {
     use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
+    fs::create_dir(f.0.path().join("fence/agents")).unwrap();
+    // This fixture launches /bin/sh, not Claude's CLI.
+    fs::write(
+        f.0.path().join("fence/agents/claude.toml"),
+        "services = ['anthropic']\n",
+    )
+    .unwrap();
     let root = f.0.path();
     let module = root.join("lib/srt/node_modules/@anthropic-ai/sandbox-runtime");
     fs::create_dir_all(module.join("dist")).unwrap();
@@ -523,6 +530,15 @@ fn check_merges_rules_and_rejects_forbidden_repository_keys() {
             "crates.io",
             "index.crates.io",
             "static.crates.io",
+            "mcp.exa.ai",
+            "github.com",
+            "api.github.com",
+            "raw.githubusercontent.com",
+            "codeload.github.com",
+            "objects.githubusercontent.com",
+            "docs.rs",
+            "doc.rust-lang.org",
+            "static.rust-lang.org",
             "api.deepseek.com",
             "example.test"
         ])
@@ -763,7 +779,20 @@ fn four_agents_match_the_development_profile() {
             .unwrap();
         let v: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(v["ok"], true, "{v}");
-        let mut allowed = vec!["crates.io", "index.crates.io", "static.crates.io"];
+        let mut allowed = vec![
+            "crates.io",
+            "index.crates.io",
+            "static.crates.io",
+            "mcp.exa.ai",
+            "github.com",
+            "api.github.com",
+            "raw.githubusercontent.com",
+            "codeload.github.com",
+            "objects.githubusercontent.com",
+            "docs.rs",
+            "doc.rust-lang.org",
+            "static.rust-lang.org",
+        ];
         allowed.extend(domains);
         let mut write = vec![
             json!(home),
@@ -789,16 +818,23 @@ fn four_agents_match_the_development_profile() {
         assert_eq!(v["env"]["TMPDIR"], "<运行时才有>");
         assert_eq!(
             v["args"],
-            if kind == "codex" {
-                json!([
+            match kind {
+                "codex" => json!([
                     "-c",
                     format!(
                         "projects={{{}={{trust_level=\"trusted\"}}}}",
                         serde_json::to_string(&home).unwrap()
-                    )
-                ])
-            } else {
-                json!([])
+                    ),
+                    "-c",
+                    "mcp_servers.fence_exa={url=\"https://mcp.exa.ai/mcp\"}"
+                ]),
+                "claude" => json!([
+                    "--mcp-config",
+                    r#"{"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp"}}}"#
+                ]),
+                "pi" => json!(["--extension", "<运行时才有>/fence-exa/pi.ts"]),
+                "omp" => json!(["--plugin-dir", "<运行时才有>/fence-exa"]),
+                _ => unreachable!(),
             }
         );
     }

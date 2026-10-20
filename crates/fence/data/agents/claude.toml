@@ -4,6 +4,7 @@ read = ["${home}/.local/share/claude", "${home}/.claude.json"]
 write = ["${home}/.claude"]
 deny_write = ["${home}/.claude/settings.json"]
 env = { CLAUDE_CODE_TMPDIR = "${tmp}" }
+args = ["--mcp-config", '{"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp"}}}']
 [macos]
 allow_pty = true
 read = ["${home}/Library/Keychains"]

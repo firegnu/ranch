@@ -2,7 +2,10 @@ description = "Codex；macOS 开启 trustd，削弱网络隔离"
 services = ["openai"]
 write = ["${home}/.codex"]
 deny_write = ["${home}/.codex/config.toml", "${home}/.codex/auth.json"]
-args = ["-c", 'projects={${repo:json}={trust_level="trusted"}}']
+args = [
+  "-c", 'projects={${repo:json}={trust_level="trusted"}}',
+  "-c", 'mcp_servers.fence_exa={url="https://mcp.exa.ai/mcp"}',
+]
 [macos]
 allow_pty = true
 # 开放 com.apple.trustd.agent，程序可能经它向外传数据；用户同意。

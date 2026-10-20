@@ -218,7 +218,9 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 {"ok":true,"profile":"dev","kind":"codex","platform":"macos","cwd":"/Users/u/w/x","layers":[{"source":"profile","name":"dev","origin":"builtin"},{"source":"agent","name":"codex","origin":"builtin"},{"source":"service","name":"openai","origin":"builtin"},{"source":"repo","path":"/Users/u/w/x/.fence.toml"}],"settings":{"network":{"allowedDomains":["chatgpt.com"],"deniedDomains":[],"allowUnixSockets":["<运行时才有>"]},"filesystem":{"denyRead":["/Users/u"],"allowRead":["/Users/u/w/x"],"allowWrite":["/Users/u/w/x"],"denyWrite":["/Users/u/w/x/.fence.toml","/Users/u/.fence"]},"allowPty":true,"enableWeakerNetworkIsolation":true},"env":{"TMPDIR":"<运行时才有>","TMPPREFIX":"<运行时才有>/zsh","CLAUDE_CODE_TMPDIR":"<运行时才有>"},"args":["-c","projects={\"/Users/u/w/x\"={trust_level=\"trusted\"}}"],"skipped":[],"warnings":["weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）"],"runtime":{"node":{"path":"/Users/u/.nvm/versions/node/v24.13.1/bin/node","version":"v24.13.1","ok":true},"srt":{"version":"0.0.80","ok":true}}}
 ```
 
-示例的路径和域名列表已缩短。`settings` 为实际合并规则；运行时专有的 `${tmp}` 显示为 `<运行时才有>`。`skipped:[{entry,reason}]` 列出缺值或不存在的读路径，`warnings` 列出环境覆盖与平台差异。Codex 默认 trustd 规则会削弱 macOS 网络隔离。
+示例的路径、域名和参数列表已缩短。`settings` 为实际合并规则；运行时专有的 `${tmp}` 显示为 `<运行时才有>`。`skipped:[{entry,reason}]` 列出缺值或不存在的读路径，`warnings` 列出环境覆盖与平台差异。Codex 默认 trustd 规则会削弱 macOS 网络隔离。
+
+R29：内置 `dev` 新增 `mcp.exa.ai`、`github.com`、`api.github.com`、`raw.githubusercontent.com`、`codeload.github.com`、`objects.githubusercontent.com`、`docs.rs`、`doc.rust-lang.org`、`static.rust-lang.org`。四家种类的 `args` 加入 Exa MCP 临时接入参数，提供免 key、有限频的 `web_search_exa` 和 `web_fetch_exa`；pi 的扩展、omp 的插件资源由 `run` 写到实例 `${tmp}/fence-exa`，不修改各家全局配置。用户同名覆盖仍整份替换。原读写权限不变，GitHub 推送不被专门阻止（用户 10-20 决定），任务书自行约束推送。兼容新增，paddock 不用改。
 
 错误码：`usage`、`unknown_profile`、`invalid_data`（附 `problems:[{source,path,message}]`）、`unsupported_kind`（附 `supported:[…]`）、`no_service`、`program_not_found`、`bad_cwd`、`runtime_missing`、`not_found`。amp/agy 本轮无数据，使用 sandbox 时返回 `unsupported_kind`。
 
