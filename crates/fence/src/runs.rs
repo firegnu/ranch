@@ -164,18 +164,19 @@ pub fn run(args: &[String]) -> Result<Value> {
         .create(tmp.parent().unwrap())
         .map_err(io)?;
     fs::DirBuilder::new().mode(0o700).create(&tmp).map_err(io)?;
-    let research = tmp.join("fence-exa");
-    fs::create_dir(&research).map_err(io)?;
-    fs::create_dir(research.join(".claude-plugin")).map_err(io)?;
-    for (path, contents) in [
-        ("pi.ts", include_str!("../resources/exa/pi.ts")),
-        (
-            ".claude-plugin/plugin.json",
-            include_str!("../resources/exa/plugin.json"),
-        ),
-        (".mcp.json", include_str!("../resources/exa/mcp.json")),
-    ] {
-        fs::write(research.join(path), contents).map_err(io)?;
+    for (path, contents) in &resolved.files {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path.parent().unwrap())
+            .map_err(io)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(io)?;
+        file.write_all(contents.as_bytes()).map_err(io)?;
     }
     for path in &resolved.mkdir {
         fs::create_dir_all(path).map_err(io)?;

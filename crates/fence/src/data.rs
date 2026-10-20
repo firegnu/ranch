@@ -40,6 +40,7 @@ pub fn load(home: &Path, group: &str, name: &str) -> Result<(Value, Value)> {
     let source = match group {
         "profiles" => "profile",
         "agents" => "agent",
+        "mcp" => "mcp",
         _ => "service",
     };
     let builtin = BUILTIN.iter().find(|(g, n, _)| *g == group && *n == name);
@@ -88,6 +89,7 @@ pub fn profiles(home: &Path) -> Result<Value> {
         ("profiles", "profiles"),
         ("agents", "kinds"),
         ("services", "services"),
+        ("mcp", "mcp"),
     ] {
         let mut entries = Vec::new();
         for name in names(home, group)? {

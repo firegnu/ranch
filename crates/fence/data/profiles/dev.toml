@@ -1,4 +1,5 @@
 description = "在工作目录里改代码、编译、测试、提交；HOME 默认不可读。Codex 在 macOS 开启 trustd，会削弱网络隔离"
+mcp = ["exa"]
 deny_read = ["${home}"]
 read = [
   "${home}/.gitconfig", "${home}/.config/git",
@@ -21,7 +22,6 @@ mkdir = [
 ]
 domains = [
   "crates.io", "index.crates.io", "static.crates.io",
-  "mcp.exa.ai",
   "github.com", "api.github.com", "raw.githubusercontent.com",
   "codeload.github.com", "objects.githubusercontent.com",
   "docs.rs", "doc.rust-lang.org", "static.rust-lang.org",

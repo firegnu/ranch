@@ -1,6 +1,10 @@
 description = "omp (Oh My Pi)"
-args = ["--plugin-dir", "${tmp}/fence-exa"]
 write = ["${home}/.omp/agent", "${home}/.omp/natives", "${home}/.omp/run"]
 deny_write = ["${home}/.omp/agent/config.yml", "${home}/.omp/agent/settings.json", "${home}/.omp/agent/auth.json", "${home}/.omp/agent/models.json"]
+[mcp]
+args = ["--plugin-dir", "${mcp_dir}"]
+[mcp.files]
+".claude-plugin/plugin.json" = '{"name":"fence-${mcp_name}"}'
+".mcp.json" = '{"mcpServers":{"fence_${mcp_name}":{"type":"http","url":${mcp_url:json},"headers":${mcp_headers_json}}}}'
 [macos]
 allow_pty = true

@@ -4,7 +4,7 @@ fn main() {
     println!("cargo:rerun-if-changed=data");
     let root = env::var("CARGO_MANIFEST_DIR").unwrap();
     let mut code = String::from("pub const BUILTIN: &[(&str, &str, &str)] = &[\n");
-    for group in ["profiles", "agents", "services"] {
+    for group in ["profiles", "agents", "services", "mcp"] {
         let mut paths: Vec<_> = fs::read_dir(Path::new(&root).join("data").join(group))
             .unwrap()
             .map(|e| e.unwrap().path())
