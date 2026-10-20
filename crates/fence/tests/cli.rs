@@ -151,6 +151,13 @@ fn unix_sockets_reject_wildcards_relative_paths_and_repo_permissions() {
 fn runtime_failures_keep_messages_but_agent_exit_125_does_not() {
     use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
+    fs::create_dir(f.0.path().join("fence/agents")).unwrap();
+    // This fixture launches /bin/sh, not Claude's CLI.
+    fs::write(
+        f.0.path().join("fence/agents/claude.toml"),
+        "services = ['anthropic']\n",
+    )
+    .unwrap();
     let root = f.0.path();
     let module = root.join("lib/srt/node_modules/@anthropic-ai/sandbox-runtime");
     fs::create_dir_all(module.join("dist")).unwrap();
@@ -523,6 +530,15 @@ fn check_merges_rules_and_rejects_forbidden_repository_keys() {
             "crates.io",
             "index.crates.io",
             "static.crates.io",
+            "mcp.exa.ai",
+            "github.com",
+            "api.github.com",
+            "raw.githubusercontent.com",
+            "codeload.github.com",
+            "objects.githubusercontent.com",
+            "docs.rs",
+            "doc.rust-lang.org",
+            "static.rust-lang.org",
             "api.deepseek.com",
             "example.test"
         ])
@@ -763,7 +779,20 @@ fn four_agents_match_the_development_profile() {
             .unwrap();
         let v: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(v["ok"], true, "{v}");
-        let mut allowed = vec!["crates.io", "index.crates.io", "static.crates.io"];
+        let mut allowed = vec![
+            "crates.io",
+            "index.crates.io",
+            "static.crates.io",
+            "mcp.exa.ai",
+            "github.com",
+            "api.github.com",
+            "raw.githubusercontent.com",
+            "codeload.github.com",
+            "objects.githubusercontent.com",
+            "docs.rs",
+            "doc.rust-lang.org",
+            "static.rust-lang.org",
+        ];
         allowed.extend(domains);
         let mut write = vec![
             json!(home),
@@ -789,17 +818,121 @@ fn four_agents_match_the_development_profile() {
         assert_eq!(v["env"]["TMPDIR"], "<运行时才有>");
         assert_eq!(
             v["args"],
-            if kind == "codex" {
-                json!([
+            match kind {
+                "codex" => json!([
                     "-c",
                     format!(
                         "projects={{{}={{trust_level=\"trusted\"}}}}",
                         serde_json::to_string(&home).unwrap()
-                    )
-                ])
-            } else {
-                json!([])
+                    ),
+                    "-c",
+                    "mcp_servers.fence_exa_<运行时才有>={url=\"https://mcp.exa.ai/mcp\"}"
+                ]),
+                "claude" => json!([
+                    "--mcp-config",
+                    r#"{"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp"}}}"#
+                ]),
+                "pi" => json!(["--extension", "<运行时才有>/fence-exa/pi.ts"]),
+                "omp" => json!(["--plugin-dir", "<运行时才有>/fence-exa"]),
+                _ => unreachable!(),
             }
+        );
+    }
+}
+
+#[test]
+fn run_passes_research_arguments_and_writes_session_resources() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let root = f.0.path();
+    let runner = root.join("record-argv");
+    fs::write(
+        &runner,
+        "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift 2; done\nshift\nprintf '%s\\000' \"$@\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&runner, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut codex_names = Vec::new();
+    for kind in ["claude", "codex", "pi", "omp", "codex"] {
+        let instance = format!("research-{kind}-{}", codex_names.len());
+        let out = f
+            .command()
+            .env("FENCE_RUNNER", &runner)
+            .args([
+                "run",
+                "--profile",
+                "dev",
+                "--kind",
+                kind,
+                "--agent",
+                "test/research",
+                "--instance",
+                &instance,
+                "--",
+                "/bin/sh",
+                "user argument",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{kind}: {out:?}");
+        let text = String::from_utf8(out.stdout).unwrap();
+        let argv: Vec<_> = text.split_terminator('\0').collect();
+        let research = root
+            .join(".cache/fence/tmp")
+            .join(instance)
+            .join("fence-exa");
+        let args = match kind {
+            "claude" => vec![
+                "--mcp-config".into(),
+                r#"{"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp"}}}"#
+                    .into(),
+            ],
+            "codex" => {
+                let config: toml::Table = toml::from_str(argv[4]).unwrap();
+                let servers = config["mcp_servers"].as_table().unwrap();
+                assert_eq!(servers.len(), 1);
+                let (name, server) = servers.iter().next().unwrap();
+                let nonce = name.strip_prefix("fence_exa_").expect("per-run MCP name");
+                assert_eq!(nonce.len(), 32);
+                assert!(nonce.bytes().all(|b| b.is_ascii_hexdigit()));
+                assert!(!codex_names.contains(name), "each run needs a fresh name");
+                codex_names.push(name.clone());
+                assert_eq!(server.as_table().unwrap().len(), 1);
+                assert_eq!(server["url"].as_str(), Some("https://mcp.exa.ai/mcp"));
+                vec![
+                    "-c".into(),
+                    format!(
+                        "projects={{{}={{trust_level=\"trusted\"}}}}",
+                        serde_json::to_string(&root.canonicalize().unwrap()).unwrap()
+                    ),
+                    "-c".into(),
+                    format!("mcp_servers.{name}={{url=\"https://mcp.exa.ai/mcp\"}}"),
+                ]
+            }
+            "pi" => vec![
+                "--extension".into(),
+                research.join("pi.ts").display().to_string(),
+            ],
+            "omp" => vec!["--plugin-dir".into(), research.display().to_string()],
+            _ => unreachable!(),
+        };
+        let mut expected = vec!["/bin/sh".to_owned()];
+        expected.extend(args);
+        expected.push("user argument".into());
+        assert_eq!(argv, expected, "{kind}");
+        assert_eq!(
+            fs::read_to_string(research.join("pi.ts")).unwrap(),
+            "export default function (pi) {\n  pi.registerMcpServer(\"fence_exa\", {\n    url: \"https://mcp.exa.ai/mcp\",\n    headers: { Authorization: \"\" },\n    exposure: \"direct\",\n  });\n}\n"
+        );
+        let manifest: Value =
+            serde_json::from_slice(&fs::read(research.join(".claude-plugin/plugin.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest, json!({"name":"fence-exa"}));
+        let mcp: Value =
+            serde_json::from_slice(&fs::read(research.join(".mcp.json")).unwrap()).unwrap();
+        assert_eq!(
+            mcp,
+            json!({"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"}}})
         );
     }
 }

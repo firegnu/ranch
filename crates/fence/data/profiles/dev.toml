@@ -19,7 +19,13 @@ mkdir = [
   "${git_common}/refs/heads/${branch}/..",
   "${git_common}/logs/refs/heads/${branch}/..",
 ]
-domains = ["crates.io", "index.crates.io", "static.crates.io"]
+domains = [
+  "crates.io", "index.crates.io", "static.crates.io",
+  "mcp.exa.ai",
+  "github.com", "api.github.com", "raw.githubusercontent.com",
+  "codeload.github.com", "objects.githubusercontent.com",
+  "docs.rs", "doc.rust-lang.org", "static.rust-lang.org",
+]
 unix_sockets = ["${tmp}"]
 env = { TMPDIR = "${tmp}", TMPPREFIX = "${tmp}/zsh", CLAUDE_CODE_TMPDIR = "${tmp}" }
 [services]

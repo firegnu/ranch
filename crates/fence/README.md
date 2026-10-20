@@ -12,6 +12,14 @@
 
 对 paddock：内置服务和派活技能兼容新增，命令、参数、JSON 格式和退出码不变，paddock 不用改；新版规则随 fence 部署，诊断说明随 corral、corral-dispatch 技能部署。
 
+R29：`dev` 新增 Exa MCP、GitHub 和 Rust 文档的九个指定域名（完整列表见 `data/profiles/dev.toml`）。四家种类数据通过启动参数接 `https://mcp.exa.ai/mcp`，免 API key、有限频；搜索用 `web_search_exa`，已知网址用 `web_fetch_exa`，目标站由 Exa 服务器抓取，不要求在墙内放行目标站。Claude/Codex 直接注入 MCP 配置；pi 需要支持 `registerMcpServer` 的版本，omp 通过临时插件同时接搜索和读网页。`resources/exa/` 为本仓库新写的运行资源（pi 的会话扩展和 omp 的插件数据），编进 fence，在每次运行的 `${tmp}/fence-exa` 写出，随临时目录清理；不写用户全局配置。用户同名种类或档案覆盖仍整份替换，相应新增需用户自行接入。启动参数接法不变，paddock 不用改。
+
+Codex 的 server 名为 `fence_exa_${run_nonce}`，避免 `-c` 与用户同名表递归合并、把旧认证字段发给 Exa；fence 不读取 Codex 配置文件。工具名为 `mcp__fence_exa_<随机值>__web_search_exa` 和 `mcp__fence_exa_<随机值>__web_fetch_exa`，应从当次工具目录发现。Claude、pi、omp 没有同类认证字段递归继承，名称保持原样；pi 用户配置中的同名 server 仍优先于扩展。
+
+用户 10-20 取消推送限制：GitHub 正常放行，Claude 的钥匙串读取照旧；是否推送由任务书约束，fence 不保证阻止 GitHub 写操作。
+
+接入细节：pi 的空 `Authorization` 头用于跳过默认 OAuth 凭证文件加载，不含 token，避免创建 `~/.pi/agent/mcp-auth.json`；扩展文件须用 pi 能识别的 `.ts` 后缀。omp 的 URL 显式请求 `web_search_exa,web_fetch_exa`，否则它会把 Exa MCP 配置作为内置搜索的重复来源过滤掉。两者均沿用各家原生 MCP 客户端。
+
 | 键 | 可写来源 |
 | --- | --- |
 | `description` | 档案、种类、服务 |
@@ -28,7 +36,7 @@
 
 所有 `deny_write`（包括强制保护的 FENCE_HOME、`.fence.toml`）保留原路径、逐组件解析途中每一个链接节点及最终真实目标，避免通过改写目标或替换中间链接修改规则和 agent 配置；支持多跳链接及中间目录链接。不存在的末级路径按已解析的父目录补全；链接自身的目标须存在，断链、循环或其他解析错误拒绝启动。域名与端口在 `check/run` 共用的规则解析阶段校验，`invalid_data` 带来源与 `domains[索引]`，支持通配域名、带方括号的 IPv6 及 1–65535 的无前导零端口。
 
-占位符用 `${home}`、`${cwd}`、`${worktree}`、`${repo}`、`${git_dir}`、`${git_common}`、`${branch}`、`${tmp}`、`${target}`；`${名字:json}` 生成 JSON/TOML 字符串字面量。Git 路径由 `git rev-parse` 取得，`${target}` 来自绝对路径的 `CARGO_TARGET_DIR`。路径引用缺值时跳过并列入 `skipped`；参数或环境变量引用缺值时失败。不在仓库里时 worktree/repo 都是 cwd。
+占位符用 `${home}`、`${cwd}`、`${worktree}`、`${repo}`、`${git_dir}`、`${git_common}`、`${branch}`、`${tmp}`、`${target}`、`${run_nonce}`；`${名字:json}` 生成 JSON/TOML 字符串字面量。Git 路径由 `git rev-parse` 取得，`${target}` 来自绝对路径的 `CARGO_TARGET_DIR`。`${run_nonce}` 为每次 `run` 从系统随机源生成的 128 位随机值（32 位十六进制），同一次展开保持一致，`check` 显示 `<运行时才有>`。路径引用缺值时跳过并列入 `skipped`；参数或环境变量引用缺值时失败。不在仓库里时 worktree/repo 都是 cwd。
 
 主控 10-18 决定：`${tmp}` 为 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，在起 agent 前创建；运行记录放在 `$FENCE_HOME/runs/<实例>`。srt 的禁止写优先于放行写，因此临时文件移到规则目录之外，保留整个 `$FENCE_HOME` 的写保护，在 Linux 上也按整目录保护。每次启动清理已结束超过 7 天的运行记录及其中记下的临时目录；缓存根目录后来改变也能清理原路径。`.fence.toml` 始终禁止写。
 
