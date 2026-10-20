@@ -530,7 +530,6 @@ fn check_merges_rules_and_rejects_forbidden_repository_keys() {
             "crates.io",
             "index.crates.io",
             "static.crates.io",
-            "mcp.exa.ai",
             "github.com",
             "api.github.com",
             "raw.githubusercontent.com",
@@ -540,7 +539,8 @@ fn check_merges_rules_and_rejects_forbidden_repository_keys() {
             "doc.rust-lang.org",
             "static.rust-lang.org",
             "api.deepseek.com",
-            "example.test"
+            "example.test",
+            "mcp.exa.ai"
         ])
     );
     assert!(
@@ -783,7 +783,6 @@ fn four_agents_match_the_development_profile() {
             "crates.io",
             "index.crates.io",
             "static.crates.io",
-            "mcp.exa.ai",
             "github.com",
             "api.github.com",
             "raw.githubusercontent.com",
@@ -794,6 +793,7 @@ fn four_agents_match_the_development_profile() {
             "static.rust-lang.org",
         ];
         allowed.extend(domains);
+        allowed.push("mcp.exa.ai");
         let mut write = vec![
             json!(home),
             json!("<运行时才有>"),
@@ -806,7 +806,7 @@ fn four_agents_match_the_development_profile() {
         }
         let mut deny: Vec<_> = agent_deny.iter().map(|p| json!(home.join(p))).collect();
         deny.extend([json!(home.join(".fence.toml")), json!(home.join("fence"))]);
-        let mut expected = json!({"network":{"allowedDomains":allowed,"deniedDomains":[]},"filesystem":{"denyRead":[home],"allowRead":write,"allowWrite":write,"denyWrite":deny}});
+        let mut expected = json!({"network":{"allowedDomains":allowed,"deniedDomains":[]},"filesystem":{"denyRead":[home,home.join("fence/keys"),home.join("fence/keys/exa")],"allowRead":write,"allowWrite":write,"denyWrite":deny}});
         if cfg!(target_os = "macos") {
             expected["network"]["allowUnixSockets"] = json!(["<运行时才有>"]);
             expected["allowPty"] = json!(true);
@@ -826,14 +826,11 @@ fn four_agents_match_the_development_profile() {
                         serde_json::to_string(&home).unwrap()
                     ),
                     "-c",
-                    "mcp_servers.fence_exa_<运行时才有>={url=\"https://mcp.exa.ai/mcp\"}"
+                    "mcp_servers.fence_exa_<运行时才有>={url=\"https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa\",env_http_headers={}}"
                 ]),
-                "claude" => json!([
-                    "--mcp-config",
-                    r#"{"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp"}}}"#
-                ]),
-                "pi" => json!(["--extension", "<运行时才有>/fence-exa/pi.ts"]),
-                "omp" => json!(["--plugin-dir", "<运行时才有>/fence-exa"]),
+                "claude" => json!(["--mcp-config", "<运行时才有>/mcp/exa/mcp.json"]),
+                "pi" => json!(["--extension", "<运行时才有>/mcp/exa/pi.ts"]),
+                "omp" => json!(["--plugin-dir", "<运行时才有>/mcp/exa"]),
                 _ => unreachable!(),
             }
         );
@@ -842,13 +839,73 @@ fn four_agents_match_the_development_profile() {
 
 #[test]
 fn run_passes_research_arguments_and_writes_session_resources() {
+    research_configuration("default");
+}
+
+#[test]
+fn local_mcp_selection_switches_all_four_clients_without_replacing_agent_data() {
+    research_configuration("replacement");
+}
+
+#[test]
+fn mcp_key_is_scoped_to_its_server_for_all_four_clients() {
+    research_configuration("key");
+}
+
+fn research_configuration(scenario: &str) {
     use std::os::unix::fs::PermissionsExt;
     let f = Fixture::new();
-    let root = f.0.path();
+    let root = f.0.path().canonicalize().unwrap();
+    let keyed = scenario == "key";
+    let servers: &[(&str, &str)] = match scenario {
+        "default" => &[(
+            "exa",
+            "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa",
+        )],
+        "replacement" => &[("research", "https://research.example.invalid:8443/mcp")],
+        "key" => &[
+            ("research", "https://research.example.invalid:8443/mcp"),
+            (
+                "exa",
+                "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa",
+            ),
+        ],
+        _ => unreachable!(),
+    };
+    let key = "fake-only-\"quoted\"-\\value";
+    if scenario != "default" {
+        fs::create_dir(root.join("fence/mcp")).unwrap();
+        fs::write(
+            root.join("fence/mcp/research.toml"),
+            "url = 'https://research.example.invalid:8443/mcp'\n[auth]\nheader = 'X-Research-Key'\nprefix = 'Token '\n",
+        ).unwrap();
+        fs::write(
+            root.join("fence/local.toml"),
+            if keyed {
+                "mcp = ['research', 'exa']\n"
+            } else {
+                "mcp = ['research']\n"
+            },
+        )
+        .unwrap();
+    }
+    if keyed {
+        fs::create_dir(root.join("fence/keys")).unwrap();
+        fs::write(root.join("fence/keys/research"), format!("{key}\n")).unwrap();
+        fs::set_permissions(
+            root.join("fence/keys/research"),
+            fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+    }
     let runner = root.join("record-argv");
+    fs::create_dir(root.join("bin")).unwrap();
+    for kind in ["claude", "codex", "pi", "omp"] {
+        std::os::unix::fs::symlink("/bin/sh", root.join("bin").join(kind)).unwrap();
+    }
     fs::write(
         &runner,
-        "#!/bin/sh\nwhile [ \"$1\" != -- ]; do shift 2; done\nshift\nprintf '%s\\000' \"$@\"\n",
+        "#!/bin/sh\n/usr/bin/env > \"$TMPDIR/runner-env\"\nwhile [ \"$1\" != -- ]; do shift 2; done\nshift\nprintf '%s\\000' \"$@\"\n",
     )
     .unwrap();
     fs::set_permissions(&runner, fs::Permissions::from_mode(0o700)).unwrap();
@@ -857,6 +914,8 @@ fn run_passes_research_arguments_and_writes_session_resources() {
         let instance = format!("research-{kind}-{}", codex_names.len());
         let out = f
             .command()
+            .env("HOME", &root)
+            .env("FENCE_HOME", root.join("fence"))
             .env("FENCE_RUNNER", &runner)
             .args([
                 "run",
@@ -877,64 +936,432 @@ fn run_passes_research_arguments_and_writes_session_resources() {
         assert!(out.status.success(), "{kind}: {out:?}");
         let text = String::from_utf8(out.stdout).unwrap();
         let argv: Vec<_> = text.split_terminator('\0').collect();
-        let research = root
-            .join(".cache/fence/tmp")
-            .join(instance)
-            .join("fence-exa");
-        let args = match kind {
-            "claude" => vec![
-                "--mcp-config".into(),
-                r#"{"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp"}}}"#
-                    .into(),
-            ],
-            "codex" => {
-                let config: toml::Table = toml::from_str(argv[4]).unwrap();
-                let servers = config["mcp_servers"].as_table().unwrap();
-                assert_eq!(servers.len(), 1);
-                let (name, server) = servers.iter().next().unwrap();
-                let nonce = name.strip_prefix("fence_exa_").expect("per-run MCP name");
-                assert_eq!(nonce.len(), 32);
-                assert!(nonce.bytes().all(|b| b.is_ascii_hexdigit()));
-                assert!(!codex_names.contains(name), "each run needs a fresh name");
-                codex_names.push(name.clone());
-                assert_eq!(server.as_table().unwrap().len(), 1);
-                assert_eq!(server["url"].as_str(), Some("https://mcp.exa.ai/mcp"));
-                vec![
-                    "-c".into(),
-                    format!(
-                        "projects={{{}={{trust_level=\"trusted\"}}}}",
-                        serde_json::to_string(&root.canonicalize().unwrap()).unwrap()
-                    ),
-                    "-c".into(),
-                    format!("mcp_servers.{name}={{url=\"https://mcp.exa.ai/mcp\"}}"),
-                ]
-            }
-            "pi" => vec![
-                "--extension".into(),
-                research.join("pi.ts").display().to_string(),
-            ],
-            "omp" => vec!["--plugin-dir".into(), research.display().to_string()],
-            _ => unreachable!(),
+        let tmp = root.join(".cache/fence/tmp").join(&instance);
+        let environment = fs::read_to_string(tmp.join("runner-env")).unwrap();
+        assert!(
+            environment
+                .lines()
+                .any(|s| s == format!("TMPDIR={}", tmp.display()))
+        );
+        assert!(
+            environment
+                .lines()
+                .any(|s| s == format!("FENCE_RUN={instance}"))
+        );
+        assert!(
+            !text.contains("fake-only"),
+            "credential must never enter argv"
+        );
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("fake-only"));
+        let secret_env: Vec<_> = environment
+            .lines()
+            .filter(|line| line.starts_with("FENCE_MCP_"))
+            .collect();
+        assert_eq!(secret_env.len(), usize::from(keyed && kind == "codex"));
+        if kind != "codex" {
+            assert!(!environment.contains(key));
+        }
+        assert_eq!(argv[0], "/bin/sh");
+        assert_eq!(argv.last(), Some(&"user argument"));
+        let start = if kind == "codex" {
+            assert_eq!(argv[1], "-c");
+            let project: toml::Table = toml::from_str(argv[2]).unwrap();
+            assert_eq!(
+                project["projects"][root.to_str().unwrap()]["trust_level"].as_str(),
+                Some("trusted")
+            );
+            3
+        } else {
+            1
         };
-        let mut expected = vec!["/bin/sh".to_owned()];
-        expected.extend(args);
-        expected.push("user argument".into());
-        assert_eq!(argv, expected, "{kind}");
+        assert_eq!(argv.len(), start + servers.len() * 2 + 1);
+        for (index, (name, url)) in servers.iter().enumerate() {
+            let headers = if keyed && *name == "research" {
+                json!({"X-Research-Key": format!("Token {key}")})
+            } else {
+                json!({})
+            };
+            let pair = &argv[start + index * 2..start + index * 2 + 2];
+            let dir = tmp.join("mcp").join(name);
+            let server_name = format!("fence_{name}");
+            match kind {
+                "claude" => {
+                    assert_eq!(pair[0], "--mcp-config");
+                    let path = dir.join("mcp.json");
+                    assert_eq!(pair[1], path.to_str().unwrap());
+                    let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                    assert_eq!(
+                        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                        0o600
+                    );
+                    assert_eq!(
+                        config,
+                        json!({"mcpServers":{server_name:{"type":"http","url":url,"headers":headers}}})
+                    );
+                }
+                "codex" => {
+                    assert_eq!(pair[0], "-c");
+                    let config: toml::Table = toml::from_str(pair[1]).unwrap();
+                    let table = config["mcp_servers"].as_table().unwrap();
+                    assert_eq!(table.len(), 1);
+                    let (actual_name, server) = table.iter().next().unwrap();
+                    let nonce = actual_name
+                        .strip_prefix(&format!("{server_name}_"))
+                        .expect("per-run MCP name");
+                    assert_eq!(nonce.len(), 32);
+                    assert!(nonce.bytes().all(|b| b.is_ascii_hexdigit()));
+                    assert!(
+                        !codex_names.contains(actual_name),
+                        "each run needs a fresh name"
+                    );
+                    codex_names.push(actual_name.clone());
+                    let refs = server["env_http_headers"].as_table().unwrap();
+                    let expected_refs = if keyed && *name == "research" {
+                        let variable = refs["X-Research-Key"].as_str().unwrap();
+                        assert!(variable.starts_with(&format!("FENCE_MCP_{nonce}_")));
+                        assert_eq!(secret_env, [format!("{variable}=Token {key}")]);
+                        json!({"X-Research-Key":variable})
+                    } else {
+                        json!({})
+                    };
+                    assert_eq!(
+                        serde_json::to_value(server).unwrap(),
+                        json!({"url":url,"env_http_headers":expected_refs})
+                    );
+                }
+                "pi" => {
+                    let path = dir.join("pi.ts");
+                    assert_eq!(pair, ["--extension", path.to_str().unwrap()]);
+                    let script = fs::read_to_string(&path).unwrap();
+                    assert_eq!(
+                        script,
+                        format!(
+                            "export default function (pi) {{\n  pi.registerMcpServer({}, {{\n    url: {},\n    headers: {{ Authorization: \"\", ...{} }},\n    exposure: \"direct\",\n  }});\n}}\n",
+                            json!(server_name),
+                            json!(url),
+                            headers,
+                        )
+                    );
+                    assert_eq!(
+                        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                        0o600
+                    );
+                }
+                "omp" => {
+                    assert_eq!(pair, ["--plugin-dir", dir.to_str().unwrap()]);
+                    let manifest: Value = serde_json::from_slice(
+                        &fs::read(dir.join(".claude-plugin/plugin.json")).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(manifest, json!({"name":format!("fence-{name}")}));
+                    let path = dir.join(".mcp.json");
+                    let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                    assert_eq!(
+                        config,
+                        json!({"mcpServers":{server_name:{"type":"http","url":url,"headers":headers}}})
+                    );
+                    assert_eq!(
+                        fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                        0o600
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+        let record = root.join("fence/runs").join(&instance);
+        let settings: Value =
+            serde_json::from_slice(&fs::read(record.join("settings.json")).unwrap()).unwrap();
+        let domains = settings["network"]["allowedDomains"].as_array().unwrap();
         assert_eq!(
-            fs::read_to_string(research.join("pi.ts")).unwrap(),
-            "export default function (pi) {\n  pi.registerMcpServer(\"fence_exa\", {\n    url: \"https://mcp.exa.ai/mcp\",\n    headers: { Authorization: \"\" },\n    exposure: \"direct\",\n  });\n}\n"
+            domains.contains(&json!("mcp.exa.ai")),
+            scenario != "replacement"
         );
-        let manifest: Value =
-            serde_json::from_slice(&fs::read(research.join(".claude-plugin/plugin.json")).unwrap())
-                .unwrap();
-        assert_eq!(manifest, json!({"name":"fence-exa"}));
-        let mcp: Value =
-            serde_json::from_slice(&fs::read(research.join(".mcp.json")).unwrap()).unwrap();
         assert_eq!(
-            mcp,
-            json!({"mcpServers":{"fence_exa":{"type":"http","url":"https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"}}})
+            domains.contains(&json!("research.example.invalid:8443")),
+            scenario != "default"
         );
+        assert!(
+            settings["filesystem"]["denyRead"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(root.join("fence/keys")))
+        );
+        for file in ["settings.json", "run.json"] {
+            assert!(
+                !fs::read_to_string(record.join(file))
+                    .unwrap()
+                    .contains("fake-only")
+            );
+        }
+        let check = f
+            .command()
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", root.join("bin").display()),
+            )
+            .args(["check", "--profile", "dev", "--kind", kind])
+            .output()
+            .unwrap();
+        assert!(check.status.success(), "{check:?}");
+        let preview: Value = serde_json::from_slice(&check.stdout).unwrap();
+        assert!(!preview.to_string().contains("fake-only"));
+        assert!(
+            !preview["env"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .any(|k| k.starts_with("FENCE_MCP_"))
+        );
+        let denials = f.call(&[
+            "denials",
+            "--agent",
+            "test/research",
+            "--instance",
+            &instance,
+        ]);
+        assert!(!denials.to_string().contains("fake-only"));
     }
+    let checked = f.call(&["check", "--profile", "dev"]);
+    assert_eq!(checked["ok"], true, "{checked}");
+    assert!(!checked.to_string().contains(key));
+}
+
+fn mcp_review_fixture() -> Fixture {
+    let f = Fixture::new();
+    let root = f.0.path();
+    fs::create_dir(root.join("fence/mcp")).unwrap();
+    fs::create_dir(root.join("fence/keys")).unwrap();
+    fs::write(root.join("fence/mcp/research.toml"),
+        "url = 'https://research.example.invalid/mcp'\n[auth]\nheader = 'Authorization'\nprefix = 'Token '\n").unwrap();
+    fs::write(root.join("fence/local.toml"), "mcp = ['research']\n").unwrap();
+    f
+}
+
+#[test]
+fn mcp_rejects_dollar_interpolation_before_starting_a_runner() {
+    let f = mcp_review_fixture();
+    for key in ["$REVIEW_OTHER_TOKEN", "${REVIEW_OTHER_TOKEN}", "abc$$def"] {
+        fs::write(f.0.path().join("fence/keys/research"), key).unwrap();
+        let out = f
+            .command()
+            .env("REVIEW_OTHER_TOKEN", "fake-other-provider-secret")
+            .env("FENCE_RUNNER", "/bin/echo")
+            .args([
+                "run",
+                "--profile",
+                "dev",
+                "--kind",
+                "pi",
+                "--agent",
+                "test/review",
+                "--instance",
+                "dollar",
+                "--",
+                "/bin/sh",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125), "{key}: {out:?}");
+        assert!(out.stdout.is_empty());
+        let error = String::from_utf8_lossy(&out.stderr);
+        assert!(error.contains("literal HTTP header"), "{error}");
+        assert!(!error.contains(key));
+        assert!(!error.contains("fake-other-provider-secret"));
+        assert!(!f.0.path().join("fence/runs/dollar").exists());
+    }
+    // The prefix participates in the same client interpolation as the key.
+    fs::write(f.0.path().join("fence/keys/research"), "fake-literal").unwrap();
+    fs::write(f.0.path().join("fence/mcp/research.toml"),
+        "url = 'https://research.example.invalid/mcp'\n[auth]\nheader = 'Authorization'\nprefix = '$REVIEW_OTHER_TOKEN '\n").unwrap();
+    let out = f
+        .command()
+        .env("FENCE_RUNNER", "/bin/echo")
+        .args([
+            "run",
+            "--profile",
+            "dev",
+            "--kind",
+            "pi",
+            "--agent",
+            "test/review",
+            "--instance",
+            "prefix",
+            "--",
+            "/bin/sh",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(125), "{out:?}");
+    assert!(out.stdout.is_empty());
+}
+
+#[test]
+fn mcp_protects_all_key_link_targets_even_after_switching_or_disabling_servers() {
+    use std::os::unix::fs::symlink;
+    let f = mcp_review_fixture();
+    let root = f.0.path();
+    fs::create_dir(root.join("bin")).unwrap();
+    symlink("/bin/sh", root.join("bin/pi")).unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let target = work.path().join("provider-token.txt");
+    // Invalid UTF-8 proves check does not try to read key content.
+    fs::write(&target, [0xff]).unwrap();
+    symlink(&target, root.join("fence/keys/research")).unwrap();
+    for directory_link in [false, true] {
+        if directory_link {
+            fs::rename(root.join("fence/keys"), root.join("key-storage")).unwrap();
+            symlink(root.join("key-storage"), root.join("fence/keys")).unwrap();
+        }
+        for selection in ["['research']", "['exa']", "[]"] {
+            fs::write(
+                root.join("fence/local.toml"),
+                format!("mcp = {selection}\n"),
+            )
+            .unwrap();
+            let out = f
+                .command()
+                .env(
+                    "PATH",
+                    format!("{}:/usr/bin:/bin", root.join("bin").display()),
+                )
+                .args([
+                    "check",
+                    "--profile",
+                    "dev",
+                    "--kind",
+                    "pi",
+                    "--cwd",
+                    work.path().to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+            let checked: Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(checked["ok"], true, "{checked}");
+            let denies = checked["settings"]["filesystem"]["denyRead"]
+                .as_array()
+                .unwrap();
+            assert!(
+                denies.contains(&json!(target.canonicalize().unwrap())),
+                "{selection}: {checked}"
+            );
+            if directory_link {
+                assert!(denies.contains(&json!(root.join("key-storage").canonicalize().unwrap())));
+            }
+        }
+    }
+    // An unselected invalid key must stay protected without being read by run, too.
+    let out = f
+        .command()
+        .env("FENCE_RUNNER", "/bin/echo")
+        .current_dir(work.path())
+        .args([
+            "run",
+            "--profile",
+            "dev",
+            "--kind",
+            "pi",
+            "--agent",
+            "test/review",
+            "--instance",
+            "unselected",
+            "--",
+            "/bin/sh",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+}
+
+#[test]
+fn mcp_preparation_failure_cleans_only_directories_created_by_this_run() {
+    let f = mcp_review_fixture();
+    let root = f.0.path();
+    fs::write(root.join("fence/keys/research"), "fake-preparation-key").unwrap();
+    fs::write(root.join("not-a-directory"), "keep").unwrap();
+    fs::write(
+        root.join("fence/local.toml"),
+        "mcp = ['research']\nmkdir = ['${home}/not-a-directory/child']\n",
+    )
+    .unwrap();
+    for kind in ["claude", "pi", "omp"] {
+        let out = f
+            .command()
+            .env("FENCE_RUNNER", "/bin/echo")
+            .args([
+                "run",
+                "--profile",
+                "dev",
+                "--kind",
+                kind,
+                "--agent",
+                "test/review",
+                "--instance",
+                kind,
+                "--",
+                "/bin/sh",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125), "{out:?}");
+        assert!(out.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("fake-preparation-key"));
+        assert!(
+            !root.join(".cache/fence/tmp").join(kind).exists(),
+            "{kind}: secret resources remain"
+        );
+        assert!(!root.join("fence/runs").join(kind).exists());
+    }
+    for existing in ["record", "tmp-dir", "tmp-file", "tmp-link"] {
+        let dir = root.join("fence/runs").join(existing);
+        let tmp = root.join(".cache/fence/tmp").join(existing);
+        let original = if existing == "record" { &dir } else { &tmp };
+        fs::create_dir_all(original.parent().unwrap()).unwrap();
+        if existing == "tmp-link" {
+            std::os::unix::fs::symlink(root.join("not-a-directory"), original).unwrap();
+        } else if existing == "tmp-file" {
+            fs::write(original, "original").unwrap();
+        } else {
+            fs::create_dir(original).unwrap();
+            fs::write(original.join("keep"), "original").unwrap();
+        }
+        let out = f
+            .command()
+            .env("FENCE_RUNNER", "/bin/echo")
+            .args([
+                "run",
+                "--profile",
+                "dev",
+                "--kind",
+                "pi",
+                "--agent",
+                "test/review",
+                "--instance",
+                existing,
+                "--",
+                "/bin/sh",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(125), "{out:?}");
+        if existing == "tmp-link" {
+            assert!(fs::symlink_metadata(original).unwrap().is_symlink());
+        } else if existing == "tmp-file" {
+            assert_eq!(fs::read_to_string(original).unwrap(), "original");
+        } else {
+            assert_eq!(
+                fs::read_to_string(original.join("keep")).unwrap(),
+                "original"
+            );
+        }
+        if existing != "record" {
+            assert!(!dir.exists());
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("not-a-directory")).unwrap(),
+        "keep"
+    );
 }
 
 #[test]

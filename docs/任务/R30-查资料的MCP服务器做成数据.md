@@ -60,3 +60,34 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-20，ranch/dev-r30：已完成、自查通过，待主控及交叉审查；只在 `r30-mcp-data` 提交，未合并、推送或部署。
+
+- 做了什么：先更新 DESIGN §8，再增加 `mcp/` 数据组、档案默认选择和本机顶层 `mcp` 数组整份替换。四家接法全部写进种类 `[mcp]` 的参数／文件模板；删除固定 Exa 资源及 `runs.rs` 的写死逻辑，只为当前种类和所选服务器生成资源，域名从 URL 自动放行。key 从墙外 `$FENCE_HOME/keys/<名字>` 读取，源目录及所选文件的原路径、符号链接真实目标强制禁读；请求头只装进对应 server 配置，生成文件为 0600。README 有换服务商步骤、认证边界和模板说明，CONTRACT 同步兼容新增的 MCP 列表／来源；paddock 不用改。
+- 验证了什么：先扩充 R29 的合成 runner 回归，再运行替换服务商、带假 key 两条测试；旧实现因本机 `mcp` 选择不受支持而失败，是有效 RED。实现后默认 Exa、假服务商、假服务商带假 key 三种场景均通过，覆盖四家实际 argv、用户参数、环境、临时文件、域名和 key 源禁读规则；带 key 场景同时选择免 key Exa，确认假 key 不进入 Exa 配置或全局环境／fence 运行记录；保留 Codex 两次运行名称不同的检查。没有使用真实 MCP key。项目标准检查各一次通过：`cargo test --all-targets` **183 过、0 失败、11 按原设置忽略**；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`；提交前 `git diff --check` 通过。
+- 真实回归：用独立编译目录里的 `debug/fence`、现装 srt 0.0.80 和隔离的 FENCE_HOME／缓存／工作目录，复制已有本机放行规则供 IP Guardian 正常运行，没有复制 key。四家依次前台运行，**每家一次搜索 `Rust official blog`、一次读取 `https://blog.rust-lang.org/`，全部成功，退出码 0，无重试、无限流**。实际工具返回均含 Rust 官方博客标题；Claude 经 ToolSearch，Codex 经 `functions.exec` 的工具目录，pi 直接调用，omp 经原生 `xd://` 设备读取 schema、写入调用。版本为 Claude Code 2.1.304、Codex CLI 0.163.0、pi 1.3.0、omp 18.12.3。日志只留本机临时目录，未提交；实测使用的编译目录运行时文件和 srt 链接已清掉，避免影响之后的“缺少运行时”夹具。
+- 拿主意的地方：只支持与现有四家接法一致的 Streamable HTTP MCP，用请求头传 key，不增加网关或 stdio 桥接。Exa URL 统一在数据里带两个工具名，保留 omp 的要求，四家真实验证均成功；认证头字段依 [Exa 官方说明](https://exa.ai/docs/get-started/exa-mcp) 写成 `x-api-key`，默认没有 key。复用锁文件中已有的 `http` 1.5.0 解析地址／校验请求头，没有升级依赖。Codex 沿用随机名称；pi 保留空 Authorization 并叠加该 server 的认证。`check` 不读取 key，认证预览为空；`run` 才读取，拒绝空值和客户端插值／命令求值语法。生成的参数或文件进墙后 agent 仍能看到 key，文档明确这一局限。旧自定义种类仍整份覆盖，需自行补模板。
+- 没做的事：未注册／使用真实 MCP API key，未连其他真实搜索服务商；未改原有读写放行、钥匙串读取或其他白名单域名。未改用户 `~/.fence`、agent 全局配置／认证文件、现有 agent、corral 程序或技能、paddock；没有新增任务范围外的验证。未部署、合并到 main 或推送。
+- 踩过的坑：没有新的客户端接入坑。沿用 R29 已确认的 `.ts` 后缀、pi 空认证头、omp URL 工具列表及 Codex 工具目录发现方式，四家本轮均一次通过。
+- 要主控决定的事：没有新增决策项。
+
+### 第二轮（2026-10-20，主控认可审查第 1–4 条后返工）
+
+状态：**四条均已修复，复核结论为「可以合并」，Claude／Codex 合并前真实回归补验通过**；只在 `r30-mcp-data` 提交，不合并、推送或部署。返工阶段未重跑真实服务；主控随后指定的两家补验记录见下。
+
+- 做了什么：先修改 DESIGN §8。Claude 改为写 0600 的 MCP 配置文件，参数只带路径；Codex 的种类模板声明 `headers_via_env = true`，`env_http_headers` 只放该服务器专用的随机环境变量名，真实值经独立的 `secret_env` 字段传到 `Command::envs`，不进入可序列化规则环境、argv 或运行记录，保留随机 server 名。组合后的 header 统一拒绝 `$`。源 key 保护改为枚举 `keys/` 全部条目并解析真实路径，不受 MCP 选择影响；仍只读取所选 key，`check` 不读内容。准备失败清理本次新建的实例记录及临时目录，保护启动前已有路径；若清理失败附 `cleanup_errors`。README 和 CONTRACT 已同步，paddock 不用改。
+- 验证了什么：先改合成回归再运行，旧实现分别因 argv 含假 key、接受 `$REVIEW_OTHER_TOKEN`、改选后外部链接目标不在禁读集合、准备失败残留目录而失败，四条都有有效 RED。修复后定向回归通过。argv／文件／环境回归检查四家、其他免 key server、Codex 两次随机名及环境变量名、0600 权限、`check`／`denials`／记录不含假 key；插值回归覆盖 `$VAR`、`${VAR}`、`$$` 和 prefix 中的 `$`，只使用假变量；路径回归覆盖单文件链接、keys 目录链接、HOME 外工作目录中的目标，以及选中／改选／空选择。假 key 故意含无效 UTF-8，`check --kind pi` 仍成功，未选中时 `run` 也成功，确认没有读取其内容。清理回归覆盖写出凭证后 `mkdir` 失败，以及启动前已有记录目录、临时目录、普通文件、符号链接均不被删除。
+- 指定检查：前台运行 **一次** `cargo test -p fence`，**26 过、0 失败、8 个真实 srt 测试按原设置忽略**；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次通过，提交前 `git diff --check` 通过。所有 Cargo 命令使用任务独立编译目录。自查追踪了 `secret_env` 到子进程环境的唯一出口、runner 的 shell 参数装配、key 路径解析和准备阶段两种失败分支，未发现这四处修复仍有同类缺口。
+- 拿主意的地方：专用环境变量以本次随机值和服务器序号隔开，由种类模板选择环境引用接法，Rust 不按客户端或服务商名称分派。目录清理只在确认本次创建成功后才做；启动前就存在的路径保持不动。正常运行仍按完整 `run.json`／`exit.json` 在以后启动时回收，README 不再声称任何异常残留都能七天清理。子进程内可读取专用环境或临时文件仍是已接受的边界。
+- 没做的事：按返工范围没有重跑全项目测试、真实客户端、真实服务或真实墙内读取；没有使用真实 key、扫描用户进程、改变用户配置或现有 agent。这里证明的是合成 runner 收到的参数／环境／文件、解析输出及准备失败行为，不将其描述为真实客户端认证或真实 sandbox 隔离实测。未改 corral、技能或 paddock，未部署、合并或推送。
+- 踩过的坑：没有；四个缺陷均由直接相关的回归复现并消除。
+- 要主控决定的事：没有新增决策项。
+
+#### 合并前真实回归补验（2026-10-20）
+
+- 做了什么：按主控追加要求，不改代码；前台运行 `cargo build -p fence`，使用任务独立编译目录的 `debug/fence`、本轮种类数据和现装 srt 0.0.80，沿用第一轮隔离 FENCE_HOME／缓存／工作目录的方法，只复制本机放行规则，没有创建或复制 `keys/`。先完成 Claude Code 2.1.304，再启动 Codex CLI 0.163.0，两家均套 `dev` 墙。
+- 验证了什么：每家恰好一次 `web_search_exa` 搜索 `Rust official blog`、一次 `web_fetch_exa` 读取 `https://blog.rust-lang.org/`，四次实际工具返回均成功，含标题 `The Rust Programming Language Blog`；两家进程及 fence 的 `exit.json` 均为退出码 0，无 Exa 重试或限流。Claude 经 ToolSearch 找到 `mcp__fence_exa__web_search_exa`／`mcp__fence_exa__web_fetch_exa`，使用新生成的 0600 MCP JSON 文件，检查确认 `headers` 为空。Codex 经 `functions.exec` 工具目录找到本次随机名称 `fence_exa_<随机后缀>` 下的两个工具，`mcp_tool_call` 记录均为 `completed`、`error: null`；使用本轮 `env_http_headers` 接法的免 key 配置。
+- 范围与收尾：只证明本轮接法下两家真实客户端的免 key 搜索和网页读取可用，不将结果描述为带 key 认证实测；未使用真实 MCP key，未重跑 pi／omp、全套测试或其他检查。日志仅留本机临时目录，未提交；本次添加到编译目录的 runner／runtime 文件和 srt 链接已清掉。只补完成记录，`git diff --check` 通过；未改用户配置、代码或 paddock，未部署、合并或推送。
+- 踩过的坑：没有导致 Exa 调用失败的新问题，也未更换接法。stderr 记录 Claude 退出时既有 cairn hook 被墙拒绝，Codex 既有技能路径访问和额外 OpenAI 文档 MCP 启动受阻；未调整这些权限或配置，两家仍完成指定调用并正常退出。没有新增需要主控决定的事项。

@@ -224,6 +224,10 @@ R29：内置 `dev` 新增 `mcp.exa.ai`、`github.com`、`api.github.com`、`raw.
 
 Codex 使用每次运行独立的 `fence_exa_${run_nonce}` server 名；`${run_nonce}` 是系统随机源产生的 128 位随机值，以 32 位十六进制展开，`check` 显示 `<运行时才有>`。这是为了避免 Codex 递归合并旧同名表的认证字段；fence 不读取 Codex 配置查重。Codex 工具名为 `mcp__fence_exa_<随机值>__web_search_exa`／`mcp__fence_exa_<随机值>__web_fetch_exa`，不能固定完整名称，需使用当次工具目录；其余三家名称不变。此变化不改 corral／paddock 的命令、JSON 或退出码。
 
+R30 替代 R29 的固定资源：`data/mcp/` 提供 HTTP MCP 服务器，`$FENCE_HOME/mcp/` 同名整份替换；档案顶层 `mcp` 数组决定选择，本机 `local.toml` 顶层同名数组整份替换，空数组关闭。内置 `dev` 仍选 Exa，URL 带搜索与读网页两个工具，域名由服务器 URL 自动加入。各家接入改由种类 `[mcp]` 的参数及文件模板生成，临时资源位于 `${tmp}/mcp/<服务器名字>/`。旧自定义种类需自行补模板；不自动改用户配置。
+
+`fence profiles` 兼容新增 `mcp:[{"name":"exa","source":"builtin"}]`（用户项、错误项沿用其他数据组约定）；`check/run` 的 `layers` 新增 `{"source":"mcp","name":"exa","origin":"builtin"}`。`check` 不读取 `$FENCE_HOME/keys/<名字>` 的 key，预览的认证头为空；`run` 才将选中服务器的 key 按 `auth.header`、`auth.prefix` 注入对应配置。Claude 只传 0600 配置文件路径；Codex `env_http_headers` 只引用本次专用环境变量，真实值只通过子进程环境传入，不进入输出的规则 `env`、启动参数、shell 参数或 fence 运行记录。所有 key 源条目及符号链接真实目标均强制禁读，与 MCP 选择无关。agent 仍能看到专用环境或临时配置里的 key。准备失败清理本次新建的实例目录，保留启动前已存在的路径；清理失败在原错误上兼容新增 `cleanup_errors` 路径／原因列表。详见 `crates/fence/README.md`。命令、退出码和现有字段保留，paddock 不用改。
+
 错误码：`usage`、`unknown_profile`、`invalid_data`（附 `problems:[{source,path,message}]`）、`unsupported_kind`（附 `supported:[…]`）、`no_service`、`program_not_found`、`bad_cwd`、`runtime_missing`、`not_found`。amp/agy 本轮无数据，使用 sandbox 时返回 `unsupported_kind`。
 
 `check` 在合并时校验域名和可选端口，错误返回 `invalid_data`，附规则来源和 `domains[索引]`；`run` 复用同一校验，在创建运行记录和启动程序前失败。允许 `*.example.com`、`example.com:443`、`[::1]`、`[2001:db8::1]:443` 等 srt 格式；端口为 1–65535，不带前导零。

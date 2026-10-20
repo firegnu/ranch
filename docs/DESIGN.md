@@ -149,5 +149,15 @@
     - omp 的 MCP URL 显式带 `?tools=web_search_exa,web_fetch_exa`，以保留内置搜索未覆盖的读网页工具；不带工具列表的 Exa MCP 配置会被 omp 自动过滤。仍只访问 `mcp.exa.ai`，不引入其他服务。
     - 推送不挡、不做推送实测。第一轮撤销钥匙串读取使 Claude 无法登录；用户随后明确取消推送限制，认为平时直接使用 Claude Code、Codex 也有同类风险，且常用 bypass。各家读写路径（包括 Claude 的钥匙串读取）保持原样，不新增凭证处理；是否允许推送由任务书约束。
     - 对 paddock：兼容新增规则和种类启动参数，命令、JSON 格式、退出码不变，paddock 不用动；随 fence 部署对新运行生效。同名用户档案和种类仍整份替换内置数据，不自动改用户规则。
+  - R30（2026-10-20）：查资料接哪些 MCP 服务器改成数据，替代 R29 写死的资源；fence 的 Rust 程序不识别具体服务商。
+    - `data/mcp/<名字>.toml` 与模型服务同样编入程序；`~/.fence/mcp/<名字>.toml` 同名整份替换。内容为 HTTP MCP 的 `url` 和可选的 `[auth]`（`header`、`prefix`），不含 key。服务器名字仅用 ASCII 字母、数字、下划线、连字符。`dev` 的 `mcp = ["exa"]` 默认仍接 Exa；本机 `local.toml` 顶层 `mcp = ["别家"]` 整份替换选择，空列表关闭。换服务商只加一份服务器数据、改这一行，不必覆盖档案或四家种类。
+    - 选中的服务器从 URL 自动提取放行的域名（显式非默认端口一起保留）；不再在 `dev.domains` 重复 Exa。内置 Exa URL 带 `tools=web_search_exa,web_fetch_exa`，四家共用这一地址，保留 omp 所需的显式工具列表；不再提供各客户端用不上的其他 Exa 工具。
+    - 每家种类的 `[mcp]` 写每台服务器的 `args` 和 `[mcp.files]` 文件内容模板；资源放 `${tmp}/mcp/<名字>/`。模板使用服务器名、URL、JSON/TOML 请求头及临时目录占位符，参数仍按数组传递，不经 shell。Codex 保留每次运行随机后缀，pi 模板保留空 Authorization 默认值再叠加该服务器认证，omp 模板写插件 manifest 和 MCP 配置。只为当前种类、选中的服务器生成资源。
+    - key 是墙外 `$FENCE_HOME/keys/<服务器名字>` 的单行文件，建议目录 0700、文件 0600；fence 强制禁止墙内读取 keys 目录及解析符号链接得到的真实路径，并沿用整个 FENCE_HOME 的禁止写。只有 `run` 在墙外读取选中服务器的 key，按该服务器 `auth.header` 和 `auth.prefix` 组成请求头，不注入其他服务器或全局认证。没有 key 文件即免 key；有 key 却缺认证格式、空 key 或非法请求头则启动失败，不回退成免认证。`check` 不读取 key，认证内容只在运行时生成，不进检查输出或运行记录。
+    - R30 返工：Claude 的 `--mcp-config` 只传 0600 配置文件路径；Codex 模板声明 `headers_via_env = true`，用 `env_http_headers` 引用本次、该服务器专用的随机环境变量名。真实值只通过 `Command::env` 传给子进程，不进入可序列化的规则环境、启动参数或运行记录；Codex server 名仍带随机后缀。其他两家仍写 0600 临时文件。
+    - 凭证只支持普通 ASCII HTTP 请求头字面值，组合后的值拒绝任何 `$`，也拒绝以 `!` 开头或含非法控制字符的值，防止客户端再次插值或求值。生成的临时文件和专用环境会进墙，agent 能看到，也能主动复制发送；这不是保护 key 不被 agent 访问的网关。客户端连接和重定向行为仍由其原生 MCP 实现负责，fence 只给对应 server 配置认证。
+    - key 源禁读独立于服务器选择：每次枚举 `keys/` 全部条目，将原路径和符号链接真实目标加入禁读；改选或 `mcp = []` 不解除旧 key 的保护。仍只读取被选中服务器的 key 内容，`check` 只看路径元数据。
+    - 准备阶段失败立即清理本次新建的实例记录和临时目录，启动前已存在的目录、文件或链接不删除；清理失败附带错误，不能声称已清掉。成功交给 runner 且留下 `run.json`、`exit.json` 的运行，仍在以后启动时按结束超过七天回收；异常退出缺少完整记录的残留不保证自动回收。
+    - 对 paddock：命令、退出码及现有 JSON 字段保留；`profiles` 兼容新增 `mcp` 服务器列表、`check/run` 的来源列表新增 `mcp`，paddock 不用动。只在 fence 新运行生效，不修改用户全局配置；用户整份覆盖的旧种类需自行采用 `[mcp]` 模板才能切换。
   - `packed-refs.lock` 报错不消除：提交不受影响，删除已打包的分支、`gc`、建新分支或 worktree 在墙里会失败。
 - 来历：`docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`、`docs/调研/R17b-fence方案.md`。

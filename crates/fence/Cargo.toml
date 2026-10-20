@@ -6,6 +6,7 @@ rust-version = "1.96"
 description = "Data-driven sandbox launcher, independent of corral"
 
 [dependencies]
+http = "1"
 libc = "0.2"
 serde_json = "1"
 toml = "1.1"

@@ -1,4 +1,4 @@
-use crate::{Result, data, error};
+use crate::{Result, data, error, mcp};
 use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
@@ -38,7 +38,7 @@ fn strings(value: &Value) -> bool {
 
 // Match srt 0.0.80's domain-pattern.js allow-list grammar, including its
 // wildcard rules, bracketed IPv6 zone IDs and non-zero, unpadded port suffixes.
-fn valid_domain(entry: &str) -> bool {
+pub(crate) fn valid_domain(entry: &str) -> bool {
     let valid_port = |port: &str| {
         !port.starts_with('0')
             && port.bytes().all(|b| b.is_ascii_digit())
@@ -77,6 +77,9 @@ fn valid_domain(entry: &str) -> bool {
 }
 
 pub fn validate(value: &Value, source: &str, role: &str, section: &str) -> Result<()> {
+    if role == "mcp" {
+        return mcp::validate_server(value, source);
+    }
     let table = value
         .as_object()
         .ok_or_else(|| data::problem(source, section, "expected table"))?;
@@ -94,6 +97,7 @@ pub fn validate(value: &Value, source: &str, role: &str, section: &str) -> Resul
             "mkdir" => matches!(role, "profile" | "local" | "repo"),
             "args" => role == "agent",
             "services" => matches!(role, "profile" | "agent" | "local"),
+            "mcp" => section.is_empty() && matches!(role, "profile" | "agent" | "local"),
             "macos" | "linux" => {
                 section.is_empty() && matches!(role, "profile" | "agent" | "local")
             }
@@ -105,6 +109,10 @@ pub fn validate(value: &Value, source: &str, role: &str, section: &str) -> Resul
         }
         let valid = match key.as_str() {
             "description" => v.is_string(),
+            "mcp" if role == "agent" => {
+                mcp::validate_template(v, source)?;
+                true
+            }
             "env" => v.as_object().is_some_and(|m| {
                 m.iter()
                     .all(|(k, v)| !k.is_empty() && !k.contains(['=', '\0']) && v.is_string())
@@ -176,8 +184,9 @@ fn git(cwd: &Path, args: &[&str]) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-struct Context {
-    values: BTreeMap<String, Option<String>>,
+#[derive(Clone)]
+pub(crate) struct Context {
+    pub(crate) values: BTreeMap<String, Option<String>>,
     worktree: PathBuf,
     cwd: PathBuf,
 }
@@ -244,7 +253,7 @@ impl Context {
             cwd,
         })
     }
-    fn expand(
+    pub(crate) fn expand(
         &self,
         text: &str,
         source: &str,
@@ -342,6 +351,8 @@ fn protect_write(list: &mut Vec<String>, path: &Path, source: &str) -> Result<()
 pub struct Rules {
     pub value: Value,
     pub mkdir: Vec<PathBuf>,
+    pub files: Vec<(PathBuf, String)>,
+    pub secret_env: BTreeMap<String, String>,
 }
 
 fn network_settings(
@@ -375,9 +386,16 @@ pub fn resolve(
     let (p, pm) = data::load(home, "profiles", profile)?;
     let local_path = home.join("local.toml");
     let local = optional_file(&local_path, "local")?;
+    let selected_mcp = local
+        .get("mcp")
+        .or_else(|| p.get("mcp"))
+        .cloned()
+        .unwrap_or(json!([]));
+    let mut mcp_template = None;
     let mut layers = vec![(p, pm)];
     if let Some(kind) = kind {
         let (agent, meta) = data::load(home, "agents", kind)?;
+        mcp_template = agent.get("mcp").cloned();
         let mut services = select(&agent, platform)["services"].clone();
         for value in [&layers[0].0, &local] {
             let selected = select(value, platform);
@@ -518,6 +536,28 @@ pub fn resolve(
     if settings["enableWeakerNetworkIsolation"] == true {
         warnings.push("weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）".into());
     }
+    let mcp = mcp::resolve(
+        home,
+        &selected_mcp,
+        mcp_template.as_ref(),
+        &context,
+        tmp.is_some(),
+    )?;
+    lists.get_mut("args").unwrap().extend(mcp.args);
+    for domain in mcp.domains {
+        append(lists.get_mut("domains").unwrap(), domain);
+    }
+    // Keep key sources unreadable even when FENCE_HOME is outside HOME or in the worktree.
+    for path in mcp.key_paths {
+        let target = write_target(&path, &mut Vec::new(), true)
+            .map_err(|e| data::problem("mcp keys", "keys", e))?;
+        for path in [normalize(&path), target] {
+            append(
+                lists.get_mut("deny_read").unwrap(),
+                path.to_string_lossy().into_owned(),
+            );
+        }
+    }
     for entry in [context.worktree.join(".fence.toml"), home.to_path_buf()] {
         protect_write(
             lists.get_mut("deny_write").unwrap(),
@@ -542,7 +582,9 @@ pub fn resolve(
         .collect();
     Ok(Rules {
         mkdir,
-        value: json!({"ok":true,"profile":profile,"kind":kind,"platform":platform,"cwd":context.cwd,"layers":layers.iter().map(|(_,m)| m).collect::<Vec<_>>(),"settings":settings,"env":environment,"args":lists["args"],"skipped":skipped,"warnings":warnings}),
+        files: mcp.files,
+        secret_env: mcp.secret_env,
+        value: json!({"ok":true,"profile":profile,"kind":kind,"platform":platform,"cwd":context.cwd,"layers":layers.iter().map(|(_,m)| m).chain(mcp.layers.iter()).collect::<Vec<_>>(),"settings":settings,"env":environment,"args":lists["args"],"skipped":skipped,"warnings":warnings}),
     })
 }
 

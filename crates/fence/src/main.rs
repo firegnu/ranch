@@ -1,4 +1,5 @@
 mod data;
+mod mcp;
 mod rules;
 mod runs;
 mod runtime;

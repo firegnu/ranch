@@ -1,0 +1,5 @@
+description = "Exa 搜索和读网页，免 key、有限频"
+url = "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa"
+[auth]
+header = "x-api-key"
+prefix = ""
