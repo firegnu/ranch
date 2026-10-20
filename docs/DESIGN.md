@@ -142,5 +142,9 @@
   - 规则是 TOML：内置档案（只有 `dev`）、各家数据、模型服务编进 fence；用户在 `~/.fence/` 下放同名文件整份替换，`~/.fence/local.toml` 补本机的；仓库补充是工作区顶层的 `.fence.toml`，只许额外放行，墙里写不了。路径用 `${…}` 占位符、不许通配符，macOS 专有项写在 `[macos]` 段。Codex 默认开 trustd（削弱网络隔离，用户同意）。
   - 套了墙的 agent 在墙里不能再开 agent：PATH 上的 `~/.local/bin/corral` 在 HOME 禁读里，通常报 127；corral 程序读得到时报 `sandbox`（退出码 6）。不为凑出 6 放开 HOME（R19，用户 10-19 同意）。
   - R20（用户 10-19，paddock 的测试要在临时目录建 socket）：`dev` 默认放行各实例 `${tmp}` 下的 unix socket（bind、connect），macOS 用 srt 的 `allowUnixSockets` 按路径放行；Linux 的 srt 只能全开或全关，不放开，`check` 给 warning，留 R17c。srt 会把墙内 `TMPDIR` 改成 `CLAUDE_CODE_TMPDIR`，没有就用各墙共用的 `/tmp/claude`；`dev` 给四家都设 `CLAUDE_CODE_TMPDIR=${tmp}`，墙内 `TMPDIR` 都是自己的临时目录。
+  - R29（2026-10-20，阻塞，尚未落地）：目标是四家查资料统一连接免 key、有限频的 `https://mcp.exa.ai/mcp`，使用 `web_search_exa` 和 `web_fetch_exa`，由 Exa 服务器读取目标网页。候选接法：Claude Code 用 `--mcp-config`，Codex 用 `-c mcp_servers.fence_exa`；pi 用一次性扩展调用内置 `registerMcpServer`；omp 的内置 Exa 搜索不足以覆盖读网页，候选为 `--plugin-dir` 临时 MCP 插件。资源拟在 fence 的实例临时目录写出，不修改各家全局配置、不做 fence 上网网关。目前只实测确认 Claude 的动态 MCP 能连接，尚未完成工具调用验收。
+    - 用户确认的白名单新增范围是 `mcp.exa.ai`、`github.com`、`api.github.com`、`raw.githubusercontent.com`、`codeload.github.com`、`objects.githubusercontent.com`、`docs.rs`、`doc.rust-lang.org`、`static.rust-lang.org`。GitHub 和 Rust 文档供开发直接读取；其他站交 Exa 抓取，避免放开任意互联网访问。未通过推送隔离验收前不提交规则变更。
+    - GitHub 推送必须失败。尝试撤销 Claude 的 `~/Library/Keychains` 读取放行后，Claude 在调用模型前报 `Not logged in · Please run /login`，无法兼顾登录和禁读钥匙串；推送尚未实测。该尝试已撤回，按任务要求停下交主控决定。可选下一步是评估墙外仅取得 Claude 登录凭证并临时传入墙内、同时禁读钥匙串；这涉及新的认证处理，本轮没有实现或读取凭证。不把 Git 的环境变量开关当作安全边界。
+    - 对 paddock：本轮只留下设计和阻塞记录，运行时、规则、命令、JSON、退出码均未改变，paddock 不用动。
   - `packed-refs.lock` 报错不消除：提交不受影响，删除已打包的分支、`gc`、建新分支或 worktree 在墙里会失败。
 - 来历：`docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`、`docs/调研/R17b-fence方案.md`。

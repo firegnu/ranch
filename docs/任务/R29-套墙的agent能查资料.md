@@ -70,3 +70,17 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+状态：**阻塞，功能未完成、不可合并部署为 R29 实现**。2026-10-20，ranch/dev-r29 按第 2、3 条的停止条件交回主控。
+
+- 做了什么：先读规矩、设计和任务；核对 Exa 官方说明、本机 CLI 帮助、pi 本机文档及 omp 官方源码，先在 DESIGN §8 写候选设计，再尝试九个域名和四家临时 MCP 接入。Claude 用 `--mcp-config`，Codex 用 `-c`，pi 用实例临时扩展注册 MCP，omp 候选用临时插件。为阻止 GitHub 凭证访问，尝试撤销 Claude 的钥匙串读取。Claude 认证失败后停止，撤回全部实现与测试改动，只提交本记录和 DESIGN 的阻塞说明；paddock 不用动。
+- 验证了什么：先只改 `four_agents_match_the_development_profile` 的域名和参数期望，运行单测，确实因缺少新增域名失败（RED）。改实现后跑了一次 `cargo test -p fence`：该规则测试通过；单元测试 2 过，CLI 测试 14 过、2 失败（另一个旧域名期望未同步；合成 `/bin/sh` 不接受新注入的 `--mcp-config`）。尝试调整夹具后未重跑，随后随实现撤回，不能据此宣称整包 GREEN。
+- 真实实测：使用任务独立编译目录里的 `debug/fence`，在编译目录配备现装 srt 0.0.80 的运行资源，隔离 `FENCE_HOME` 和缓存目录；临时仓库只建本地空提交，remote 为指定的 `https://github.com/firegnu/ranch.git`。前台执行一次 Claude 非交互验收，提示词依次要求 Exa 搜索、Exa 读指定网页、bash 读 raw README、指定 `git push --dry-run`。初始化记录显示动态 `fence_exa` 为 `connected`；紧接着最终结果为 `is_error:true`、`Not logged in · Please run /login`，进程退出码 1。四项工具调用均未发生，不能算搜索、读网页或拒绝推送验收通过；没有真实推送，也没有执行任何打印凭证的命令。原始日志含本机路径和其他插件状态，只留在本机临时目录，未提交。
+- 拿主意的地方：不把清空 `credential.helper` 等可被子进程撤销的环境设置当作墙的安全边界；不为通过认证恢复钥匙串读取后就宣称推送已被挡住。pi 本机已支持原生 MCP，因此无需另做 MCP 协议客户端；omp 搜索能用 Exa，但不能由此推断其 `read` 也走 Exa。
+- 没做的事：Codex、pi、omp 的真实验收未运行；四家的 `git push --dry-run` 均未执行。因遇到停止条件，没有继续整项目测试、clippy 或 fmt 检查；最终文档变更用 `git diff --check` 验证。没有改全局配置、认证文件、用户 agent、其他仓库；没有安装、部署、合并或推送。
+- 踩过的坑：Claude 的钥匙串读取不仅可能涉及 GitHub 凭证，也用于 Claude 自身登录；整段撤销会使 Claude 在模型调用前就未登录。真实启动还报告现有 cairn SessionEnd hook 的路径被墙拒绝，未修改 hook。新增 Claude 启动参数会影响借用 claude 种类运行 `/bin/sh` 的合成夹具；后续实现需要同步隔离这些夹具的 CLI 参数。
+- 要主控决定的事：是否允许另行评估“墙外仅取 Claude 登录凭证、临时传给墙内 Claude，同时禁止墙内读取钥匙串”的方案，或指定其他凭证隔离办法。尚未证明这条候选路线可用，本轮没有读取、复制或注入登录凭证。不能把此次认证失败说成 GitHub 推送隔离已完成，也不能据此断言所有其他办法都做不到。
+
+核对依据：[Exa MCP 官方说明](https://exa.ai/docs/get-started/exa-mcp)、[pi 当前会话 MCP 注册接口](https://pi.dev/docs/latest/extensions)、[omp MCP 配置](https://github.com/can1357/oh-my-pi/blob/main/docs/mcp-config.md)、[omp 内置 Exa 搜索实现](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/web/search/providers/exa.ts)。
