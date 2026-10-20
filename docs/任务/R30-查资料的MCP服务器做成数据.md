@@ -91,3 +91,11 @@
 - 验证了什么：每家恰好一次 `web_search_exa` 搜索 `Rust official blog`、一次 `web_fetch_exa` 读取 `https://blog.rust-lang.org/`，四次实际工具返回均成功，含标题 `The Rust Programming Language Blog`；两家进程及 fence 的 `exit.json` 均为退出码 0，无 Exa 重试或限流。Claude 经 ToolSearch 找到 `mcp__fence_exa__web_search_exa`／`mcp__fence_exa__web_fetch_exa`，使用新生成的 0600 MCP JSON 文件，检查确认 `headers` 为空。Codex 经 `functions.exec` 工具目录找到本次随机名称 `fence_exa_<随机后缀>` 下的两个工具，`mcp_tool_call` 记录均为 `completed`、`error: null`；使用本轮 `env_http_headers` 接法的免 key 配置。
 - 范围与收尾：只证明本轮接法下两家真实客户端的免 key 搜索和网页读取可用，不将结果描述为带 key 认证实测；未使用真实 MCP key，未重跑 pi／omp、全套测试或其他检查。日志仅留本机临时目录，未提交；本次添加到编译目录的 runner／runtime 文件和 srt 链接已清掉。只补完成记录，`git diff --check` 通过；未改用户配置、代码或 paddock，未部署、合并或推送。
 - 踩过的坑：没有导致 Exa 调用失败的新问题，也未更换接法。stderr 记录 Claude 退出时既有 cairn hook 被墙拒绝，Codex 既有技能路径访问和额外 OpenAI 文档 MCP 启动受阻；未调整这些权限或配置，两家仍完成指定调用并正常退出。没有新增需要主控决定的事项。
+
+## 主控审查
+
+- 10-20 ranch/main 看了第一轮 diff：MCP 服务器成了 `data/mcp/` 一类数据，四家接法写在各自种类数据的 `[mcp]` 里，程序里没有 Exa 的名字和地址；`dev` 默认 `mcp = ["exa"]`，`local.toml` 的 `mcp` 一处能换；服务器域名自动放行。重跑 fmt、clippy、`cargo test --all-targets` 183 通过、0 失败（一次 corral 偶发失败单跑通过）。
+- 交叉审查（Codex xhigh）第一轮「改完再合并」：必须改 3 条（Claude、Codex 的 key 在启动参数里，`ps` 看得见；pi 会展开 header 里的 `$VAR`；未选中的 key 的外部链接目标会失去禁读），建议改 1 条（准备失败留下含 key 的文件）。主控全部认可，交回返工；另 3 条审查认为不用改，主控同意。
+- 返工后复核「可以合并」，新增 0 条。主控重跑 fmt、clippy、`cargo test --all-targets` 186 通过、0 失败。因 Claude、Codex 接法换了，合并前加做两家真实免 key 的 Exa 搜索、读网页，均成功。
+- 带真实 key 的服务商没有实测（任务书不让用真实 key），只有合成测试。
+- 结果：返工 1 次
