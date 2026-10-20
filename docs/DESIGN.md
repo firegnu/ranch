@@ -161,3 +161,15 @@
     - 对 paddock：命令、退出码及现有 JSON 字段保留；`profiles` 兼容新增 `mcp` 服务器列表、`check/run` 的来源列表新增 `mcp`，paddock 不用动。只在 fence 新运行生效，不修改用户全局配置；用户整份覆盖的旧种类需自行采用 `[mcp]` 模板才能切换。
   - `packed-refs.lock` 报错不消除：提交不受影响，删除已打包的分支、`gc`、建新分支或 worktree 在墙里会失败。
 - 来历：`docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`、`docs/调研/R17b-fence方案.md`。
+
+## 9. 派活分工数据（R31，2026-10-20）
+
+用户先做「改成表以及读表」，调整分工另放 R34。路由的判法、九条判断、验证预算、试用、返工和审查规矩不变；技能只选格子，再通过命令读取当下生效的分工。
+
+- `crates/dispatch/resources/dispatch.toml` 编进 ranch。`agents` 按名字定义各家的 `argv`、`labels` 字符串数组，模板只支持 `${model}`、`${effort}`；`cells` 按名字定义 `agents`（可任选的家）、可选的 `model`、`effort`、`cross_review`、`rework`。名字和数量由数据决定，Rust 不识别具体家或格子。
+- 每次调用读取 `$HOME/.ranch/dispatch.toml`，同名家、同名格子按字段覆盖；数组整项替换，未写的字段和条目继承默认，也可加新家、新格子。可选字符串写 `""` 表示清除，不能删除内置条目。不读项目文件，不写用户配置，不缓存。
+- 文件不存在才用默认；读不了、格式错误、未知键、引用不存在、交叉审查或返工引用构成环（含混合环）、模板无法展开都报错，给出文件与字段位置，不退回默认。读取一格也先校验整张表。
+- `ranch dispatch cell <名字>` 返回这一格的家、模型、强度、完整启动命令（shell 字符串和 argv）、标签，以及交叉审查格子的命令和标签、返工格子名。`ranch dispatch table` 返回全部生效的家模板与格子，并标记定义来源 `builtin` / `user`；格子引用的家另标来源，避免只改家时误以为启动命令仍全来自默认。
+- 默认九格对应原技能：`core-design`、`core-code`、`chores`、`design`、`ui-clear`、`ui-trial`、`implementation`、`implementation-hard`、`review`。只有前两格指向 `review`，返工引用都为空。另有 `claude-medium`、`amp`、`agy` 给用户点名时补未指定部分；其他家和强度复用上述格子。
+- 技能仍先遵从用户和项目指定；未指定部分通过读表补齐。很费 token 的配置先问用户、sonnet 试用满 5 件汇总、amp 不带首句参数、agy 必须带首句参数，以及 `CAIRN_DISABLE=1` 保持原规则。数据只是返回建议，不执行 agent 命令、不自动返工或审查。
+- 对 paddock：兼容新增两个只读命令和一份用户配置；现有 corral、route、标签、退出码与状态目录不变，paddock 不用动。首次使用需部署含读表命令的 ranch 并更新技能；之后改本机表即在下一次读取生效，不编译、不重装技能。

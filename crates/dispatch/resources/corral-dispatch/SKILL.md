@@ -123,7 +123,7 @@ description: "当主控：把开发任务拆开、写成任务文件，用 corra
 每件活都要定这几样：交给哪家、模型和强度、影响面、要不要交叉审查。**先把任务书正文写好（第 2 节），再定这几样**，顺序是：
 
 1. 从写好的正文提炼摘要，问路由。路由只判难度、要不要交叉审查、影响面，不判交给谁。
-2. 照下面的分工表定交给哪家、模型和强度。
+2. 照下面的分工表选格子，调读表命令取当下的家、模型和强度。
 3. 照影响面定验证预算，写进「怎么算做完」；补上任务文件开头的「交给谁、几档」和路由那一行。打算交给 pi、omp 的，看正文要不要写得更具体。
 
 项目 AGENTS.md 写了的，以及下面「很费 token」的配置，先于这些规则。
@@ -147,22 +147,38 @@ echo "<摘要>" | ranch dispatch route
 
 **交给哪家（分工表）**：从上往下看，第一条命中的算数。
 
-| # | 条件 | 交给 | 模型 / 强度 |
-|---|---|---|---|
-| 1 | 任务文件写了 `执行：主控`，或者用户让你自己做 | 你自己做，不派 | — |
-| 2 | 用户点名 | 照用户说的 | 照用户说的；没说的部分按下面各条 |
-| 3 | 项目 AGENTS.md 有规定 | 照规定 | 照规定 |
-| 4 | 本轮要改代码，并且碰要害（路由的交叉审查结论是「要」，或者你判断碰了数据模型、并发和事务、安全和隐私、核心规则） | 设计和界面给 Claude Code，其余给 Codex | high |
-| 5 | 项目代码之外的杂活：本机清理、一次性脚本、核对数据、跑命令汇报 | pi、omp | 各自默认 |
-| 6 | 要出方案或做取舍：架构、模块边界、数据库设计、新界面、新交互、跨模块的活；涉及界面或产品取舍的调研 | Claude Code | high |
-| 7 | 界面活，并且过了下面的「说得清」检查 | pi、omp | 各自默认 |
-| 8 | 其余界面活：单个组件，可以有小的行为改动，不新做交互 | Claude Code | 试用 sonnet / high（见分档表） |
-| 9 | 其余：照方案实现、修 bug、补测试、批量机械改动、跑很久的活、查事实或定位问题的调研、前端做完的浏览器验收 | Codex | medium；难的用 high（见分档表） |
+| # | 条件 | 取哪一格 |
+|---|---|---|
+| 1 | 任务文件写了 `执行：主控`，或者用户让你自己做 | 你自己做，不派 |
+| 2 | 用户点名 | 照用户说的；没说的部分按下面各条读表补齐 |
+| 3 | 项目 AGENTS.md 有规定 | 照规定；没说的部分按下面各条读表补齐 |
+| 4 | 本轮要改代码，并且碰要害（路由的交叉审查结论是「要」，或者你判断碰了数据模型、并发和事务、安全和隐私、核心规则） | 设计和界面读 `core-design`，其余读 `core-code` |
+| 5 | 项目代码之外的杂活：本机清理、一次性脚本、核对数据、跑命令汇报 | `chores` |
+| 6 | 要出方案或做取舍：架构、模块边界、数据库设计、新界面、新交互、跨模块的活；涉及界面或产品取舍的调研 | `design` |
+| 7 | 界面活，并且过了下面的「说得清」检查 | `ui-clear` |
+| 8 | 其余界面活：单个组件，可以有小的行为改动，不新做交互 | `ui-trial`（试用，见分档表） |
+| 9 | 其余：照方案实现、修 bug、补测试、批量机械改动、跑很久的活、查事实或定位问题的调研、前端做完的浏览器验收 | `implementation`；难的用 `implementation-hard`（见分档表） |
+
+每次派活都读一次，不沿用上次的结果：
+
+```sh
+ranch dispatch cell implementation
+ranch dispatch table
+```
+
+`cell <格子>` 的 `cell.choices` 是可任选的家，每项给 `agent`、完整的 `command` 和等价的 `argv`、`labels`；模型和强度在 `cell.model`、`cell.effort`，`null` 表示各自默认。`cell.review` 有交叉审查格子的名字、模型、强度和 `choices`；`cell.rework` 是返工换格子的名字或 `null`，不会自动执行，返工仍按第 5 节。命令只读数据，不开 agent。退出码 0 且 `ok:true` 才用；读表失败就报告错误并停下，不拿旧表或记忆里的参数凑。
+
+`table` 列出整张生效表和各家的模板，`source` 标明 `builtin` / `user`；格子和它引用的家分别标来源。用户改 `~/.ranch/dispatch.toml`，只写要改的格子或家、要改的字段，其他继承内置表；数组整项替换，也能加新格子。下一次读表就生效，不编译、不重装技能。例如只换第 9 条默认格子的模型：
+
+```toml
+[cells.implementation]
+model = "用户选定的模型"
+```
 
 - 第 2、3 条只决定交给谁。碰要害的活照样要交叉审查，验证预算照样按影响面定。
-- 第 2、3 条只定了交给哪家、没定模型或强度时，这样补：用户或项目说了的照用；没说的，强度按这件活本来会落在哪条来定：第 4、6 条用 high，第 9 条里难的用 high，其余都用 medium。模型按家定：Claude Code 用 `opus[1m]`，只有这件活本来就落在第 8 条时才用 sonnet / high（试用）；Codex 用 astra；pi、omp、amp、agy 用各自默认。
+- 第 2、3 条只定了交给哪家、没定模型或强度时，这样补：用户或项目说了的照用；没说的，强度按这件活本来会落在哪条来定：第 4、6 条用 high，第 9 条里难的用 high，其余都用 medium。Claude Code 的 medium 读 `claude-medium`、high 读 `design`，只有这件活本来就落在第 8 条时才读 `ui-trial`（试用）；Codex 的 medium 读 `implementation`、high 读 `implementation-hard`；pi、omp 从 `chores` 选对应一家，amp、agy 读同名格子。用户明确指定的模型或强度优先，按 `table` 返回的该家模板代入指定值，同时更新命令和标签；只补没指定的部分，不覆盖用户说的。
 - pi、omp 两家同类，任选，一家手上有活就开另一家。amp、agy 的分工还没定，只在用户或任务文件点名时派。
-- 交叉审查不在这张表里，见第 6 节（一律给 Codex）。
+- 交叉审查读该格的 `review`；需要审查但该格没配时读 `review` 格，见第 6 节（默认一律给 Codex）。
 
 **「说得清」检查**（第 7 条用）：下面四条全部满足，才交给 pi、omp；有一条不满足，就按第 8 条交。
 
@@ -175,16 +191,16 @@ echo "<摘要>" | ranch dispatch route
 - 新界面、或者没有现成示意的大改，派人实现之前先给用户看样子：一张文字线框或示意，用户选定了再派。规则明确的小调整（换个颜色、加一个提示）直接做。
 - **一件活一个 agent、一个 worktree**：新活不要塞给已经开着的写代码 agent，它的工作目录钉在自己那个 worktree 上，换不了目录，也换不了模型和强度。同一个 agent 只在自己那个 worktree 里接后续：返工、复核。要稳定的是「家」不是实例——同类活固定交给同一家，不要在两家之间来回换。
 
-**几档**：不带参数时，开出来的 agent 用它自己的全局默认，**不继承你的模型和强度**。每次开 agent 都显式带上参数，并在任务文件和汇报里写明用的哪一档。
+**几档**：不带参数时，开出来的 agent 用它自己的全局默认，**不继承你的模型和强度**。每次开 agent 都照读表返回的完整命令带参数，并在任务文件和汇报里写明实际模型和强度。
 
 分档表：
 
 | 强度 | 用在哪 | Claude Code | Codex |
 |---|---|---|---|
-| medium（默认） | 分工表第 9 条的默认：一般的 bug；在已经理解的代码里加小功能；照方案实现；查事实的调研。路由的 `tier.level` 是轻或常规时用 | `--model 'opus[1m]' --effort medium` | `-m gpt-6-astra -c 'model_reasoning_effort="medium"'` |
-| high | 分工表第 4、6 条；第 9 条里路由的 `tier.level` 是重，或者你判断是跨好几个文件的改动、原因还不知道的 bug、有取舍的设计 | `--model 'opus[1m]' --effort high` | `-m gpt-6-astra -c 'model_reasoning_effort="high"'` |
-| xhigh | 只给交叉审查（第 6 节） | — | `-m gpt-6-astra -c 'model_reasoning_effort="xhigh"'` |
-| 试用 | 分工表第 8 条 | `--model sonnet --effort high` | — |
+| medium（默认） | 分工表第 9 条的默认：一般的 bug；在已经理解的代码里加小功能；照方案实现；查事实的调研。路由的 `tier.level` 是轻或常规时用 | 读 `claude-medium` | 读 `implementation` |
+| high | 分工表第 4、6 条；第 9 条里路由的 `tier.level` 是重，或者你判断是跨好几个文件的改动、原因还不知道的 bug、有取舍的设计 | 读第 4 条的 `core-design` 或第 6 条的 `design` | 读第 4 条的 `core-code` 或第 9 条的 `implementation-hard` |
+| xhigh | 只给交叉审查（第 6 节） | — | 读 `review` |
+| 试用 | 分工表第 8 条 | 读 `ui-trial` | — |
 
 - 拿不准用 medium。第 5 节审查发现质量不够，照第 5 节返工，不自己升档重开。
 - 分工表第 8 条在试用 sonnet，**先试 5 件**。派之前数一下项目任务文件里已经按第 8 条交给 sonnet 的件数（看开头「交给谁、几档」那一行写没写 sonnet）：
@@ -194,7 +210,7 @@ echo "<摘要>" | ranch dispatch route
 - 不用 `low`：看板只认 medium、high、xhigh 三档标签。
 - 下面这些很费 token，可以提议，但要先问用户，同意了才开：Claude Code 用 `fable`（任何强度）、opus 开 `max`；Codex 开 `ultra`（它还会自己再开子 agent）。用户点名就算同意。
 - pi、omp、amp、agy 用它们的默认，不分档。
-- 模型名会随版本变，过时了改这张表。
+- 模型名会随版本变，过时了改本机数据表，下一次派活重新读；上表说明原有分档用途，实际家、模型、强度、命令和标签以读表结果为准。sonnet 试用与很费 token 的检查仍照上面的规则执行。
 
 **影响面**：定验证预算，写进任务书「怎么算做完」。难度定模型和强度，影响面定验证，两件事分开定。
 
@@ -215,30 +231,28 @@ echo "<摘要>" | ranch dispatch route
 
 按 corral 技能开 agent，另外注意：
 
-- 名字用 AGENTS.md 规定的前缀，`--cwd` 指向它的 worktree，agent 命令后面带上这一档的参数。第一句话很短，只让它去读文件：
+- 名字用 AGENTS.md 规定的前缀，`--cwd` 指向它的 worktree。把读表选中的 `choices` 项的完整 `command` 放在 `--` 后，每条 `labels` 各加一个 `--label`（空数组就不带）。下面是拼接示意，占位符须替换为实际返回值；也可以用 `argv` 逐项传参。第一句话很短，只让它去读文件：
 
   ```sh
-  corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 --label effort=medium --label model=gpt-6-astra --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort="medium"'
+  corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 labels 对应的 --label 参数> --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- <读表 command>
   ```
 
-  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- amp`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
-  派给 agy 照上面的样子带 `--prompt`（agy 不带它就一直是 `starting`），不带 `--label`，最后换成 `-- agy --dangerously-skip-permissions`。
+  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- <读表 amp 的 command>`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
+  派给 agy 照上面的样子带 `--prompt`（agy 不带它就一直是 `starting`），不带 `--label`，`--` 后用读表 agy 的 `command`。
 
 - 本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn（工作接续记忆）：它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
-  派给 Codex 时同理再带 `--disable memories`（下表已写上）：关掉这个会话的 Codex 记忆（等于 `-c features.memories=false`，不改全局配置）。`~/.codex/memories/` 是跨项目的，会把别的项目、工作上的内容带进来，旧约定也会和任务文件打架。
+  Codex 的默认启动模板还会关闭这个会话的 Codex 记忆（不改全局配置），直接使用读表返回的完整命令。`~/.codex/memories/` 是跨项目的，会把别的项目、工作上的内容带进来，旧约定也会和任务文件打架。
 
-- 用 `--label` 记下这一档的强度和模型：`effort=<medium / high / xhigh>`、`model=<模型名>`，和后面 agent 命令里的参数一致。看板靠它显示每个 agent 的档位；pi、omp、amp、agy 不分档，不带。
+- `--label` 使用读表返回的 `labels`，和命令里的参数一起取，不自己猜。默认 Claude Code、Codex 带强度和模型，看板靠它显示档位；pi、omp、amp、agy 不分档，默认标签数组为空。
 
-- 被委派的 agent 一律免确认启动，中途不弹权限框，也不会被自动检查拦下。agent 命令按下表写，后面接上第 3 节的分档参数：
+- 被委派的 agent 一律免确认启动，中途不弹权限框，也不会被自动检查拦下。各家的启动命令和标签在数据表里只写一次，使用第 3 节读表得到的完整命令，不再另加分档参数：
 
-  | agent | agent 命令 |
+  | agent | 命令来源与说明 |
   |---|---|
-  | Claude Code | `claude --dangerously-skip-permissions` |
-  | Codex | `codex --yolo --disable memories` |
-  | pi | `pi`（本来就没有权限框） |
-  | omp | `omp --approval-mode yolo` |
-  | amp | `amp`（没有免确认的启动参数，要不要确认看用户自己的 amp 设置；卡在确认上时状态是 `blocked`，请用户去点） |
-  | agy | `agy --dangerously-skip-permissions` |
+  | Claude Code、Codex | 所选格子的 `choices`；点名时照第 3 节补缺省部分 |
+  | pi、omp | 所选格子的 `choices` 中任选一家；pi 本来就没有权限框 |
+  | amp | `amp` 格；没有免确认的启动参数，要不要确认看用户自己的 amp 设置；卡在确认上时状态是 `blocked`，请用户去点 |
+  | agy | `agy` 格；首句仍按上面的规则带 |
 
   免确认也就没有安全网：能约束它的只剩任务文件里「不要做」那几条，所以那一节要写全。免确认跳不过「是否信任这个目录」的框，见下一条。
 - 开完运行 `corral wait <名字> --timeout 60`，不要用 sleep 等。60 秒到了状态还是 `starting`，就是卡在「是否信任这个目录」这类对话框上（新项目、新仓库第一次开时常见；amp、agy 还可能是 corral 的插件没装好或被停用，见 corral 技能）。这时请用户在另一个终端窗口运行 `corral attach <名字>`，或者在看板里选中它去点。不要替它点，也不要让用户在你这里用 `!` 运行。卡在启动中时，提醒不会来，不要干等。
@@ -273,7 +287,7 @@ echo "<摘要>" | ranch dispatch route
 
 只给影响面是「碰要害」的活（第 3 节）：路由的交叉审查结论是「要」，或者你判定它碰了数据模型、并发和事务、安全和隐私、核心规则。看得见、改行为的活不做；本轮不改代码的调研、设计也不做。
 
-- 另开一个 agent 只读审查，用分档表的 xhigh：`-m gpt-6-astra -c 'model_reasoning_effort="xhigh"'`，标签 `effort=xhigh`。审查一律给 Codex：它更会挑细节。被审的就是 Codex 写的时候，另开一个新的 Codex 实例，只给它任务文件和 diff，不用原来那个。审查任务也写成文件（放主仓库工作区，派的时候给绝对路径，并写明它不在审查 worktree 里、只写这一个文件），依次写：
+- 另开一个 agent 只读审查，重新读原任务所选格子，使用其 `review.choices` 的完整命令和标签；第 2、3 条指定了家、或该格没配交叉审查时，读 `review` 格。默认一律给 Codex、用 xhigh：它更会挑细节，实际配置以读表为准。被审的就是同一家写的时候，也另开一个新实例，只给它任务文件和 diff，不用原来那个。审查任务也写成文件（放主仓库工作区，派的时候给绝对路径，并写明它不在审查 worktree 里、只写这一个文件），依次写：
   - 背景：谁在哪个分支做了什么，主控已经审过什么；
   - 先读；
   - 要审查的代码：**它自己的 worktree**（`git worktree add --detach <审查 worktree> <分支>`；同一个分支不能在两个 worktree 里同时 checkout，git 会拒绝，所以只能 detached，顺带防它手滑提交；也不要和 dev 共用一个，它掉个文件就会挡住清理）、`git diff main...<分支>`，**只读，不改、不提交、不切分支**；写明可以跑哪些测试、不能碰什么；验证照「碰要害」那档的预算，不录屏、不做覆盖矩阵；

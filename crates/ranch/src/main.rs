@@ -5,6 +5,8 @@ use std::{io::Write, process::ExitCode};
 
 const USAGE: &str = "Usage:
   ranch dispatch route < SUMMARY
+  ranch dispatch cell <NAME>
+  ranch dispatch table
   ranch dispatch install-skills [--target all|claude|codex|gemini] [--dry-run] [--yes]";
 
 fn main() -> ExitCode {
@@ -20,6 +22,8 @@ fn main() -> ExitCode {
             (result.exit_code, result.stdout)
         }
         ["dispatch", "install-skills", rest @ ..] => install_skills(rest),
+        ["dispatch", "cell", name] => table(Some(name)),
+        ["dispatch", "table"] => table(None),
         _ => usage("unknown command"),
     };
     let mut stdout = std::io::stdout().lock();
@@ -27,6 +31,13 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::from(code)
+}
+
+fn table(name: Option<&str>) -> (u8, Vec<u8>) {
+    match ranch_dispatch::read_table(name) {
+        Ok(value) => (0, line(&value)),
+        Err((code, value)) => (code, line(&value)),
+    }
 }
 
 fn install_skills(args: &[&str]) -> (u8, Vec<u8>) {
