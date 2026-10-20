@@ -13,6 +13,7 @@
 - 10-20：主控调研后建议（摘要）：1. 四家统一接 Exa 的 MCP，fence 只多放行 `mcp.exa.ai`；3. dev 白名单加 GitHub 等常用站。用户：「我的意见呢，就是根据你的建议：做1，3」。
 - 10-20：第 3 条选「GitHub + Rust 文档」：github.com、api.github.com、raw.githubusercontent.com、codeload.github.com、objects.githubusercontent.com、docs.rs、doc.rust-lang.org、static.rust-lang.org。
 - 10-20：放行 GitHub 后可能借钥匙串里的凭证 git push，用户选「写进验收，必须推不上」：开发时实测；推得上就想办法挡住，挡不住就停下来问。
+- 10-20（第一轮停下后改）：Claude Code 登录也靠钥匙串，挡推送和 Claude 登录冲突。用户：「我觉得不用限制这么严格。如果平时直接使用claude code或者codex岂不是也有这样的问题？而且经常开始by pass」。**推送不挡、不验收**，照常放行 github.com，钥匙串读取照旧；推送靠任务书「不推送」管。原来的第 3 条和推送实测取消。
 
 ## 先读
 
@@ -39,24 +40,22 @@
 
 1. dev 档案放行 `mcp.exa.ai`，以及用户选定的 8 个域名（见「用户原话」），四家都生效。只加这些。
 2. Claude Code、Codex、pi、omp 套 dev 墙启动时，都能用 Exa 的 MCP 搜索和读网页，不用改用户各家的全局配置（不写 `~/.claude*`、`~/.codex`、`~/.pi`、`~/.omp`）。怎么接上由你定，优先沿用 fence 现有机制（如种类数据的 `args`）；某一家做不到，停下来报告，说清原因和可选办法。omp 已内置 exa，能用就不必另接。
-3. 套墙时推不上 GitHub（四家都算）。实测推得上，就挡住（比如墙里用不了钥匙串里的 GitHub 凭证）；挡不住，停下来报告，不要自己放宽或收紧别的规则。
-4. 先改 DESIGN.md §8 写清这次的设计（查资料走 Exa MCP、白名单范围、为什么不放别的站、推送怎么挡），再实现。写清对 paddock 的影响。
+3. ~~套墙时推不上 GitHub~~（10-20 用户取消，见「用户原话」最后一条）：不挡推送，不改钥匙串等读写路径。
+4. 先改 DESIGN.md §8 写清这次的设计（查资料走 Exa MCP、白名单范围、为什么不放别的站、推送不挡及理由），再实现。写清对 paddock 的影响。
 
 ## 怎么算做完
 
 - 用户原话：「这几个能不能用一套方案？」「做1，3」：四家套 dev 墙后都通过 Exa 的 MCP 能搜到资料、能读一个指定网页；dev 白名单多了 `mcp.exa.ai` 和那 8 个域名。
-- 用户原话（选项）：「写进验收，必须推不上」：四家套墙时都推不上 GitHub。
 - 验证只做这些：
   - 改测试里内置规则的期望（域名、各家参数），先只改测试跑一次看它失败，再改数据让它通过；fence 包的测试跑一次；`git diff --check`。
   - 项目标准检查各跑一次：`cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`。
   - 用编译目录里的程序，四家各套 dev 墙用非交互方式跑一次（`fence run ... -- <agent> -p "<只查不改的问题>"`，Codex 用它的非交互方式），各做一次 Exa 搜索、一次 Exa 读网页（比如 https://blog.rust-lang.org/），记下用的工具名和结果；再各用 bash 读一次 `https://raw.githubusercontent.com/rust-lang/rust/master/README.md` 的前几行。
-  - 推送：在本机临时目录里建一个测试仓库，remote 设成 `https://github.com/firegnu/ranch.git`，四家套墙各让它跑一次 `git push --dry-run origin HEAD:refs/heads/fence-push-test`，记下结果。只许 `--dry-run`。
   - 觉得不够，在回复里说，不要自己加。
 
 ## 不要做
 
-- 不真的推送到任何远端：推送实测只许 `git push --dry-run`。不用 `git credential fill` 之类会把凭证打印出来的命令。
-- 不放行用户选定之外的域名，不改 claude、codex 已有的读写路径（为挡推送要改的除外，改前说明）。
+- 不推送到任何远端，也不做推送实测。不用 `git credential fill` 之类会把凭证打印出来的命令。
+- 不放行用户选定之外的域名，不改各家已有的读写路径（包括 claude 的钥匙串读取）。
 - 不做 fence 自己的上网网关，不接 Exa 以外的搜索服务，不注册或使用 Exa 的 API key。
 - 不改 corral 的程序和 corral、corral-dispatch 技能。
 - 不动 `~/.fence`、各家 agent 的全局配置和认证文件。
@@ -64,7 +63,7 @@
 - 不碰用户现有的 agent（`corral ls` 里不是你开的）：不 `stop`、`send`、`keys`、`pause`、`upgrade`，不 attach 打字。
 - 不部署：不切 `~/.local/bin` 的链接、不装技能、不往 `~/.local/share/ranch/versions/` 打包、不 `corral upgrade`。
 - 不要按项目名或路径批量杀进程（`pkill -f corral`、`pkill -f ranch` 这类）：主控和别的 agent 的进程命令行里都带着项目名和工作目录，一条命令能把它们全杀掉。停自己起的进程用记下的 PID 或 `corral stop`。
-- 遇到上面「要做的」第 2、3 条说的做不到的情况，停下来报告，等决定，不要自己换别的办法。
+- 遇到上面「要做的」第 2 条说的做不到的情况，停下来报告，等决定，不要自己换别的办法。
 - 不合并到 main，不推送。只在 `r29-research-access` 上提交。
 
 ## 做完
