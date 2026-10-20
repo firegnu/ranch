@@ -9,11 +9,12 @@ publish = false
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2 = "0.10"
 shell-words = "1"
+tempfile = "3"
 toml = "1.1"
+toml_edit = "0.25"
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
-sha2 = "0.10"
-tempfile = "3"

@@ -1,77 +1,101 @@
 [agents.claude]
+efforts = ["medium", "high", "xhigh"]
+models = ["opus[1m]", "sonnet"]
 argv = ["claude", "--dangerously-skip-permissions", "--model", "${model}", "--effort", "${effort}"]
 labels = ["effort=${effort}", "model=${model}"]
 
 [agents.codex]
+efforts = ["medium", "high", "xhigh"]
+models = ["gpt-6-astra"]
 argv = ["codex", "--yolo", "--disable", "memories", "-m", "${model}", "-c", 'model_reasoning_effort="${effort}"']
 labels = ["effort=${effort}", "model=${model}"]
 
 [agents.pi]
+efforts = []
+models = []
 argv = ["pi"]
 labels = []
 
 [agents.omp]
+efforts = []
+models = []
 argv = ["omp", "--approval-mode", "yolo"]
 labels = []
 
 [agents.amp]
+efforts = []
+models = []
 argv = ["amp"]
 labels = []
 
 [agents.agy]
+efforts = []
+models = []
 argv = ["agy", "--dangerously-skip-permissions"]
 labels = []
 
 [cells.core-design]
+description = "本轮改代码且碰要害的设计和界面活"
 agents = ["claude"]
 model = "opus[1m]"
 effort = "high"
 cross_review = "review"
 
 [cells.core-code]
+description = "本轮改代码且碰要害的其余活"
 agents = ["codex"]
 model = "gpt-6-astra"
 effort = "high"
 cross_review = "review"
 
 [cells.chores]
+description = "项目代码之外的杂活：本机清理、一次性脚本、核对数据、跑命令汇报"
 agents = ["pi", "omp"]
 
 [cells.design]
+description = "出方案或做取舍：架构、模块边界、数据库设计、新界面、新交互、跨模块的活，以及涉及界面或产品取舍的调研"
 agents = ["claude"]
 model = "opus[1m]"
 effort = "high"
 
 [cells.ui-clear]
+description = "界面活，并且通过了「说得清」检查"
 agents = ["pi", "omp"]
 
 [cells.ui-trial]
+description = "其余界面活：单个组件，可以有小的行为改动，不新做交互（试用）"
 agents = ["claude"]
 model = "sonnet"
 effort = "high"
 
 [cells.implementation]
+description = "其余：照方案实现、修 bug、补测试、批量机械改动、跑很久的活、查事实或定位问题的调研、前端做完的浏览器验收"
 agents = ["codex"]
 model = "gpt-6-astra"
 effort = "medium"
 
 [cells.implementation-hard]
+description = "其余实现和调研中难的活：按分档表使用较高强度"
 agents = ["codex"]
 model = "gpt-6-astra"
 effort = "high"
 
 [cells.review]
+description = "交叉审查：检查碰要害的改动；需要审查但原格没配时也读这一格"
 agents = ["codex"]
 model = "gpt-6-astra"
 effort = "xhigh"
 
 [cells.claude-medium]
+description = "用户或项目点名 Claude Code、未指定强度时，补齐 medium 档"
 agents = ["claude"]
 model = "opus[1m]"
 effort = "medium"
 
 [cells.amp]
+description = "只在用户或任务文件点名 amp 时使用"
 agents = ["amp"]
 
 [cells.agy]
+description = "只在用户或任务文件点名 agy 时使用"
 agents = ["agy"]
