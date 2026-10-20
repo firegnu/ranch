@@ -75,7 +75,7 @@
 
 ### 第二轮（2026-10-20，主控认可审查第 1–4 条后返工）
 
-状态：**四条均已修复，自查通过，待复审**；只在 `r30-mcp-data` 提交，不合并、推送或部署。上一轮真实服务结果仅是当时版本的记录，本轮未重跑真实服务。
+状态：**四条均已修复，复核结论为「可以合并」，Claude／Codex 合并前真实回归补验通过**；只在 `r30-mcp-data` 提交，不合并、推送或部署。返工阶段未重跑真实服务；主控随后指定的两家补验记录见下。
 
 - 做了什么：先修改 DESIGN §8。Claude 改为写 0600 的 MCP 配置文件，参数只带路径；Codex 的种类模板声明 `headers_via_env = true`，`env_http_headers` 只放该服务器专用的随机环境变量名，真实值经独立的 `secret_env` 字段传到 `Command::envs`，不进入可序列化规则环境、argv 或运行记录，保留随机 server 名。组合后的 header 统一拒绝 `$`。源 key 保护改为枚举 `keys/` 全部条目并解析真实路径，不受 MCP 选择影响；仍只读取所选 key，`check` 不读内容。准备失败清理本次新建的实例记录及临时目录，保护启动前已有路径；若清理失败附 `cleanup_errors`。README 和 CONTRACT 已同步，paddock 不用改。
 - 验证了什么：先改合成回归再运行，旧实现分别因 argv 含假 key、接受 `$REVIEW_OTHER_TOKEN`、改选后外部链接目标不在禁读集合、准备失败残留目录而失败，四条都有有效 RED。修复后定向回归通过。argv／文件／环境回归检查四家、其他免 key server、Codex 两次随机名及环境变量名、0600 权限、`check`／`denials`／记录不含假 key；插值回归覆盖 `$VAR`、`${VAR}`、`$$` 和 prefix 中的 `$`，只使用假变量；路径回归覆盖单文件链接、keys 目录链接、HOME 外工作目录中的目标，以及选中／改选／空选择。假 key 故意含无效 UTF-8，`check --kind pi` 仍成功，未选中时 `run` 也成功，确认没有读取其内容。清理回归覆盖写出凭证后 `mkdir` 失败，以及启动前已有记录目录、临时目录、普通文件、符号链接均不被删除。
@@ -84,3 +84,10 @@
 - 没做的事：按返工范围没有重跑全项目测试、真实客户端、真实服务或真实墙内读取；没有使用真实 key、扫描用户进程、改变用户配置或现有 agent。这里证明的是合成 runner 收到的参数／环境／文件、解析输出及准备失败行为，不将其描述为真实客户端认证或真实 sandbox 隔离实测。未改 corral、技能或 paddock，未部署、合并或推送。
 - 踩过的坑：没有；四个缺陷均由直接相关的回归复现并消除。
 - 要主控决定的事：没有新增决策项。
+
+#### 合并前真实回归补验（2026-10-20）
+
+- 做了什么：按主控追加要求，不改代码；前台运行 `cargo build -p fence`，使用任务独立编译目录的 `debug/fence`、本轮种类数据和现装 srt 0.0.80，沿用第一轮隔离 FENCE_HOME／缓存／工作目录的方法，只复制本机放行规则，没有创建或复制 `keys/`。先完成 Claude Code 2.1.304，再启动 Codex CLI 0.163.0，两家均套 `dev` 墙。
+- 验证了什么：每家恰好一次 `web_search_exa` 搜索 `Rust official blog`、一次 `web_fetch_exa` 读取 `https://blog.rust-lang.org/`，四次实际工具返回均成功，含标题 `The Rust Programming Language Blog`；两家进程及 fence 的 `exit.json` 均为退出码 0，无 Exa 重试或限流。Claude 经 ToolSearch 找到 `mcp__fence_exa__web_search_exa`／`mcp__fence_exa__web_fetch_exa`，使用新生成的 0600 MCP JSON 文件，检查确认 `headers` 为空。Codex 经 `functions.exec` 工具目录找到本次随机名称 `fence_exa_<随机后缀>` 下的两个工具，`mcp_tool_call` 记录均为 `completed`、`error: null`；使用本轮 `env_http_headers` 接法的免 key 配置。
+- 范围与收尾：只证明本轮接法下两家真实客户端的免 key 搜索和网页读取可用，不将结果描述为带 key 认证实测；未使用真实 MCP key，未重跑 pi／omp、全套测试或其他检查。日志仅留本机临时目录，未提交；本次添加到编译目录的 runner／runtime 文件和 srt 链接已清掉。只补完成记录，`git diff --check` 通过；未改用户配置、代码或 paddock，未部署、合并或推送。
+- 踩过的坑：没有导致 Exa 调用失败的新问题，也未更换接法。stderr 记录 Claude 退出时既有 cairn hook 被墙拒绝，Codex 既有技能路径访问和额外 OpenAI 文档 MCP 启动受阻；未调整这些权限或配置，两家仍完成指定调用并正常退出。没有新增需要主控决定的事项。
