@@ -1,0 +1,77 @@
+[agents.claude]
+argv = ["claude", "--dangerously-skip-permissions", "--model", "${model}", "--effort", "${effort}"]
+labels = ["effort=${effort}", "model=${model}"]
+
+[agents.codex]
+argv = ["codex", "--yolo", "--disable", "memories", "-m", "${model}", "-c", 'model_reasoning_effort="${effort}"']
+labels = ["effort=${effort}", "model=${model}"]
+
+[agents.pi]
+argv = ["pi"]
+labels = []
+
+[agents.omp]
+argv = ["omp", "--approval-mode", "yolo"]
+labels = []
+
+[agents.amp]
+argv = ["amp"]
+labels = []
+
+[agents.agy]
+argv = ["agy", "--dangerously-skip-permissions"]
+labels = []
+
+[cells.core-design]
+agents = ["claude"]
+model = "opus[1m]"
+effort = "high"
+cross_review = "review"
+
+[cells.core-code]
+agents = ["codex"]
+model = "gpt-6-astra"
+effort = "high"
+cross_review = "review"
+
+[cells.chores]
+agents = ["pi", "omp"]
+
+[cells.design]
+agents = ["claude"]
+model = "opus[1m]"
+effort = "high"
+
+[cells.ui-clear]
+agents = ["pi", "omp"]
+
+[cells.ui-trial]
+agents = ["claude"]
+model = "sonnet"
+effort = "high"
+
+[cells.implementation]
+agents = ["codex"]
+model = "gpt-6-astra"
+effort = "medium"
+
+[cells.implementation-hard]
+agents = ["codex"]
+model = "gpt-6-astra"
+effort = "high"
+
+[cells.review]
+agents = ["codex"]
+model = "gpt-6-astra"
+effort = "xhigh"
+
+[cells.claude-medium]
+agents = ["claude"]
+model = "opus[1m]"
+effort = "medium"
+
+[cells.amp]
+agents = ["amp"]
+
+[cells.agy]
+agents = ["agy"]

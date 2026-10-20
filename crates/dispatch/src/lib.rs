@@ -7,10 +7,12 @@ mod route;
 mod route_tests;
 mod rules;
 mod skills;
+mod table;
 mod transport;
 
 pub use route::Completion;
 pub use skills::install as install_skills;
+pub use table::read as read_table;
 
 /// Reads the task summary from `stdin` and asks the router. Never writes stdout itself.
 pub fn route(stdin: &mut dyn std::io::Read) -> Completion {

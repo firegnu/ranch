@@ -4,10 +4,14 @@
 
 ```sh
 echo "<三五句任务摘要>" | ranch dispatch route
+ranch dispatch cell implementation
+ranch dispatch table
 ranch dispatch install-skills [--target all|claude|codex|gemini] [--dry-run] [--yes]
 ```
 
 `route` 从标准输入读任务摘要，用环境里的 `TYPESAFE_API_KEY` 请求 TypeSafe 的分类模型（`jev-1.14.0`），把建议的档位、要不要交叉审查、影响面写成 JSON 到 stdout，退出码 0；没有 key、摘要不是 UTF-8、调不通或回复不对时，stdout 是 `{"ok":false,"error":…}`，退出码 1。任务书不发出去，只发摘要。路由只给建议，主控按项目规则和当次授权做最终决定。`install-skills` 见 [技能说明](resources/corral-dispatch/README.md)。
+
+`cell` 读一格的家、模型、强度、完整命令和标签，附交叉审查启动信息与返工格子名；`table` 列出整张生效表及各家的模板和来源。两个命令只读、不联网、不启动 agent。默认数据在 `resources/dispatch.toml`，本机 `$HOME/.ranch/dispatch.toml` 按字段覆盖，也可加家或格子；每次读取立即生效，不用重编译或重装技能。格式、输出和错误见 [公开约定](../../docs/CONTRACT.md#ranch-dispatch-cell--tabler31)。对 paddock：兼容新增命令，现有调用不用改。
 
 ## 来源
 
@@ -16,6 +20,8 @@ ranch dispatch install-skills [--target all|claude|codex|gemini] [--dry-run] [--
 - 去掉插件外壳（`crates/core-plugin` 的 manifest 和 `Recorder`）和路由时的遥测采集（`--record-context`、`--brief-file`、stderr 回执）；路由规则、请求、重试和输出不变。
 - 技能删去 `遥测操作.md` 和讲遥测的段落，路由命令改成 `ranch dispatch route`；`项目AGENTS模板.md` 逐字节保留（有测试固定）。
 - 安装改由 `ranch dispatch install-skills`，照 corral 的 `install-skills` 做法，不再用 Saddle 的插件资源安装和归属记录。
+
+R31 的 `resources/dispatch.toml` 不是迁入资源：将本仓库 R31 任务开始时技能第 3、4、6 节的分工、命令与标签原样做成默认数据，分工本身不变。
 
 路由语义来自 Corral `6923da1ee0c766468c31e1f577fb8370b8b6da77` 的 route.py（SHA-256 `d4ab1cc82fe5c1b10987800eaf1c44d1e1fe026e7b1227b0eeb508cce548167a`），规则原文在 `src/rules.rs`，测试固定了规则指纹。请求用有字段顺序的类型，响应用局部有序 JSON（不开 serde_json 的 preserve_order）；数字舍入对二进制值取三位小数、平局取偶。
 

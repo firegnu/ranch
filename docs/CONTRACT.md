@@ -4,6 +4,48 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 前端读这里写的字段，遇到没写的字段要忽略，遇到不认识的取值（比如 `hooks`、`status` 的新值）要能显示、不报错。
 
+## `ranch dispatch cell` / `table`（R31）
+
+只读，不调用路由服务、不启动 agent、不写文件。每次重新读取 `$HOME/.ranch/dispatch.toml`，不存在则用编入 ranch 的默认表。成功 stdout 一行 JSON、`ok:true`、退出码 0；数据错误退出码 1，`{"ok":false,"error":"invalid_data","message":"<文件路径>: <位置和原因>"}`；未知格子同样退出码 1，`error:"unknown_cell"`。命令参数错误沿用 ranch 的 `usage`、退出码 2。
+
+`ranch dispatch cell <名字>`：
+
+```json
+{"ok":true,"cell":{"name":"implementation","source":"builtin","agents":["codex"],"model":"gpt-6-astra","effort":"medium","cross_review":null,"rework":null,"choices":[{"agent":"codex","source":"builtin","argv":["codex","--yolo","--disable","memories","-m","gpt-6-astra","-c","model_reasoning_effort=\"medium\""],"command":"codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"medium\"'","labels":["effort=medium","model=gpt-6-astra"]}],"review":null}}
+```
+
+- `agents` 是可任选的家，按数据顺序返回；不自动挑选。`model`、`effort` 为字符串或 `null`（各家默认）。
+- `choices` 每家一项，`argv` 是完整 agent 启动参数数组，`command` 是等价、已作 POSIX shell 引用的命令字符串（引用写法不是固定协议）；不含 corral 外层的名字、cwd、首句或环境参数。标签是 `key=value` 字符串数组，每项各传一次 corral 的 `--label`，空数组不传。
+- `cross_review` 是审查格子名或 `null`。非空时 `review` 为 `{name,source,model,effort,choices}`，提供该格的完整启动信息，只展开一层；没有则 `review:null`。要继续读该格的其他关系，用其名字再调 `cell`。
+- `rework` 是返工格子名或 `null`，只提供信息，不自动启动或升档；现有默认全部为空，技能仍要求返工两次不达标后问用户。
+- `source` 为 `builtin` / `user`，表示该格定义是否被本机文件提及（含局部覆盖）；`choices[].source` 表示所引用家模板的来源。默认格子引用了本机修改的家时，前者仍为 `builtin`，后者为 `user`。
+
+`ranch dispatch table`：`{ok:true, local:{path,exists}, agents:{<家名>:{source,argv,labels}}, cells:{<格子名>:<与 cell 命令相同的对象>}}`。`agents` 返回未展开的模板，`cells` 返回生效值与启动信息；名字不枚举成固定协议。
+
+本机文件格式（以下只说明覆盖用法，不代表默认分工调整）：
+
+```toml
+# 只改一格的模型；其他字段继承默认。
+[cells.implementation]
+model = "用户选定的模型"
+
+# 只改一家的命令；未写 labels 则继承该家的默认标签。
+[agents.omp]
+argv = ["omp", "--approval-mode", "yolo"]
+
+# 也可增加新格子，引用任何已有的家、格子。
+[cells."自定义.文档"]
+agents = ["pi", "omp"]
+cross_review = "review"
+rework = "implementation-hard"
+```
+
+顶层只允许 `agents`、`cells` 两张表。每个家允许 `argv`（非空字符串数组，首项为程序）、`labels`（字符串数组，新增家省略时为空）；每格允许 `agents`（非空字符串数组）、`model`、`effort`、`cross_review`、`rework`（可选字符串）。家、格子的名字非空且数量不限。按同名条目的字段覆盖，数组整项替换；可选字符串设为 `""` 表示清除。不能删除内置条目。
+
+家模板的字符串支持 `${model}`、`${effort}`，每格展开一次，插入的值不再递归展开。未知或未闭合占位符、引用缺少的模型或强度报错。模板只生成 argv/标签，程序不执行 shell。整个表先合并再校验；TOML 错误、未知键、字段类型错误、缺少必填字段、未知引用以及交叉审查/返工引用构成环（含混合环）都直接报错；即使只读另一个正确格子也不退回默认。
+
+对 paddock：兼容新增，不改现有 corral 和 `ranch dispatch route` 约定，paddock 不用动。首次使用需要部署新版 ranch 和技能；之后本机表随改随读，不编译、不重装技能。旧 ranch 不识别这两个命令，不能单独先更新技能。
+
 ## 被人打断的一轮（R22）
 
 - `corral status NAME` 新增布尔字段 `interrupted`。最近结束的一轮被识别为中断时为 `true`，状态仍是 `idle`，不增加状态值；下一次 `UserPromptSubmit`（新输入开始一轮）清为 `false`。正常 `Stop`、`StopFailure` 为 `false`。没有可靠中断事件时，`false` 不保证没有被人打断。

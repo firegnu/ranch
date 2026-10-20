@@ -333,6 +333,7 @@ version = "0.1.0"
 dependencies = [
  "ranch-dispatch",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -343,7 +344,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shell-words",
  "tempfile",
+ "toml",
  "ureq",
 ]
 
