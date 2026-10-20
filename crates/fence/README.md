@@ -8,7 +8,9 @@
 
 `$FENCE_HOME` 默认 `~/.fence`；用户在其 `profiles/`、`agents/`、`services/` 下放同名文件会整份替换内置数据。`local.toml` 是本机补充；工作区根目录的 `.fence.toml` 是仓库补充。规则来源可用 `fence profiles`、`fence check --profile dev --kind codex` 查看。
 
-合并顺序：档案 → 种类 → 模型服务 → 仓库 → 本机 → 调用方。列表取并集；环境变量以后面的为准并报告覆盖。种类默认服务可由档案和本机的 `[services]` 表整份替换，本机优先；不猜各家配置。pi/omp 的 `dev` 默认服务是 DeepSeek。
+合并顺序：档案 → 种类 → 模型服务 → 仓库 → 本机 → 调用方。列表取并集；环境变量以后面的为准并报告覆盖。种类默认服务可由档案和本机的 `[services]` 表整份替换，本机优先；不猜各家配置。pi/omp 的 `dev` 默认服务是 DeepSeek 和 opencode，分别放行 `api.deepseek.com` 和 `opencode.ai`。
+
+对 paddock：内置服务和派活技能兼容新增，命令、参数、JSON 格式和退出码不变，paddock 不用改；新版规则随 fence 部署，诊断说明随 corral、corral-dispatch 技能部署。
 
 | 键 | 可写来源 |
 | --- | --- |

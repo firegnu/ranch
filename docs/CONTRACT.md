@@ -207,7 +207,7 @@ fence run --profile <档案> --kind <原种类> --agent <名字> --instance <实
 `fence profiles`：只读，列出档案、种类数据和模型服务。
 
 ```json
-{"ok":true,"profiles":[{"name":"dev","description":"在工作目录里改代码、编译、测试、提交；HOME 默认不可读。Codex 在 macOS 开启 trustd，会削弱网络隔离","source":"builtin","path":null,"overrides_builtin":false}],"kinds":[{"kind":"claude","source":"builtin","services":["anthropic"]},{"kind":"codex","source":"builtin","services":["openai"]},{"kind":"omp","source":"builtin","services":[]},{"kind":"pi","source":"builtin","services":[]}],"services":[{"name":"anthropic","source":"builtin"},{"name":"deepseek","source":"builtin"},{"name":"openai","source":"builtin"}],"local":{"path":"/Users/u/.fence/local.toml","exists":false}}
+{"ok":true,"profiles":[{"name":"dev","description":"在工作目录里改代码、编译、测试、提交；HOME 默认不可读。Codex 在 macOS 开启 trustd，会削弱网络隔离","source":"builtin","path":null,"overrides_builtin":false}],"kinds":[{"kind":"claude","source":"builtin","services":["anthropic"]},{"kind":"codex","source":"builtin","services":["openai"]},{"kind":"omp","source":"builtin","services":[]},{"kind":"pi","source":"builtin","services":[]}],"services":[{"name":"anthropic","source":"builtin"},{"name":"deepseek","source":"builtin"},{"name":"openai","source":"builtin"},{"name":"opencode","source":"builtin"}],"local":{"path":"/Users/u/.fence/local.toml","exists":false}}
 ```
 
 `source` 为 `builtin` 或 `user`。用户同名文件整份替换内置档案，`path` 为该路径、`overrides_builtin:true`。读不了或数据格式错误仍列出该项，多一个 `error` 对象；整条命令仍为 `ok:true`。

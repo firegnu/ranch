@@ -726,7 +726,7 @@ fn four_agents_match_the_development_profile() {
         ),
         (
             "pi",
-            vec!["api.deepseek.com"],
+            vec!["api.deepseek.com", "opencode.ai"],
             vec![
                 ".pi/agent/sessions",
                 ".pi/agent/auth.json.lock",
@@ -740,7 +740,7 @@ fn four_agents_match_the_development_profile() {
         ),
         (
             "omp",
-            vec!["api.deepseek.com"],
+            vec!["api.deepseek.com", "opencode.ai"],
             vec![".omp/agent", ".omp/natives", ".omp/run"],
             vec![
                 ".omp/agent/config.yml",

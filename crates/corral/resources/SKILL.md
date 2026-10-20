@@ -49,6 +49,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
    ```
 4. 提醒送进输入框后（挂了后台 wait 的，也可能先被它叫醒），先运行 `corral status <名字>`，确认没有被打断再看 `corral reply <名字>`：
    - `status.interrupted: true`、wait 返回 `interrupted`，或 reply 报 `no_reply` 且带 `interrupted: true`：对方被打断，告诉用户，不能当成做完。
+   - 对方停了但回复最后一行不是 DONE（包括 `no_reply`），且 `corral status` 的 `sandbox` 不是 `null`：先看 `fence denials --agent <名字>` 的网络拦截记录（`type: "network"`），用 `corral read <名字>` 看屏幕末尾的报错，把被拦的域名和报错告诉用户；已退出读不到屏幕时说明这一点，并查看 denials 的 `exit.message`。之后仍按下面的规则告诉用户、重挂提醒或不再挂。
    - 回复最后一行是 DONE：整理结果告诉用户，说明对方还开着、名字是什么。不要 stop。
    - 状态是 working：被叫早了，再挂一次上面的提醒（Claude Code 连后台 wait 一起），结束这一轮。
    - 后台 wait 返回 `stopped-quiet`：对方 600 秒没有动静，可能被人打断了，告诉用户，不能当成做完。

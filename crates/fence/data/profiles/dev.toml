@@ -23,8 +23,8 @@ domains = ["crates.io", "index.crates.io", "static.crates.io"]
 unix_sockets = ["${tmp}"]
 env = { TMPDIR = "${tmp}", TMPPREFIX = "${tmp}/zsh", CLAUDE_CODE_TMPDIR = "${tmp}" }
 [services]
-pi = ["deepseek"]
-omp = ["deepseek"]
+pi = ["deepseek", "opencode"]
+omp = ["deepseek", "opencode"]
 [linux]
 # bwrap 的文件绑定不能被 ref 改名替换；Linux 放行目录，R17c 实测。
 write = ["${git_common}/refs/heads", "${git_common}/logs/refs/heads"]
