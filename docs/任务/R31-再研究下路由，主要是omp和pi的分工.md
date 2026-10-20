@@ -92,3 +92,10 @@
 - 没做的事：没有调整分工或 route 判法，没有改 corral、fence、paddock，没有操作真实用户配置、现有 agent 或安装技能；没有部署、合并或推送。未增加任务预算之外的验证。
 - 踩过的坑：没有。
 - 要主控决定的事：没有；分工调整仍留 R34。
+
+## 主控审查
+
+- 10-20 ranch/main 看了 diff：默认表 `crates/dispatch/resources/dispatch.toml` 的 9 格加交叉审查格和现在技能第 3、4、6 节逐条对得上（多了 `claude-medium`、`amp`、`agy` 三格，给点名补全用）；Codex 模板带 `--disable memories`。技能里判断条件、「说得清」、sonnet 试用、很费 token 先问、返工和审查的规矩意思没变，只把写死的模型和参数换成读表。
+- 重跑一次：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` 通过，`cargo test --all-targets` 191 通过、0 失败、11 忽略，和对方说的一致。隔离 HOME 实读 `cell implementation`（astra medium）、`cell core-code` 的审查（astra xhigh）、本机只改一格的强度、写错键名报 `invalid_data` 退出 1，都对。
+- 没交叉审查（用户 10-20 批准）。部署后在 ranch 里用一次真实派活走一遍主路径。
+- 结果：一次过
