@@ -352,6 +352,7 @@ pub struct Rules {
     pub value: Value,
     pub mkdir: Vec<PathBuf>,
     pub files: Vec<(PathBuf, String)>,
+    pub secret_env: BTreeMap<String, String>,
 }
 
 fn network_settings(
@@ -582,6 +583,7 @@ pub fn resolve(
     Ok(Rules {
         mkdir,
         files: mcp.files,
+        secret_env: mcp.secret_env,
         value: json!({"ok":true,"profile":profile,"kind":kind,"platform":platform,"cwd":context.cwd,"layers":layers.iter().map(|(_,m)| m).chain(mcp.layers.iter()).collect::<Vec<_>>(),"settings":settings,"env":environment,"args":lists["args"],"skipped":skipped,"warnings":warnings}),
     })
 }

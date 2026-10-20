@@ -5,7 +5,9 @@ write = ["${home}/.claude"]
 deny_write = ["${home}/.claude/settings.json"]
 env = { CLAUDE_CODE_TMPDIR = "${tmp}" }
 [mcp]
-args = ["--mcp-config", '{"mcpServers":{"fence_${mcp_name}":{"type":"http","url":${mcp_url:json},"headers":${mcp_headers_json}}}}']
+args = ["--mcp-config", "${mcp_dir}/mcp.json"]
+[mcp.files]
+"mcp.json" = '{"mcpServers":{"fence_${mcp_name}":{"type":"http","url":${mcp_url:json},"headers":${mcp_headers_json}}}}'
 [macos]
 allow_pty = true
 read = ["${home}/Library/Keychains"]

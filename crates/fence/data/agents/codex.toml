@@ -6,7 +6,8 @@ args = [
   "-c", 'projects={${repo:json}={trust_level="trusted"}}',
 ]
 [mcp]
-args = ["-c", 'mcp_servers.fence_${mcp_name}_${run_nonce}={url=${mcp_url:json},http_headers=${mcp_headers_toml}}']
+headers_via_env = true
+args = ["-c", 'mcp_servers.fence_${mcp_name}_${run_nonce}={url=${mcp_url:json},env_http_headers=${mcp_env_headers_toml}}']
 [macos]
 allow_pty = true
 # 开放 com.apple.trustd.agent，程序可能经它向外传数据；用户同意。

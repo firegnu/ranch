@@ -151,41 +151,6 @@ pub fn run(args: &[String]) -> Result<Value> {
         &write_paths,
     )?;
     let runtime = runtime::check()?;
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(home.join("runs"))
-        .map_err(io)?;
-    cleanup(&home.join("runs"));
-    fs::DirBuilder::new().mode(0o700).create(&dir).map_err(io)?;
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(tmp.parent().unwrap())
-        .map_err(io)?;
-    fs::DirBuilder::new().mode(0o700).create(&tmp).map_err(io)?;
-    for (path, contents) in &resolved.files {
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(path.parent().unwrap())
-            .map_err(io)?;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(io)?;
-        file.write_all(contents.as_bytes()).map_err(io)?;
-    }
-    for path in &resolved.mkdir {
-        fs::create_dir_all(path).map_err(io)?;
-    }
-    write(&dir.join("settings.json"), &resolved.value["settings"])?;
-    write(
-        &dir.join("run.json"),
-        &json!({"agent":agent,"instance":instance,"profile":profile,"kind":kind,"cwd":resolved.value["cwd"],"tmp":tmp,"started":now(),"pid":std::process::id(),"layers":resolved.value["layers"],"monitors":{"network":false,"files":false}}),
-    )?;
     let mut command = if let Some(runner) = runtime["runner"].as_str() {
         Command::new(runner)
     } else {
@@ -193,6 +158,61 @@ pub fn run(args: &[String]) -> Result<Value> {
         c.arg(runtime::root()?.join("share/fence/runner.mjs"));
         c
     };
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(home.join("runs"))
+        .map_err(io)?;
+    cleanup(&home.join("runs"));
+    fs::DirBuilder::new().mode(0o700).create(&dir).map_err(io)?;
+    let mut tmp_created = false;
+    let prepared = (|| -> Result<()> {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(tmp.parent().unwrap())
+            .map_err(io)?;
+        fs::DirBuilder::new().mode(0o700).create(&tmp).map_err(io)?;
+        tmp_created = true;
+        for (path, contents) in &resolved.files {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(path.parent().unwrap())
+                .map_err(io)?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path)
+                .map_err(io)?;
+            file.write_all(contents.as_bytes()).map_err(io)?;
+        }
+        for path in &resolved.mkdir {
+            fs::create_dir_all(path).map_err(io)?;
+        }
+        write(&dir.join("settings.json"), &resolved.value["settings"])?;
+        write(
+            &dir.join("run.json"),
+            &json!({"agent":agent,"instance":instance,"profile":profile,"kind":kind,"cwd":resolved.value["cwd"],"tmp":tmp,"started":now(),"pid":std::process::id(),"layers":resolved.value["layers"],"monitors":{"network":false,"files":false}}),
+        )?;
+        Ok(())
+    })();
+    if let Err(mut error) = prepared {
+        let mut failures = Vec::new();
+        for path in [tmp_created.then_some(&tmp), Some(&dir)]
+            .into_iter()
+            .flatten()
+        {
+            if let Err(e) = fs::remove_dir_all(path) {
+                failures.push(format!("{}: {e}", path.display()));
+            }
+        }
+        if !failures.is_empty() {
+            error["cleanup_errors"] = json!(failures);
+        }
+        return Err(error);
+    }
     command
         .arg("--settings")
         .arg(dir.join("settings.json"))
@@ -209,6 +229,7 @@ pub fn run(args: &[String]) -> Result<Value> {
     for (key, value) in resolved.value["env"].as_object().unwrap() {
         command.env(key, value.as_str().unwrap());
     }
+    command.envs(&resolved.secret_env);
     command.env("FENCE_RUN", instance);
     let e = command.exec();
     let _ = write(

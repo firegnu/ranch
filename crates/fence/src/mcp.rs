@@ -1,6 +1,7 @@
 use crate::{Result, data, rules::Context};
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -69,6 +70,7 @@ pub fn validate_template(value: &Value, source: &str) -> Result<()> {
         .ok_or_else(|| data::problem(source, "mcp", "expected table"))?;
     for (key, value) in table {
         let valid = match key.as_str() {
+            "headers_via_env" => value.is_boolean(),
             "args" => value
                 .as_array()
                 .is_some_and(|a| a.iter().all(Value::is_string)),
@@ -101,6 +103,7 @@ pub struct Resolved {
     pub domains: Vec<String>,
     pub layers: Vec<Value>,
     pub key_paths: Vec<PathBuf>,
+    pub secret_env: BTreeMap<String, String>,
 }
 
 pub fn resolve(
@@ -116,7 +119,23 @@ pub fn resolve(
         domains: Vec::new(),
         layers: Vec::new(),
         key_paths: vec![home.join("keys")],
+        secret_env: BTreeMap::new(),
     };
+    // Protect all sources independently of which servers will receive credentials.
+    match fs::read_dir(home.join("keys")) {
+        Ok(entries) => {
+            let mut paths = entries
+                .map(|entry| entry.map(|e| e.path()))
+                .collect::<std::io::Result<Vec<_>>>()
+                .map_err(|e| data::problem("mcp keys", "keys", e))?;
+            paths.sort();
+            result.key_paths.extend(paths);
+        }
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound
+                && fs::symlink_metadata(home.join("keys")).is_err() => {}
+        Err(e) => return Err(data::problem("mcp keys", "keys", e)),
+    }
     let mut seen = Vec::new();
     for name in selected.as_array().unwrap() {
         let name = name.as_str().unwrap();
@@ -156,11 +175,11 @@ pub fn resolve(
                         )
                     })?;
                     let value = format!("{}{key}", server["auth"]["prefix"].as_str().unwrap_or(""));
-                    // Some clients interpret !commands and ${ENV} in header values.
+                    // Clients also expand $VAR and $$, not just ${VAR}.
                     if key.is_empty()
                         || !value.is_ascii()
                         || value.starts_with('!')
-                        || value.contains("${")
+                        || value.contains('$')
                         || value.parse::<http::HeaderValue>().is_err()
                     {
                         return Err(data::problem(
@@ -182,16 +201,20 @@ pub fn resolve(
                 Err(e) => return Err(data::problem(&key_path.to_string_lossy(), "key", e)),
             }
         }
-        let headers_toml = format!(
-            "{{{}}}",
-            headers
-                .as_object()
-                .unwrap()
-                .iter()
-                .map(|(key, value)| format!("{}={value}", json!(key)))
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+        let mut env_headers = json!({});
+        if template["headers_via_env"] == true {
+            for (index, (header, value)) in headers.as_object().unwrap().iter().enumerate() {
+                let variable = format!(
+                    "FENCE_MCP_{}_{}_{index}",
+                    context.values["run_nonce"].as_ref().unwrap(),
+                    seen.len()
+                );
+                env_headers[header] = json!(variable);
+                result
+                    .secret_env
+                    .insert(variable, value.as_str().unwrap().to_owned());
+            }
+        }
         let mut expanded = context.clone();
         let dir = format!("{}/mcp/{name}", context.values["tmp"].as_ref().unwrap());
         for (key, value) in [
@@ -199,7 +222,8 @@ pub fn resolve(
             ("mcp_url", server["url"].as_str().unwrap().to_owned()),
             ("mcp_dir", dir.clone()),
             ("mcp_headers_json", headers.to_string()),
-            ("mcp_headers_toml", headers_toml),
+            ("mcp_headers_toml", inline_headers(&headers)),
+            ("mcp_env_headers_toml", inline_headers(&env_headers)),
         ] {
             expanded.values.insert(key.into(), Some(value));
         }
@@ -224,4 +248,17 @@ pub fn resolve(
         }
     }
     Ok(result)
+}
+
+fn inline_headers(headers: &Value) -> String {
+    format!(
+        "{{{}}}",
+        headers
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(key, value)| format!("{}={value}", json!(key)))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }

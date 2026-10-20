@@ -50,7 +50,11 @@ Codex 的 server 名为 `fence_exa_${run_nonce}`，避免 `-c` 与用户同名�
 
 4. `fence check --profile dev --kind codex` 可查看选中的 `mcp` 来源和域名；随后新启动的四家套 `dev` 墙的 agent 使用新服务。`check` 不读取 key，参数里的认证头为空，不能用它验证 key 或连接；key 只在 `run` 时读取并装配。
 
-key 支持普通 ASCII HTTP 请求头值，不支持 `${…}` 插值或以 `!` 开头的命令求值。各家只在该 server 配置里收到对应认证头，不设全局认证环境变量，也不把认证写进 fence 运行记录。源 key 目录与所选文件的原路径、符号链接真实目标强制禁读。**启动后 agent 能看到参数或临时配置中的 key，也能主动复制外发；这不防 agent 窃取 key。** 临时配置文件权限 0600，沿用七天清理；客户端自己的会话日志和重定向行为由客户端负责。
+key 只支持不含 `$` 的普通 ASCII HTTP 请求头字面值；组合后的 `prefix + key` 拒绝任何 `$`（包括 `$VAR`、`${VAR}`、`$$`），也拒绝以 `!` 开头的命令求值、空 key 和非法控制字符。各家只在对应 server 配置里收到认证：Claude 的 `--mcp-config` 只带 0600 文件路径；Codex 的 `env_http_headers` 只引用本次、该服务器专用的 `FENCE_MCP_<随机值>_<序号>_<头序号>` 变量，真实值由 fence 通过进程环境传入；pi／omp 写 0600 临时文件。真实 key 不进启动 argv、shell 参数、`check` 输出或 fence 运行记录，Codex 专用环境也不进入可输出的规则 `env`。
+
+源 key 目录及其**所有条目**的原路径、符号链接真实目标强制禁读，与当前 MCP 选择无关；改选服务商或 `mcp = []` 不会解除旧 key 的保护。枚举及链接解析只查路径元数据，只有 `run` 会读取选中服务器的 key 内容。**启动后 agent 能看到专用环境或临时配置中的 key，也能主动复制外发；这不防 agent 窃取 key。** 客户端自己的会话日志和重定向行为由客户端负责。
+
+准备阶段失败时立即清理本次新建的实例记录及临时目录（包括已经写出的凭证文件）；不会删除启动前已有的路径。若清理本身失败，错误里的 `cleanup_errors` 列出需人工处理的路径。成功交给 runner 的运行，须同时留下 `run.json` 和 `exit.json`，才会在以后启动 fence 时按结束超过七天回收；异常退出缺少完整记录的残留不保证自动回收。
 
 内置 Exa 的认证头为 `x-api-key`，默认没有 key 文件，仍免 key；接入字段依据 [Exa MCP 官方说明](https://exa.ai/docs/get-started/exa-mcp)。本轮只以假 key 验证装配，没有使用真实 key。
 
@@ -73,7 +77,7 @@ key 支持普通 ASCII HTTP 请求头值，不支持 `${…}` 插值或以 `!` �
 
 占位符用 `${home}`、`${cwd}`、`${worktree}`、`${repo}`、`${git_dir}`、`${git_common}`、`${branch}`、`${tmp}`、`${target}`、`${run_nonce}`；`${名字:json}` 生成 JSON/TOML 字符串字面量。Git 路径由 `git rev-parse` 取得，`${target}` 来自绝对路径的 `CARGO_TARGET_DIR`。`${run_nonce}` 为每次 `run` 从系统随机源生成的 128 位随机值（32 位十六进制），同一次展开保持一致，`check` 显示 `<运行时才有>`。路径引用缺值时跳过并列入 `skipped`；参数或环境变量引用缺值时失败。不在仓库里时 worktree/repo 都是 cwd。
 
-种类 `[mcp]` 允许 `args` 字符串数组、`[mcp.files]` 的「相对文件名 = 内容模板」。文件名不允许绝对路径、`.`、`..` 或占位符，每台服务器的文件都写到自己的 `${mcp_dir}` 下。模板额外提供 `${mcp_name}`、`${mcp_url}`、`${mcp_dir}`（字符串，嵌入 JSON 时用 `:json`）、`${mcp_headers_json}`、`${mcp_headers_toml}`（已序列化的对象，直接嵌入，不再加引号）。逐服务器展开，不经 shell、不递归展开插入值。`mcp/` 服务器文件仅允许 `description`、`url`、`auth.header`、`auth.prefix`，不能声明其他放行规则。
+种类 `[mcp]` 允许 `args` 字符串数组、`[mcp.files]` 的「相对文件名 = 内容模板」，以及可选的 `headers_via_env` 布尔值（默认 false）。文件名不允许绝对路径、`.`、`..` 或占位符，每台服务器的文件都写到自己的 `${mcp_dir}` 下。模板额外提供 `${mcp_name}`、`${mcp_url}`、`${mcp_dir}`（字符串，嵌入 JSON 时用 `:json`）、`${mcp_headers_json}`、`${mcp_headers_toml}`（已序列化的对象，直接嵌入，不再加引号）。`headers_via_env = true` 另外生成 `${mcp_env_headers_toml}` 的「请求头名 → 专用环境变量名」映射，Codex 只将这一引用映射放进参数；自定义模板也不要将含真实值的 headers 占位符放进 `args`。逐服务器展开，不经 shell、不递归展开插入值。`mcp/` 服务器文件仅允许 `description`、`url`、`auth.header`、`auth.prefix`，不能声明其他放行规则。
 
 主控 10-18 决定：`${tmp}` 为 `${XDG_CACHE_HOME:-~/.cache}/fence/tmp/<实例>`，在起 agent 前创建；运行记录放在 `$FENCE_HOME/runs/<实例>`。srt 的禁止写优先于放行写，因此临时文件移到规则目录之外，保留整个 `$FENCE_HOME` 的写保护，在 Linux 上也按整目录保护。每次启动清理已结束超过 7 天的运行记录及其中记下的临时目录；缓存根目录后来改变也能清理原路径。`.fence.toml` 始终禁止写。
 
