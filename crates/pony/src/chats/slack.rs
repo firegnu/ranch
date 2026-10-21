@@ -833,7 +833,8 @@ fn translate(value: &Value, bot: &str) -> Option<Event> {
             || value["files"].as_array().is_some_and(|a| !a.is_empty())
             || value["attachments"].as_array().is_some_and(|a| {
                 a.iter().any(|item| {
-                    item.get("from_url").is_none() && item.get("original_url").is_none()
+                    item["is_share"] == true
+                        || (item.get("from_url").is_none() && item.get("original_url").is_none())
                 })
             }),
     }))

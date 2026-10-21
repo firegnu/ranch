@@ -193,6 +193,65 @@ const CONFIG: &str =
     "[slack]\nowner = 'U0123456789'\nchannels = [{ id = 'C0AAAAAAAAA', repo = 'ranch' }]\n";
 
 #[test]
+fn service_preview_is_read_only_and_status_recognizes_only_owned_plists() {
+    let fixture = Fixture::new();
+    let plist = fixture
+        .0
+        .path()
+        .join("Library/LaunchAgents/local.ranch.pony.plist");
+    for args in [
+        vec!["service", "install"],
+        vec!["service", "install", "--dry-run", "--yes"],
+        vec!["service", "uninstall"],
+    ] {
+        let output = fixture.call(&args, if cfg!(target_os = "macos") { 0 } else { 1 });
+        if cfg!(target_os = "macos") {
+            assert_eq!(output["ok"], true);
+            assert_eq!(output["dry_run"], true);
+            assert_eq!(output["path"], plist.to_str().unwrap());
+            assert_eq!(output["applied"], false);
+            assert!(output["commands"].is_array());
+        } else {
+            assert_eq!(output["error"], "unsupported");
+        }
+        assert_eq!(fs::read_dir(fixture.0.path()).unwrap().count(), 0);
+    }
+    for args in [
+        vec!["service"],
+        vec!["service", "restart"],
+        vec!["service", "install", "--unknown"],
+    ] {
+        assert_eq!(fixture.call(&args, 2)["error"], "usage");
+    }
+    if !cfg!(target_os = "macos") {
+        assert_eq!(fixture.call(&["status"], 0)["service"], "unsupported");
+        return;
+    }
+    let preview = fixture.call(&["service", "install"], 0);
+    fs::create_dir_all(plist.parent().unwrap()).unwrap();
+    fs::write(&plist, preview["content"].as_str().unwrap()).unwrap();
+    assert_eq!(fixture.call(&["status"], 0)["service"], "installed");
+    let owned = fixture.0.path().join("owned.plist");
+    fs::rename(&plist, &owned).unwrap();
+    symlink(&owned, &plist).unwrap();
+    assert_eq!(fixture.call(&["status"], 0)["service"], "not_installed");
+    assert_eq!(
+        fixture.call(&["service", "uninstall"], 1)["error"],
+        "foreign"
+    );
+    fs::remove_file(&plist).unwrap();
+    fs::write(&plist, "someone else's plist").unwrap();
+    assert_eq!(fixture.call(&["status"], 0)["service"], "not_installed");
+    for action in ["install", "uninstall"] {
+        assert_eq!(fixture.call(&["service", action], 1)["error"], "foreign");
+        assert_eq!(fs::read_to_string(&plist).unwrap(), "someone else's plist");
+    }
+    fs::remove_file(&plist).unwrap();
+    assert_eq!(fixture.call(&["status"], 0)["service"], "not_installed");
+    assert!(!fixture.0.path().join(".pony").exists());
+}
+
+#[test]
 fn config_errors_are_located_and_valid_stopped_config_is_off() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.home()).unwrap();
