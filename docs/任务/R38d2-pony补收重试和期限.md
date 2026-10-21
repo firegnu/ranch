@@ -64,3 +64,11 @@
 - 拿主意的地方：没有新增设计决定。重连只强制立即补收一次，不清掉补收的首次尝试时间和退避间隔；核对按任务要求重新计时。待主控决定是否批准补跑验证：建议再跑一次 `cargo test --all-targets --no-fail-fast`，确保即使其他包失败也能得到 pony 的结果；本轮未自行追加或重跑。
 - 没做的事：未改 corral、Slack 实现、依赖、CONTRACT、DESIGN、其他审查条目；未连 Slack、未调用户安装的 corral、未碰用户状态或 agent；未部署、合并或推送。验证尚未全部通过，等待主控处理上述验证缺口。
 - 踩过的坑：第一次测试命令因附带 `rm -rf` 临时目录清理被工具拒绝，整条命令没有执行；改用 `rmdir` 清理空的隔离 HOME 后执行成功。全量测试遇到上述 corral 失败，遵守只跑一次的限制，没有尝试重跑或修改 corral。
+
+## 返工记录
+
+- 主控决定（第 1 次）：主控已补跑 `cargo test --all-targets --no-fail-fast`，此前 corral 测试通过，确认属无关偶发问题，不处理。要求修正两条 pony 失败测试；本轮只跑 `cargo test -p pony`、clippy、fmt 各一次，全套由主控再跑。
+- 原因与修正：两处均为测试时序错误，运行时代码不用改。`queue_retry_after_one_hour_offline_checks_before_sending` 在重连第一轮已成功核对，但排队发送仍须遵守既有的连续两轮空闲规则；补上第一轮仍在队列、核对已完成且未发送的断言，再于第二轮保留原有的精确发送断言。`failed_backfill_retries_then_reports_and_clears_after_twelve_hours` 在 100、102、106 秒三次失败后，重连时的第四次失败使用 16 秒间隔，原测试误在期限后 8 秒查提示；改为在 14 秒确认仍无提示、16 秒重试失败后确认提示，并断言总共读了 5 次、记录清空、提示只发一次、游标推进到准确时间。没有放宽断言。
+- 验证：`cargo test -p pony` 一次，56 项全部通过（lib 2、cli 9、core 41、corral 2、split 2）；三条 R38d2 场景及既有 18、20 条测试均通过。`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次，均通过。命令均前台等到退出，沿用独立编译目录、临时 HOME/PONY_HOME/CORRAL_HOME 和 Cargo 离线模式。
+- 范围与待定：本次只改两条测试和本记录，未改运行时代码、corral、Slack 实现、接口或依赖；paddock 不用动。没有新增需主控决定的事；未重跑全套、未部署、合并或推送。
+- 踩过的坑：首版测试漏算重连后的第二次空闲观察，并把第四次失败后的重试间隔少算了一档。本轮按既有规则修正，两条测试均通过，未遇到新的工具或环境问题。

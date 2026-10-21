@@ -1623,6 +1623,14 @@ fn queue_retry_after_one_hour_offline_checks_before_sending() {
     f.connected();
     f.step(3620.);
     assert_eq!(f.memory.borrow().exists_reads, ["queued", "queued"]);
+    assert!(f.corral.sent.is_empty());
+    assert!(f.engine.store.state().pending.iter().any(|p| {
+        p.message == "queued"
+            && p.phase == pony::core::state::Phase::Queued
+            && p.verification.is_none()
+    }));
+    // Queued messages still require two consecutive idle observations after reconnect.
+    f.step(3622.);
     assert_eq!(f.corral.sent, [("paddock/dev".into(), "核对我".into())]);
     assert!(!f.texts().contains("请重发"));
 }
@@ -1649,8 +1657,15 @@ fn failed_backfill_retries_then_reports_and_clears_after_twelve_hours() {
     let deadline = 100. + 12. * 3600.;
     f.step(deadline);
     assert!(!f.texts().contains("那段时间发的话请重发"));
-    f.step(deadline + 8.);
+    // The fourth failure schedules a 16-second retry; reconnect preserves the backoff.
+    f.step(deadline + 14.);
+    assert!(!f.texts().contains("那段时间发的话请重发"));
+    f.step(deadline + 16.);
     let data = f.memory.borrow();
+    assert_eq!(
+        data.history_reads.iter().filter(|(c, _)| c == "C2").count(),
+        5
+    );
     let notice = data
         .posted
         .iter()
@@ -1662,7 +1677,7 @@ fn failed_backfill_retries_then_reports_and_clears_after_twelve_hours() {
     assert!(f.engine.store.state().backfills.is_empty());
     f.memory.borrow_mut().history_errors.clear();
     f.restart();
-    f.step(deadline + 10.);
+    f.step(deadline + 18.);
     assert_eq!(f.texts().matches("那段时间发的话请重发").count(), 1);
     assert_eq!(
         f.memory
@@ -1674,7 +1689,7 @@ fn failed_backfill_retries_then_reports_and_clears_after_twelve_hours() {
             .unwrap()
             .1
             .at,
-        deadline + 8.
+        deadline + 16.
     );
 }
 
