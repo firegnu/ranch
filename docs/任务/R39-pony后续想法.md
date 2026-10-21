@@ -14,6 +14,7 @@
 - 10-21：「也就是说，现在主控的名字匹配是写死的main？」
 - 10-21：「现在我这种的有成熟的产品或者开源的东西吗？」
 - 10-21：「先不出设计，先把咱们讨论的我需要记录下来作为一个draft task。」
+- 10-21：「现在比较一下你刚才发的同类产品，还有没有可以做的。也补充到这个文档里面」
 
 ## 讨论到的事
 
@@ -116,8 +117,47 @@ ranch 整体：
 
 12. R17c（5090 上验 Linux sandbox）暂缓；paddock 的 P5-141（主控卡片 sandbox 勾）、R35 设置页连线面板由 paddock 接。
 
+### 7. 对照同类产品还能做的（10-21，用户：「现在比较一下你刚才发的同类产品，还有没有可以做的。也补充到这个文档里面」）
+
+只看了 README 和介绍页，没有试用。第 4 节已记的两条（手机上批准权限请求、第二期开停 agent）不重复。主控建议的先后：7.1（并进 6.2 一起设计）、7.2、7.3、7.4；其余等用一阵再看。
+
+能直接用上的：
+
+1. 按钮回答，发前重看屏幕（herdr-slackbot；SlackAgentBridge 类似）：权限请求、AskUserQuestion（单选、多选、自由填）、计划批准都给按钮；点了以后先重看一次屏幕，用户已在电脑上答过就不发。是 6.2 的具体做法参照；「发前重看屏幕」和主控送话前的核对（R37）是同一个思路。
+2. 收到的附件存到本机、把路径写进给 agent 的话（SlackAgentBridge）。pony 现在只送文字，回「附件没送」。要定：存哪、大小上限、什么时候清。
+3. 从手机打断当前这一轮，会话留着（SlackAgentBridge `/sab-stop`）。不同于第二期的「停 agent」，要单列；做法要用 corral 已有的命令，不改 corral 核心。
+4. 单个 agent 静音（herdr-slackbot 的 🔕）。是 6.4「提醒吵闹程度可调」的一种做法。
+
+可以考虑的：
+
+5. 状态面板（两家都有）：Slack 的 App Home 页列出各 agent 和状态、带按钮；SlackAgentBridge 的状态还显示「在干活」和已用时间。和 6.5「`@pony ?` 多给点信息」重叠，可以一起定。
+6. 斜杠命令和弹窗（两家都有）：弹窗里选 agent、看前面的对话、再发话；命令不带参数时弹出选择。pony 现在靠点名和线程。要在 Slack 应用里加命令和交互，改清单、重装应用。
+7. 一轮中间的进度（OpenACP 实时显示工具调用和结果；只看到目录页的转述，它的 GitHub 页抓取时 404，没核实）。pony 只送每轮最后的回复。会吵，要先定显示哪些。
+8. 从聊天里改模型、强度（SlackAgentBridge `/sab-model`、`/sab-effort`）；从手机新开时选模型、强度、权限模式，不给跳过权限（herdr-slackbot `/herdr new`）。并进第二期开停 agent 一起考虑。
+9. 配对码认领（herdr-slackbot：电脑上显示 6 位码，在 Slack 里输入认领 owner）。pony 现在要在配置里手写 owner 的用户 ID；和第 2 节「加 bot 复杂」有关，能让第一次配置简单些。
+10. 让别人发话（SlackAgentBridge：协作者的话带上名字送给 agent，但不能执行命令、不能批准）。pony 现在只认 owner，别人的话一律不理（验收 5）；要改得先改设计。
+11. 文件发回 Slack（SlackAgentBridge：一次性上传许可，最多 10 个、100 MiB，只限工作区里的文件）。涉及隐私，要先出设计。
+
+较远、主控不建议现在做的：
+
+12. 归档不动的频道（SlackAgentBridge `/sab-cleanup`）：它每个会话一个频道才需要；pony 一个仓库一个频道，用处小。
+13. 多台机器（SlackAgentBridge 预览中）、语音（Happy、Omnara；Slack 手机自带语音输入可能就够）、手表上批准（Omnara）。
+
+pony 有意不做的（记下，不当待办）：
+
+- 从 Slack 开的会话默认跳过权限确认（SlackAgentBridge 默认 `--dangerously-skip-permissions`、`--yolo`）。
+- 本机 HTTP 自动化接口（SlackAgentBridge 的 127.0.0.1:8877）：pony 的公开约定只有命令和 `pony status`。
+- 绑定某一家 agent 的做法：pony 走 corral，不挑家。
+
+出处（另见第 4 节）：
+
+- [SlackAgentBridge README](https://github.com/SergioTCG/SlackAgentBridge)
+- [herdr-slackbot README](https://github.com/daCapricorn/herdr-slackbot)
+- [Agent Client Protocol 客户端列表（OpenACP 一条）](https://agentclientprotocol.com/get-started/clients)
+- [Omnara vs Happy vs SeaWork](https://seawork.ai/en/blogs/omnara-vs-happy-vs-seawork/)
+
 ## 重开前要用户定的
 
-1. 先做哪几条：手机上批准权限请求、第二期开停 agent、部署时自动重启 pony、配置写频道名、一个频道绑多个仓库或主控名可配、ranch 主控接 Slack，以及第 6 节各条。
+1. 先做哪几条：手机上批准权限请求、第二期开停 agent、部署时自动重启 pony、配置写频道名、一个频道绑多个仓库或主控名可配、ranch 主控接 Slack，以及第 6、7 节各条。
 2. 「加一个 bot 复杂」指的是哪一种。
 3. 要做的条目里，哪些要先出设计稿给用户定。
