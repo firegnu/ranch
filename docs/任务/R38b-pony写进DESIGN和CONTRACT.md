@@ -63,3 +63,9 @@
 - 踩过的坑：设计稿里内联写三个反引号的代码块说明会破坏 Markdown 行内代码解析，DESIGN §10 改成文字「三个反引号或三个波浪号」。
 - 对 paddock：只是兼容新增；合并后 paddock 可照 CONTRACT 的「`pony status`（R38）」开 P5-147，R38c 部署之前 PATH 上还没有 `pony`，按「未安装」显示。
 - 要主控决定的事：无。
+
+## 返工记录
+
+- 照主控指出的两处改 `docs/DESIGN.md`：§10「第一期的规矩」路由条在「送的就是用户打的字」后补上设计稿 §3.5 的例外——离线补收的话开头加一句说明（见用户定的第 8 条）；§3 新增的部署条把一起切的链接改为 `~/.local/bin/corral`、`~/.local/bin/ranch`、`~/.local/bin/fence`、`~/.local/bin/pony` 四个。别的不动。
+- 验证：只跑了 `git diff --check`，通过。
+- 要主控决定的事：无。

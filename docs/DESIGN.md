@@ -24,7 +24,7 @@
 
 - 打包工具（Rust）生成不可变版本目录 `~/.local/share/ranch/versions/<ranch 提交>/`：`bin/corral`、`bin/ranch`、`share/corral/`（随程序的资源和设计文档）、`BUILD.txt`（提交、目标平台、工作区是否干净、校验和）。目录已存在就拒绝；只生成目录，不切链接、不装技能。
 - R17b 起版本目录还有 `bin/fence`、`share/fence/`（`runner.mjs`、记着打包时 node 路径和版本的 `runtime.toml`）、`lib/srt/`（固定版本的 srt）；打包机器要有 node ≥ 22.12 和 npm，没有就打包失败。corral 用同一版本目录里的 fence，前端调 PATH 上的 `fence`，所以部署时 `~/.local/bin/fence` 和别的链接一起切。
-- R38 起版本目录还有 `bin/pony`。部署时 `~/.local/bin/corral`、`~/.local/bin/ranch`、`~/.local/bin/pony` 一起切；装、换 pony 的常驻服务（`pony service install`，部署后用 `launchctl kickstart -k` 换到新程序）同样是用户在场时的部署操作。没有 `~/.pony/config.toml` 的机器上 pony 什么都不连（别的机器默认关着，见 §10）。
+- R38 起版本目录还有 `bin/pony`。部署时 `~/.local/bin/corral`、`~/.local/bin/ranch`、`~/.local/bin/fence`、`~/.local/bin/pony` 一起切；装、换 pony 的常驻服务（`pony service install`，部署后用 `launchctl kickstart -k` 换到新程序）同样是用户在场时的部署操作。没有 `~/.pony/config.toml` 的机器上 pony 什么都不连（别的机器默认关着，见 §10）。
 - 切换 `~/.local/bin/corral`、`~/.local/bin/ranch` 和安装技能（`corral install-skills`、`ranch dispatch install-skills`）是单独的部署操作，用户在场时做。已在运行的 agent 由启动它的那份 corral 管理；要换过来用 `corral upgrade`（用户 10-05 定：第 1 步切换时不做）。
 
 ### 在另一台机器（Linux）上装和升级（R10，10-16）
@@ -230,7 +230,7 @@ R31 先把分工搬进数据表；R34（2026-10-21）改为按档位和类别选
 - **配置**：`~/.pony/config.toml`，用户手写，不含凭证。顶层只认 `corral`、`proxy` 和已登记适配器的段；每段必须有 `owner`、`channels`；`repo` 按 corral 名字一段的写法（ASCII 字母或数字开头，只含字母、数字和 `._-`）；同一家里一个频道只绑一个仓库、一个仓库也只绑一个频道，提醒发到哪才唯一。用频道 ID 不用频道名：改名不影响，也不用为了按名字查频道多要权限；名字由 pony 连上后查出来给 status。没有这个文件就什么都不连。
 - **随改随生效**：运行中每轮检查文件有没有变，变了就重读；新内容有错就继续用旧的，status 报 `config: "invalid"` 和原因；改了 `proxy` 或这一家的段就重连。代理要写在配置里：launchd 起的程序不继承 shell 的环境变量，ureq、tungstenite 也不读 macOS 系统设置里的代理；部署时先试直连，连不上再填 `proxy`。
 - **只认 owner**：只处理配置里的 `owner` 在绑了仓库的频道里发的消息；别人的消息不回、不送、不记内容（日志只记「忽略了一条别人的消息」）。没绑仓库的频道里 @ 机器人只回「这个频道没绑仓库」，不提任何仓库；没绑仓库的 agent 连 `status` 都不调，一个字都不发到 Slack。
-- **路由**：频道顶层 @ 机器人开一段新对话；在这条消息的线程里回，送给线程对应的 agent（整句只有 `?` 的除外）。线程里回复带不带 @ 都行；不认识的线程里 @ 就当新对话。取 @ 之后第一个词：只有 `?` 或 `？` 看状态；带斜杠的全名只送给绑了频道的仓库，没有这个 agent 就回「没有 ranch/foo 这个 agent，没送」，不转给主控；同仓库的短名送给对应 agent；其余整句送给 `<仓库>/main`，主控没在跑就回「paddock/main 没在跑，没送」。送之前先在线程里回一行 `→ <全名>`；送的就是用户打的字（`corral send <全名> -- <正文>`，不加前缀、不加工、不加 `--force`），空的回一段用法。
+- **路由**：频道顶层 @ 机器人开一段新对话；在这条消息的线程里回，送给线程对应的 agent（整句只有 `?` 的除外）。线程里回复带不带 @ 都行；不认识的线程里 @ 就当新对话。取 @ 之后第一个词：只有 `?` 或 `？` 看状态；带斜杠的全名只送给绑了频道的仓库，没有这个 agent 就回「没有 ranch/foo 这个 agent，没送」，不转给主控；同仓库的短名送给对应 agent；其余整句送给 `<仓库>/main`，主控没在跑就回「paddock/main 没在跑，没送」。送之前先在线程里回一行 `→ <全名>`；送的就是用户打的字（`corral send <全名> -- <正文>`，不加前缀、不加工、不加 `--force`），例外是离线补收的话开头加一句说明（见本节用户定的第 8 条）；空的回一段用法。
 - **送不进去时**：先 `corral status`。`idle` 立刻送；`working`、`starting`、`blocked`、暂停中排队，不替人 resume；`unknown` 照送（等不到回复）；不在了不送。`corral send` 的结果：`not_idle` 放回队首；`human_active` 30 秒后再试（不加 `--force`）；`paused` 排着；`not_delivered` 不重送，回「送了但 X 没收到（可能停在菜单或对话框上），没重送」；其他回 corral 的 `error` 和 `message`。排队的话按顺序送，一轮一句。agent 退出了，排着的都不送，在各自线程里说。
 - **一轮结束贴回**：一个循环每 2 秒 `ls`、`status`，相邻两轮都是 `idle`、`[state, last_event, last_event_at]` 不变、`turn_started` 和上次处理过的不同，就算这一轮结束，调 `corral reply`。是 pony 送的话开的，就照分段贴回原线程（`no_reply` 带 `interrupted` 说被打断，退出了说没等到回复）；不是 pony 开的，按提醒的规则判断。不用 `wait`：一个循环同时管贴回和提醒，用 `wait` 每段对话要一直开着一个进程。
 - **提醒**：主控新回复（这一轮不是 pony 开的、`reply.at` 比记下的新）发在频道顶层，第一段在那儿，其余在它的线程里；这条线程对应这个主控。Needs you（相邻两轮都 `blocked`）在所有绑了频道的仓库的 agent 里判断，发在频道顶层，模板见设计稿 §3.8。去重记号（实例、处理过的 `turn_started`、发过的 `reply.at`、提醒过的 `(实例, state_started)`）存在 `state.json`；离开 `blocked` 再进来算新的一次；agent 重开从头记；pony 停着时结束的轮，重启后每个 agent 最多补发最近一条，开头写「（pony 不在线时）」。
