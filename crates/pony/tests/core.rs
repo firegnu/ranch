@@ -8,7 +8,11 @@ use pony::{
     },
     corral::{self, Agent, Corral, Reply, Sent, Status},
 };
-use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 
 #[derive(Clone, Debug)]
 struct Posted {
@@ -22,8 +26,14 @@ struct Posted {
 struct Memory {
     posted: Vec<Posted>,
     history: Vec<Message>,
-    history_reads: Vec<(String, Option<String>, String)>,
+    history_reads: Vec<(String, HistoryAfter)>,
     fail_over: Option<usize>,
+    fail_after: Option<usize>,
+    channel_errors: BTreeSet<String>,
+    history_errors: BTreeSet<String>,
+    deleted: BTreeSet<String>,
+    exists_errors: BTreeSet<String>,
+    exists_reads: Vec<String>,
 }
 struct MemoryConnection(Rc<RefCell<Memory>>, usize, bool);
 impl Connection for MemoryConnection {
@@ -35,6 +45,12 @@ impl Connection for MemoryConnection {
     }
     fn send(&mut self, m: Outgoing<'_>) -> Result<String, SendError> {
         let mut data = self.0.borrow_mut();
+        if data.fail_after.is_some_and(|n| data.posted.len() >= n) {
+            return Err(SendError {
+                code: "network".into(),
+                resize: false,
+            });
+        }
         if data
             .fail_over
             .is_some_and(|n| m.markdown.chars().count() > n)
@@ -55,6 +71,9 @@ impl Connection for MemoryConnection {
         Ok(id)
     }
     fn channel(&mut self, id: &str) -> core::Result<ChannelInfo> {
+        if self.0.borrow().channel_errors.contains(id) {
+            return Err(core::Error::new("not_member", "not a member"));
+        }
         Ok(ChannelInfo {
             id: id.into(),
             name: Some(id.to_lowercase()),
@@ -62,21 +81,26 @@ impl Connection for MemoryConnection {
             problem: None,
         })
     }
-    fn history(
-        &mut self,
-        channel: &str,
-        thread: Option<&str>,
-        after: &str,
-    ) -> core::Result<Vec<Message>> {
+    fn history(&mut self, channel: &str, after: &HistoryAfter) -> core::Result<Vec<Message>> {
         let mut data = self.0.borrow_mut();
-        data.history_reads
-            .push((channel.into(), thread.map(str::to_owned), after.into()));
+        data.history_reads.push((channel.into(), after.clone()));
+        if data.history_errors.contains(channel) {
+            return Err(core::Error::new("history_failed", "cannot read history"));
+        }
         Ok(data
             .history
             .iter()
-            .filter(|m| m.channel == channel && m.thread.as_deref() == thread)
+            .filter(|m| m.channel == channel && m.at > after.at)
             .cloned()
             .collect())
+    }
+    fn exists(&mut self, _: &str, _: Option<&str>, id: &str) -> core::Result<bool> {
+        let mut data = self.0.borrow_mut();
+        data.exists_reads.push(id.into());
+        if data.exists_errors.contains(id) {
+            return Err(core::Error::new("network", "cannot check message"));
+        }
+        Ok(!data.deleted.contains(id))
     }
 }
 // Test-only registration exercises the same Chat boundary as production.
@@ -104,6 +128,7 @@ struct FakeCorral {
     sent: Vec<(String, String)>,
     status_reads: Vec<String>,
     outcomes: Vec<Result<Sent, corral::Failure>>,
+    status_errors: BTreeMap<String, corral::Failure>,
 }
 impl Corral for FakeCorral {
     fn list(&mut self) -> corral::Result<Vec<Agent>> {
@@ -118,6 +143,9 @@ impl Corral for FakeCorral {
     }
     fn status(&mut self, name: &str) -> corral::Result<Status> {
         self.status_reads.push(name.into());
+        if let Some(error) = self.status_errors.get(name) {
+            return Err(error.clone());
+        }
         self.agents
             .get(name)
             .cloned()
@@ -639,7 +667,6 @@ fn restart_restores_queue_waiting_dedup_and_ambiguous_send_is_never_retried() {
 #[test]
 fn reconnect_backfills_sorted_messages_with_age_limit_and_first_start_skips_history() {
     let mut f = Fixture::new();
-    f.connected();
     f.step(2.);
     assert!(f.memory.borrow().history_reads.is_empty());
     f.message("old", None, "请开始", true);
@@ -688,7 +715,7 @@ fn reconnect_backfills_sorted_messages_with_age_limit_and_first_start_skips_hist
             .borrow()
             .history_reads
             .iter()
-            .any(|(_, thread, _)| thread.as_deref() == Some("old"))
+            .any(|(channel, after)| channel == "C1" && after.id.as_deref() == Some("old"))
     );
 }
 #[test]
@@ -765,10 +792,8 @@ fn long_reply_retries_smaller_chunks_notifies_once_and_reports_final_failure() {
     f.step(20.);
     assert!(f.texts().contains("段发不出去：too_long"));
     assert!(f.engine.log.iter().any(|l| l.contains("too_long")));
-    assert_eq!(
-        f.engine.reports["memory"].reason.as_deref(),
-        Some("too_long")
-    );
+    assert_eq!(f.engine.reports["memory"].connection, "connected");
+    assert!(f.engine.reports["memory"].reason.is_none());
 }
 
 #[test]
@@ -977,10 +1002,430 @@ fn routing_acknowledgement_must_be_posted_before_corral_send_even_after_retry() 
     let mut f = Fixture::new();
     f.memory.borrow_mut().fail_over = Some(0);
     f.message("m", None, "hello", true);
-    assert!(f.engine.step(&mut f.corral, 10.).is_err());
+    f.step(10.);
     assert!(f.corral.sent.is_empty());
     f.memory.borrow_mut().fail_over = None;
     f.step(12.);
     assert!(f.texts().contains("→ paddock/main"));
     assert_eq!(f.corral.sent.len(), 1);
+}
+
+fn incoming(channel: &str, id: &str, thread: Option<&str>, text: &str, at: f64) -> Message {
+    Message {
+        channel: channel.into(),
+        id: id.into(),
+        thread: thread.map(str::to_owned),
+        sender: "owner".into(),
+        mentioned: thread.is_none(),
+        text: text.into(),
+        attachments: false,
+        at,
+    }
+}
+
+#[test]
+fn offline_new_thread_replies_are_backfilled_in_order_without_per_thread_reads() {
+    let mut f = Fixture::new();
+    f.message("100", None, "hello", true);
+    f.step(10.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.memory.borrow_mut().history = vec![
+        incoming("C1", "201", Some("200"), "还有第二件", 21.),
+        incoming("C1", "200", None, "dev 第一件事", 20.),
+    ];
+    f.restart();
+    for at in [30., 32., 34., 36.] {
+        f.step(at);
+    }
+    let pending: Vec<_> = f
+        .engine
+        .state
+        .pending
+        .iter()
+        .filter(|p| p.agent == "paddock/dev")
+        .collect();
+    assert_eq!(
+        pending
+            .iter()
+            .map(|p| p.message.as_str())
+            .collect::<Vec<_>>(),
+        ["200", "201"]
+    );
+    assert!(pending.iter().all(|p| p.text.contains("pony 当时离线")));
+    assert_eq!(
+        f.memory
+            .borrow()
+            .history_reads
+            .iter()
+            .filter(|(c, _)| c == "C1")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn notification_only_channel_backfills_from_previous_online_time() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "blocked".into();
+    f.step(4.);
+    f.step(6.);
+    let root = f.memory.borrow().posted.last().unwrap().id.clone();
+    assert!(f.engine.state.cursors.is_empty());
+    f.memory
+        .borrow_mut()
+        .history
+        .push(incoming("C1", "reply", Some(&root), "请继续", 10.));
+    f.restart();
+    f.step(20.);
+    assert_eq!(f.engine.state.pending[0].agent, "paddock/dev");
+    let data = f.memory.borrow();
+    let after = &data
+        .history_reads
+        .iter()
+        .find(|(c, _)| c == "C1")
+        .unwrap()
+        .1;
+    assert!(after.id.is_none());
+    assert_eq!(after.at, 2.);
+}
+
+#[test]
+fn stop_failure_does_not_post_previous_turn_reply_and_next_message_is_sent() {
+    let mut f = Fixture::new();
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "上一轮的旧回复".into(),
+            at: 1.,
+        }),
+    );
+    f.step(2.);
+    f.message("first", None, "first", true);
+    f.message("second", None, "second", true);
+    f.step(10.);
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.turn_started = Some(11.);
+    s.last_event = Some("StopFailure".into());
+    s.last_event_at = Some(12.);
+    f.step(12.);
+    f.step(14.);
+    assert!(!f.texts().contains("上一轮的旧回复"));
+    assert!(f.texts().contains("paddock/main 这一轮结束了，没有新回复"));
+    assert_eq!(f.corral.sent.last().unwrap().1, "second");
+}
+
+#[test]
+fn broken_watched_agent_does_not_block_other_repository() {
+    let mut f = Fixture::new();
+    f.corral
+        .status_errors
+        .insert("paddock/dev".into(), failure(9, "incompatible"));
+    f.events
+        .emit(Event::Message(incoming("C2", "good", None, "继续", 10.)))
+        .unwrap();
+    for at in [10., 12., 14., 16., 18.] {
+        f.step(at);
+    }
+    assert_eq!(f.corral.sent, [("ranch/main".into(), "继续".into())]);
+    assert!(f.engine.log.iter().any(|s| s.contains("incompatible")));
+}
+
+#[test]
+fn broken_route_is_reported_and_dequeued_without_blocking_later_input() {
+    let mut f = Fixture::new();
+    f.corral
+        .status_errors
+        .insert("paddock/dev".into(), failure(9, "incompatible"));
+    f.message("bad", None, "dev 请继续", true);
+    f.events
+        .emit(Event::Message(incoming("C2", "good", None, "继续", 10.)))
+        .unwrap();
+    for at in [10., 12., 14.] {
+        f.step(at);
+    }
+    assert!(f.engine.store.inbox().is_empty());
+    assert_eq!(f.texts().matches("incompatible: reason").count(), 1);
+    assert_eq!(f.corral.sent, [("ranch/main".into(), "继续".into())]);
+}
+
+#[test]
+fn broken_backfill_channel_does_not_hold_connection_event_or_other_inputs() {
+    for channel_error in [true, false] {
+        let mut f = Fixture::new();
+        f.step(2.);
+        if channel_error {
+            f.memory.borrow_mut().channel_errors.insert("C1".into());
+        } else {
+            f.memory.borrow_mut().history_errors.insert("C1".into());
+        }
+        f.restart();
+        f.events
+            .emit(Event::Message(incoming("C2", "good", None, "继续", 10.)))
+            .unwrap();
+        for at in [10., 12., 14., 16.] {
+            f.step(at);
+        }
+        assert!(f.engine.store.inbox().is_empty());
+        assert_eq!(f.corral.sent, [("ranch/main".into(), "继续".into())]);
+        assert!(f.engine.log.iter().any(|s| s.contains(if channel_error {
+            "not_member"
+        } else {
+            "history_failed"
+        })));
+    }
+}
+
+#[test]
+fn partial_reply_or_notice_failure_does_not_repost_successful_chunks_after_restart() {
+    for waiting in [true, false] {
+        let mut f = Fixture::new();
+        f.engine.connections.insert(
+            "memory".into(),
+            Box::new(MemoryConnection(f.memory.clone(), 1000, true)),
+        );
+        f.step(2.);
+        if waiting {
+            f.message("request", None, "hi", true);
+            f.step(10.);
+        }
+        let s = f.corral.agents.get_mut("paddock/main").unwrap();
+        s.turn_started = Some(11.);
+        s.last_event_at = Some(12.);
+        f.corral.replies.insert(
+            "paddock/main".into(),
+            Ok(Reply {
+                instance: "instance-1".into(),
+                text: "片".repeat(3000),
+                at: 12.,
+            }),
+        );
+        // Waiting replies have an earlier arrow; notices split their title first.
+        // In both cases, allow one body chunk through before rejecting the rest.
+        f.memory.borrow_mut().fail_after = Some(2);
+        f.step(12.);
+        f.step(14.);
+        f.step(16.);
+        f.restart();
+        f.step(18.);
+        f.step(20.);
+        assert_eq!(
+            f.memory
+                .borrow()
+                .posted
+                .iter()
+                .filter(|p| p.text.contains('片'))
+                .count(),
+            1
+        );
+        assert!(f.engine.state.pending.is_empty());
+    }
+}
+
+#[test]
+fn delivery_failure_and_later_success_leave_connection_status_unchanged() {
+    use pony::core::{
+        config::Config,
+        status::{Snapshot, chats},
+    };
+    let mut f = Fixture::new();
+    f.step(2.);
+    let mut snapshot = Snapshot::new();
+    snapshot.chats = chats(
+        &Config {
+            corral: None,
+            proxy: None,
+            chats: f.engine.configs.clone(),
+        },
+        "connecting",
+        Some(1.),
+    );
+    snapshot.update(&f.engine, 2.);
+    f.memory.borrow_mut().fail_over = Some(0);
+    f.message("failed", None, "hello", true);
+    f.step(10.);
+    snapshot.update(&f.engine, 10.);
+    f.memory.borrow_mut().fail_over = None;
+    f.step(12.);
+    snapshot.update(&f.engine, 12.);
+    let value = serde_json::to_value(snapshot).unwrap();
+    assert_eq!(value["chats"][0]["connection"], "connected");
+    assert_eq!(value["chats"][0]["since"], 2.);
+    assert!(value["chats"][0]["reason"].is_null());
+    assert_eq!(f.corral.sent.len(), 1);
+}
+
+#[test]
+fn repeated_human_active_and_not_idle_rejections_are_reported_only_once() {
+    for (exit, code, label) in [
+        (8, "human_active", "人刚在窗口里操作过"),
+        (7, "not_idle", "正在干活，放回队首排着"),
+    ] {
+        let mut f = Fixture::new();
+        f.corral.outcomes = (0..4).map(|_| Err(failure(exit, code))).collect();
+        f.message("first", None, "hello", true);
+        f.step(10.);
+        f.restart();
+        for at in [40., 42., 72., 102.] {
+            f.step(at);
+        }
+        assert_eq!(f.texts().matches(label).count(), 1);
+        assert!(f.corral.sent.len() >= 4);
+    }
+}
+
+#[test]
+fn same_batch_idle_agent_queue_position_excludes_immediate_head() {
+    let mut f = Fixture::new();
+    f.message("first", None, "first", true);
+    f.message("second", None, "second", true);
+    f.step(10.);
+    assert_eq!(f.corral.sent.len(), 1);
+    let data = f.memory.borrow();
+    let second = data
+        .posted
+        .iter()
+        .find(|p| p.thread.as_deref() == Some("second"))
+        .unwrap();
+    assert!(second.text.contains("排在第 1 个"));
+}
+
+#[test]
+fn queued_live_message_in_history_keeps_online_text() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.restart();
+    let message = incoming("C1", "live", None, "现在发的", 10.);
+    f.memory.borrow_mut().history.push(message.clone());
+    f.events.emit(Event::Message(message)).unwrap();
+    f.step(12.);
+    assert_eq!(f.corral.sent, [("paddock/main".into(), "现在发的".into())]);
+    assert!(!f.texts().contains("离线期间"));
+}
+
+#[test]
+fn attachments_report_omission_after_arrow_and_attachment_only_input_explains() {
+    let mut f = Fixture::new();
+    for (id, text) in [("text", "文字"), ("only", "")] {
+        let mut message = incoming("C1", id, None, text, 10.);
+        message.attachments = true;
+        f.events.emit(Event::Message(message)).unwrap();
+    }
+    f.step(10.);
+    assert_eq!(f.corral.sent, [("paddock/main".into(), "文字".into())]);
+    let text = f.texts();
+    assert!(text.find("→ paddock/main").unwrap() < text.find("附件没送").unwrap());
+    assert!(text.contains("附件没送，只收文字"));
+    assert!(!text.contains("用法"));
+}
+
+#[test]
+fn reconnect_withdraws_deleted_queue_and_defers_unverifiable_message_only() {
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.message("deleted", None, "dev 删除我", true);
+    f.message("uncertain", None, "dev 核对我", true);
+    f.step(10.);
+    f.memory.borrow_mut().deleted.insert("deleted".into());
+    f.memory
+        .borrow_mut()
+        .exists_errors
+        .insert("uncertain".into());
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.restart();
+    f.events
+        .emit(Event::Message(incoming("C2", "good", None, "继续", 12.)))
+        .unwrap();
+    f.step(12.);
+    f.step(14.);
+    assert_eq!(f.texts().matches("撤回了").count(), 1);
+    assert_eq!(f.corral.sent, [("ranch/main".into(), "继续".into())]);
+    assert!(f.memory.borrow().exists_reads.contains(&"deleted".into()));
+    f.memory.borrow_mut().exists_errors.clear();
+    f.step(16.);
+    assert_eq!(f.corral.sent.last().unwrap().1, "核对我");
+}
+
+#[test]
+fn cannot_execute_corral_is_definitely_unsent() {
+    let mut f = Fixture::new();
+    let mut error = failure(1, "corral_unavailable");
+    error.exit = None;
+    f.corral.outcomes.push(Err(error));
+    f.message("m", None, "hello", true);
+    f.step(10.);
+    f.step(12.);
+    assert!(f.texts().contains("没送"));
+    assert!(!f.texts().contains("结果不明"));
+    assert!(!f.engine.log.iter().any(|l| l == "send_uncertain"));
+    assert!(f.engine.state.pending.is_empty());
+}
+
+#[test]
+fn unchanged_polling_preserves_state_and_status_files_and_retention_is_bounded() {
+    use pony::core::{
+        state::{Address, Cursor, Expired, Seen},
+        status::Snapshot,
+    };
+    use std::os::unix::fs::MetadataExt;
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.step(4.);
+    let state_path = f._dir.path().join("state.json");
+    let inode = std::fs::metadata(&state_path).unwrap().ino();
+    for at in [6., 8., 10.] {
+        f.step(at);
+    }
+    assert_eq!(std::fs::metadata(&state_path).unwrap().ino(), inode);
+    std::fs::create_dir(f._dir.path().join("run")).unwrap();
+    let snapshot = Snapshot::new();
+    snapshot.save(f._dir.path()).unwrap();
+    let path = f._dir.path().join("run/status.json");
+    let inode = std::fs::metadata(&path).unwrap().ino();
+    snapshot.save(f._dir.path()).unwrap();
+    assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+    let old = Address {
+        kind: "memory".into(),
+        channel: "C1".into(),
+        thread: "old".into(),
+    };
+    f.engine.state.expired.push(Expired {
+        address: old.clone(),
+        at: 1.,
+    });
+    f.engine.state.cursors.push(Cursor {
+        address: old,
+        id: "old".into(),
+        at: 1.,
+    });
+    f.engine.state.seen.push(Seen {
+        kind: "memory".into(),
+        channel: "C1".into(),
+        id: "old".into(),
+        at: 1.,
+    });
+    f.step(100. * 86400.);
+    assert!(f.engine.state.seen.is_empty());
+    assert!(f.engine.state.expired.is_empty());
+    assert!(f.engine.state.cursors.is_empty());
+}
+
+#[test]
+fn previous_untimed_state_remains_readable_with_queued_messages() {
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.message("queued", None, "dev hello", true);
+    f.step(10.);
+    let path = f._dir.path().join("state.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["state"]["seen"] = serde_json::json!([["memory", "C1", "queued"]]);
+    document["state"]["expired"] =
+        serde_json::json!([{ "kind": "memory", "channel": "C1", "thread": "expired" }]);
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    f.restart();
+    assert_eq!(f.engine.state.pending[0].text, "hello");
+    assert_eq!(f.engine.state.seen[0].id, "queued");
+    assert_eq!(f.engine.state.expired[0].address.thread, "expired");
 }

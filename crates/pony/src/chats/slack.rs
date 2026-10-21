@@ -1,4 +1,6 @@
-use super::{ChannelInfo, Chat, Connect, Connection, Limits, Message, Outgoing, SendError};
+use super::{
+    ChannelInfo, Chat, Connect, Connection, HistoryAfter, Limits, Message, Outgoing, SendError,
+};
 use crate::core::config::{ChatConfig, Problem};
 
 pub struct Slack;
@@ -59,7 +61,13 @@ impl Connection for Placeholder {
             "adapter is not connected",
         ))
     }
-    fn history(&mut self, _: &str, _: Option<&str>, _: &str) -> crate::core::Result<Vec<Message>> {
+    fn history(&mut self, _: &str, _: &HistoryAfter) -> crate::core::Result<Vec<Message>> {
+        Err(crate::core::Error::new(
+            "connecting",
+            "adapter is not connected",
+        ))
+    }
+    fn exists(&mut self, _: &str, _: Option<&str>, _: &str) -> crate::core::Result<bool> {
         Err(crate::core::Error::new(
             "connecting",
             "adapter is not connected",

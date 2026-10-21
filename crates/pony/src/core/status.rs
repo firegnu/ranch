@@ -143,6 +143,10 @@ impl Snapshot {
 
     pub fn save(&self, home: &Path) -> Result<()> {
         let directory = home.join("run");
+        let bytes = serde_json::to_vec(self).expect("status contains only JSON-compatible fields");
+        if fs::read(directory.join("status.json")).is_ok_and(|previous| previous == bytes) {
+            return Ok(());
+        }
         let temporary = directory.join(format!(".status.{}.{}.tmp", self.pid, now().to_bits()));
         let mut file = OpenOptions::new()
             .write(true)
@@ -151,8 +155,6 @@ impl Snapshot {
             .open(&temporary)
             .map_err(|e| files::io_error(&temporary, e))?;
         let result = (|| {
-            let bytes =
-                serde_json::to_vec(self).expect("status contains only JSON-compatible fields");
             file.write_all(&bytes)?;
             file.sync_all()?;
             fs::rename(&temporary, directory.join("status.json"))

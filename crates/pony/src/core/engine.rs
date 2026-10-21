@@ -1,10 +1,10 @@
 use super::{
     Error, Result,
     config::ChatConfig,
-    state::{Address, Cursor, Pending, Phase, State, Store, Thread, Watch},
+    state::{Address, Cursor, Expired, Pending, Phase, Seen, State, Store, Thread, Watch},
 };
 use crate::{
-    chats::{ChannelInfo, Connection, ConnectionInfo, Event, Message, Outgoing},
+    chats::{ChannelInfo, Connection, ConnectionInfo, Event, HistoryAfter, Message, Outgoing},
     corral::{Agent, Corral, Status},
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -20,6 +20,7 @@ pub struct Engine {
     previous: BTreeMap<String, Status>,
     recovering: BTreeSet<String>,
     connected: BTreeSet<String>,
+    unverified: BTreeSet<(Address, String)>,
 }
 impl Engine {
     pub fn new(
@@ -45,10 +46,28 @@ impl Engine {
             previous: BTreeMap::new(),
             recovering,
             connected: BTreeSet::new(),
+            unverified: BTreeSet::new(),
         }
     }
     fn save(&self) -> Result<()> {
         self.store.save(&self.state, None)
+    }
+    fn record_error(&mut self, context: &str, error: Error) -> Result<()> {
+        if matches!(
+            error.code.as_str(),
+            "io" | "state_invalid" | "secrets_too_open"
+        ) {
+            return Err(error);
+        }
+        self.log
+            .push(format!("{context} {}", safe_code(&error.code)));
+        Ok(())
+    }
+    fn say(&mut self, address: &Address, text: &str, notify: bool) -> Result<()> {
+        if let Err(error) = self.post(address, text, notify, false) {
+            self.record_error("delivery_failed", error)?;
+        }
+        Ok(())
     }
     fn bound(&self, kind: &str, repo: &str) -> bool {
         self.configs
@@ -121,61 +140,56 @@ impl Engine {
                 Err(e) => {
                     let code = safe_code(&e.code);
                     self.log.push(format!("delivery_failed {code}"));
-                    let report =
-                        self.reports
-                            .entry(address.kind.clone())
-                            .or_insert(ConnectionInfo {
-                                connection: "failed".into(),
-                                reason: None,
-                                message: None,
-                                workspace: None,
-                                bot: None,
-                                other_connections: 0,
-                            });
-                    report.connection = "failed".into();
-                    report.reason = Some(code.clone());
-                    report.message = Some(format!("第 {}/{total} 段发不出去：{code}", i + 1));
                     if !notify {
                         return Err(Error::new("delivery_failed", code));
                     }
-                    let explanation = report.message.as_deref().unwrap();
-                    let id = connection
-                        .send(Outgoing {
-                            channel: &address.channel,
-                            thread,
-                            markdown: explanation,
-                            notify: notify && first.is_none(),
-                        })
-                        .map_err(|_| Error::new("delivery_failed", "cannot post delivery error"))?;
-                    first.get_or_insert(id);
+                    let explanation = format!("第 {}/{total} 段发不出去：{code}", i + 1);
+                    match connection.send(Outgoing {
+                        channel: &address.channel,
+                        thread,
+                        markdown: &explanation,
+                        notify: notify && first.is_none(),
+                    }) {
+                        Ok(id) => {
+                            first.get_or_insert(id);
+                        }
+                        Err(error) => {
+                            self.log
+                                .push(format!("delivery_failed {}", safe_code(&error.code)));
+                            // Preserve the root of a partially posted notice for thread routing.
+                            return first.ok_or_else(|| {
+                                Error::new("delivery_failed", "cannot post delivery error")
+                            });
+                        }
+                    }
                 }
             }
         }
         first.ok_or_else(|| Error::new("delivery_failed", "no message was posted"))
     }
     fn remember(&mut self, kind: &str, m: &Message) {
-        self.state
-            .seen
-            .insert((kind.into(), m.channel.clone(), m.id.clone()));
-        let mut addresses = vec![Address {
+        self.state.seen.push(Seen {
+            kind: kind.into(),
+            channel: m.channel.clone(),
+            id: m.id.clone(),
+            at: m.at,
+        });
+        let address = Address {
             kind: kind.into(),
             channel: m.channel.clone(),
             thread: String::new(),
-        }];
-        addresses.push(Self::address(kind, m));
-        for address in addresses {
-            if let Some(c) = self.state.cursors.iter_mut().find(|c| c.address == address) {
-                if m.at > c.at {
-                    c.at = m.at;
-                    c.id = m.id.clone();
-                }
-            } else {
-                self.state.cursors.push(Cursor {
-                    address,
-                    id: m.id.clone(),
-                    at: m.at,
-                });
+        };
+        if let Some(c) = self.state.cursors.iter_mut().find(|c| c.address == address) {
+            if m.at > c.at {
+                c.at = m.at;
+                c.id = m.id.clone();
             }
+        } else {
+            self.state.cursors.push(Cursor {
+                address,
+                id: m.id.clone(),
+                at: m.at,
+            });
         }
     }
     fn message(
@@ -186,11 +200,18 @@ impl Engine {
         at: f64,
         offline: bool,
     ) -> Result<()> {
-        let result = self.route_message(kind, m, corral, at, offline);
-        if result.is_err() {
-            self.state = self.store.state();
+        let address = Self::address(kind, &m);
+        if let Err(error) = self.route_message(kind, m, corral, at, offline) {
+            let text = format!("{}: {}", error.code, error.message);
+            let delivery = error.code == "delivery_failed";
+            self.record_error("route_failed", error)?;
+            // Keep the seen marker and any pending acknowledgement, then dequeue this input.
+            self.save()?;
+            if !delivery {
+                self.say(&address, &text, false)?;
+            }
         }
-        result
+        Ok(())
     }
     fn route_message(
         &mut self,
@@ -210,7 +231,11 @@ impl Engine {
         if self
             .state
             .seen
-            .contains(&(kind.into(), m.channel.clone(), m.id.clone()))
+            .iter()
+            .any(|s| s.kind == kind && s.channel == m.channel && s.id == m.id)
+            || self.state.pending.iter().any(|p| {
+                p.address.kind == kind && p.address.channel == m.channel && p.message == m.id
+            })
         {
             return Ok(());
         }
@@ -233,7 +258,7 @@ impl Engine {
             }
             return Ok(());
         };
-        if self.state.expired.contains(&address) {
+        if self.state.expired.iter().any(|e| e.address == address) {
             self.save()?;
             self.post(
                 &address,
@@ -258,6 +283,11 @@ impl Engine {
             return Ok(());
         }
         let text = m.text.trim_start();
+        if text.is_empty() && m.attachments {
+            self.save()?;
+            self.say(&address, "附件没送，只收文字", false)?;
+            return Ok(());
+        }
         let agents = corral.list().map_err(corral_error)?;
         if matches!(text.trim_end(), "?" | "？") {
             let summary = self.summary(kind, &binding.repo, &agents, corral, at)?;
@@ -330,7 +360,11 @@ impl Engine {
             self.save()?;
             self.post(
                 &address,
-                "用法：@机器人 正文，或 @机器人 agent/全名 正文；? 看状态",
+                if m.attachments {
+                    "附件没送，只收文字"
+                } else {
+                    "用法：@机器人 正文，或 @机器人 agent/全名 正文；? 看状态"
+                },
                 false,
                 false,
             )?;
@@ -355,13 +389,27 @@ impl Engine {
         let reopened = known
             .as_ref()
             .is_some_and(|t| t.instance != status.instance);
+        let immediate_head = !status.paused
+            && matches!(status.state.as_str(), "idle" | "unknown")
+            && self
+                .state
+                .pending
+                .iter()
+                .find(|p| p.agent == name)
+                .is_some_and(|p| {
+                    p.phase == Phase::Queued
+                        && !p.queued
+                        && p.retry_at <= at
+                        && p.announcement.is_none()
+                });
         let count = self
             .state
             .pending
             .iter()
             .filter(|p| p.agent == name && p.phase == Phase::Queued)
             .count()
-            + 1;
+            + 1
+            - usize::from(immediate_head);
         let queued = status.paused
             || !matches!(status.state.as_str(), "idle" | "unknown")
             || self.state.pending.iter().any(|p| p.agent == name);
@@ -396,6 +444,8 @@ impl Engine {
         );
         self.state.pending.push(Pending {
             announcement: Some(announcement.clone()),
+            attachments: m.attachments,
+            rejection_reported: false,
             address: address.clone(),
             message: m.id,
             agent: name.clone(),
@@ -420,7 +470,17 @@ impl Engine {
             .last_mut()
             .expect("just queued")
             .announcement = None;
-        self.save()
+        self.save()?;
+        self.report_attachments(self.state.pending.len() - 1)
+    }
+    fn report_attachments(&mut self, i: usize) -> Result<()> {
+        if self.state.pending[i].attachments {
+            self.state.pending[i].attachments = false;
+            let address = self.state.pending[i].address.clone();
+            self.save()?;
+            self.say(&address, "附件没送", false)?;
+        }
+        Ok(())
     }
     fn summary(
         &self,
@@ -496,10 +556,26 @@ impl Engine {
     pub fn step(&mut self, corral: &mut dyn Corral, at: f64) -> Result<()> {
         self.state.threads.retain(|t| {
             if at - t.used > 30. * 86400. {
-                self.state.expired.insert(t.address.clone());
+                self.state.expired.push(Expired {
+                    address: t.address.clone(),
+                    at,
+                });
                 false
             } else {
                 true
+            }
+        });
+        // Keep one day of IDs: the 12-hour backfill window plus 12 hours of overlap.
+        self.state.seen.retain(|s| at - s.at <= 86400.);
+        self.state.expired.retain(|e| at - e.at <= 90. * 86400.);
+        self.state.cursors.retain(|c| {
+            if c.address.thread.is_empty() {
+                self.configs.iter().any(|config| {
+                    config.kind == c.address.kind
+                        && config.channels.iter().any(|b| b.id == c.address.channel)
+                })
+            } else {
+                self.state.threads.iter().any(|t| t.address == c.address)
             }
         });
         // Removed bindings must never leak old queued text, replies or notices.
@@ -525,17 +601,12 @@ impl Engine {
             if !self.connected.contains(&p.address.kind) {
                 continue;
             }
-            self.post(
-                &p.address,
-                "上次发送结果不明，没重送，请确认后重发",
-                false,
-                false,
-            )?;
             self.log.push("send_uncertain".into());
             self.state
                 .pending
                 .retain(|q| q.address != p.address || q.message != p.message);
             self.save()?;
+            self.say(&p.address, "上次发送结果不明，没重送，请确认后重发", false)?;
         }
         for input in self.store.inbox() {
             if matches!(input.event, Event::Message(_) | Event::Deleted { .. })
@@ -557,6 +628,16 @@ impl Engine {
                     if connected {
                         self.connected.insert(input.kind.clone());
                         self.backfill(&input.kind, corral, at)?;
+                        self.state.online.insert(input.kind.clone(), at);
+                        self.unverified.extend(
+                            self.state
+                                .pending
+                                .iter()
+                                .filter(|p| {
+                                    p.address.kind == input.kind && p.phase == Phase::Queued
+                                })
+                                .map(|p| (p.address.clone(), p.message.clone())),
+                        );
                     } else {
                         self.disconnect(&input.kind);
                     }
@@ -582,7 +663,7 @@ impl Engine {
                     });
                     self.save()?;
                     for p in removed {
-                        self.post(&p.address, "撤回了", false, false)?;
+                        self.say(&p.address, "撤回了", false)?;
                     }
                 }
             }
@@ -591,22 +672,43 @@ impl Engine {
         if self.connected.is_empty() {
             return self.save();
         }
+        // Checkpoint online time at most once a minute. This gives cursorless channels
+        // a conservative overlap after an unclean stop without forcing writes every tick.
+        for kind in &self.connected {
+            if self
+                .state
+                .online
+                .get(kind)
+                .is_none_or(|last| at - last >= 60.)
+            {
+                self.state.online.insert(kind.clone(), at);
+            }
+        }
+        self.verify_queue()?;
         for i in 0..self.state.pending.len() {
             let pending = self.state.pending[i].clone();
             if self.connected.contains(&pending.address.kind)
                 && let Some(text) = pending.announcement
             {
-                self.post(&pending.address, &text, false, false)?;
+                if let Err(error) = self.post(&pending.address, &text, false, false) {
+                    self.record_error("delivery_failed", error)?;
+                    continue;
+                }
                 self.state.pending[i].announcement = None;
                 self.save()?;
+                self.report_attachments(i)?;
             }
         }
-        let agents: Vec<Agent> = corral
-            .list()
-            .map_err(corral_error)?
-            .into_iter()
-            .filter(|a| self.allowed(&a.name))
-            .collect();
+        let agents: Vec<Agent> = match corral.list() {
+            Ok(agents) => agents,
+            Err(error) => {
+                self.record_error("corral", corral_error(error))?;
+                return self.save();
+            }
+        }
+        .into_iter()
+        .filter(|a| self.allowed(&a.name))
+        .collect();
         let gone: Vec<_> = self
             .state
             .pending
@@ -623,6 +725,7 @@ impl Engine {
         self.previous
             .retain(|name, _| agents.iter().any(|a| a.name == *name));
         let mut settled = BTreeSet::new();
+        let mut unavailable = BTreeSet::new();
         for agent in agents {
             if !agent.name.split_once('/').is_some_and(|(repo, _)| {
                 self.configs.iter().any(|c| {
@@ -637,7 +740,12 @@ impl Engine {
                     self.cancel(&agent.name, None)?;
                     continue;
                 }
-                Err(e) => return Err(corral_error(e)),
+                Err(e) => {
+                    self.record_error("corral", corral_error(e))?;
+                    self.previous.remove(&agent.name);
+                    unavailable.insert(agent.name.clone());
+                    continue;
+                }
             };
             self.cancel(&agent.name, Some(&status.instance))?;
             let stable = self.previous.get(&agent.name).is_some_and(|p| {
@@ -660,7 +768,11 @@ impl Engine {
                     Ok(r) if r.instance == status.instance => Some(r.at),
                     Ok(_) => None,
                     Err(e) if e.code == "no_reply" => None,
-                    Err(e) => return Err(corral_error(e)),
+                    Err(e) => {
+                        self.record_error("corral", corral_error(e))?;
+                        unavailable.insert(agent.name.clone());
+                        continue;
+                    }
                 };
                 self.recovering.remove(&agent.name);
                 Watch {
@@ -677,6 +789,8 @@ impl Engine {
                     && p.phase == Phase::Waiting
                     && status.turn_started != p.baseline
             });
+            let mut response = None;
+            let mut notices = Vec::new();
             if stable && !status.paused && (waiting.is_some() || status.turn_started != watch.turn)
             {
                 let offline = self.recovering.contains(&agent.name);
@@ -688,26 +802,27 @@ impl Engine {
                             &reply.text
                         };
                         if let Some(i) = waiting {
-                            let address = self.state.pending[i].address.clone();
-                            self.post(&address, text, true, false)?;
-                            self.state.pending.remove(i);
+                            let pending = self.state.pending.remove(i);
+                            response = Some((
+                                pending.address,
+                                if status.turn_started.is_some_and(|start| reply.at >= start) {
+                                    text.to_owned()
+                                } else {
+                                    format!("{} 这一轮结束了，没有新回复", agent.name)
+                                },
+                            ));
                         } else if agent.name.ends_with("/main")
                             && watch.reply.is_none_or(|old| reply.at > old)
                         {
-                            self.notice(
-                                &agent.name,
-                                &status.instance,
-                                &format!(
-                                    "{}{} 新回复\n{text}",
-                                    if offline {
-                                        "（pony 不在线时）"
-                                    } else {
-                                        ""
-                                    },
-                                    agent.name
-                                ),
-                                at,
-                            )?;
+                            notices.push(format!(
+                                "{}{} 新回复\n{text}",
+                                if offline {
+                                    "（pony 不在线时）"
+                                } else {
+                                    ""
+                                },
+                                agent.name
+                            ));
                         }
                         watch.reply = Some(reply.at);
                     }
@@ -716,21 +831,22 @@ impl Engine {
                     }
                     Err(e) if e.code == "no_reply" => {
                         if let Some(i) = waiting {
-                            let address = self.state.pending[i].address.clone();
-                            self.post(
-                                &address,
-                                &if e.interrupted {
+                            let pending = self.state.pending.remove(i);
+                            response = Some((
+                                pending.address,
+                                if e.interrupted {
                                     format!("{} 这一轮被打断了，没有回复", agent.name)
                                 } else {
                                     "（空回复）".into()
                                 },
-                                true,
-                                false,
-                            )?;
-                            self.state.pending.remove(i);
+                            ));
                         }
                     }
-                    Err(e) => return Err(corral_error(e)),
+                    Err(e) => {
+                        self.record_error("corral", corral_error(e))?;
+                        unavailable.insert(agent.name.clone());
+                        continue;
+                    }
                 }
                 watch.turn = status.turn_started;
             }
@@ -752,7 +868,7 @@ impl Engine {
                         .map(|s| format!(" · 标题「{s}」"))
                         .unwrap_or_default()
                 );
-                self.notice(&agent.name, &status.instance, &text, at)?;
+                notices.push(text);
                 watch.blocked = Some(status.state_started.unwrap_or(0.));
             }
             if status.state != "blocked" {
@@ -763,20 +879,33 @@ impl Engine {
             }
             watch.status = status.clone();
             self.state.watches.insert(agent.name.clone(), watch);
-            self.previous.insert(agent.name, status);
+            self.previous.insert(agent.name.clone(), status.clone());
+            // Commit completion/dedup before any outgoing chunks. Delivery errors must
+            // not turn a later tick or restart into a replay of successful chunks.
             self.save()?;
+            if let Some((address, text)) = response {
+                self.say(&address, &text, true)?;
+            }
+            for text in notices {
+                self.notice(&agent.name, &status.instance, &text, at)?;
+            }
         }
         let mut i = 0;
         let mut attempted = BTreeSet::new();
         while i < self.state.pending.len() {
             let p = self.state.pending[i].clone();
             if p.phase != Phase::Queued
+                || p.announcement.is_some()
+                || self
+                    .unverified
+                    .contains(&(p.address.clone(), p.message.clone()))
                 || self.state.pending[..i]
                     .iter()
                     .any(|earlier| earlier.agent == p.agent)
                 || !self.connected.contains(&p.address.kind)
                 || p.retry_at > at
                 || attempted.contains(&p.agent)
+                || unavailable.contains(&p.agent)
                 || self.state.pending.iter().any(|w| {
                     w.agent == p.agent
                         && matches!(w.phase, Phase::Waiting | Phase::Sending | Phase::Uncertain)
@@ -792,7 +921,11 @@ impl Engine {
                     self.cancel(&p.agent, None)?;
                     continue;
                 }
-                Err(e) => return Err(corral_error(e)),
+                Err(e) => {
+                    self.record_error("corral", corral_error(e))?;
+                    i += 1;
+                    continue;
+                }
             };
             if status.instance != p.instance {
                 self.cancel(&p.agent, Some(&status.instance))?;
@@ -819,18 +952,16 @@ impl Engine {
                     }
                     self.save()?;
                     if p.queued {
-                        self.post(
+                        self.say(
                             &p.address,
                             &format!("已送给 {}（排了 {} 分钟）", p.agent, minutes(at - p.at)),
-                            false,
                             false,
                         )?;
                     }
                     if sent.merged_with_draft {
-                        self.post(
+                        self.say(
                             &p.address,
                             "输入框里原有没提交的字，和你的话一起送了",
-                            false,
                             false,
                         )?;
                     }
@@ -845,12 +976,21 @@ impl Engine {
                             self.state.pending[i].queued = true;
                             self.state.pending[i].retry_at =
                                 at + if e.exit == Some(8) { 30. } else { 0. };
+                            self.state.pending[i].rejection_reported = true;
                             i += 1;
-                            match e.exit {
-                                Some(8) => "人刚在窗口里操作过，30 秒后再试".into(),
-                                Some(10) => "暂停中，恢复后再送".into(),
-                                _ => "正在干活，放回队首排着".into(),
+                            if p.rejection_reported {
+                                String::new()
+                            } else {
+                                match e.exit {
+                                    Some(8) => "人刚在窗口里操作过，30 秒后再试".into(),
+                                    Some(10) => "暂停中，恢复后再送".into(),
+                                    _ => "正在干活，放回队首排着".into(),
+                                }
                             }
+                        }
+                        (None, "corral_unavailable") => {
+                            self.state.pending.remove(i);
+                            format!("corral_unavailable: {}，没送", e.message)
                         }
                         (None, _) => {
                             self.state.pending.remove(i);
@@ -870,7 +1010,9 @@ impl Engine {
                         }
                     };
                     self.save()?;
-                    self.post(&p.address, &text, false, false)?;
+                    if !text.is_empty() {
+                        self.say(&p.address, &text, false)?;
+                    }
                     if e.exit == Some(2) {
                         self.cancel(&p.agent, None)?;
                     }
@@ -887,6 +1029,12 @@ impl Engine {
             .filter(|p| p.agent == name && instance.is_none_or(|i| p.instance != i))
             .cloned()
             .collect();
+        self.state.pending.retain(|p| {
+            !(p.agent == name
+                && self.connected.contains(&p.address.kind)
+                && instance.is_none_or(|i| p.instance != i))
+        });
+        self.save()?;
         for p in &removed {
             if !self.connected.contains(&p.address.kind) {
                 continue;
@@ -896,13 +1044,8 @@ impl Engine {
             } else {
                 format!("{name} 已经不在了，没送")
             };
-            self.post(&p.address, &text, false, false)?;
+            self.say(&p.address, &text, false)?;
         }
-        self.state.pending.retain(|p| {
-            !(p.agent == name
-                && self.connected.contains(&p.address.kind)
-                && instance.is_none_or(|i| p.instance != i))
-        });
         Ok(())
     }
     fn notice(&mut self, name: &str, instance: &str, text: &str, at: f64) -> Result<()> {
@@ -923,7 +1066,13 @@ impl Engine {
             })
             .collect();
         for mut address in addresses {
-            address.thread = self.post(&address, text, true, true)?;
+            address.thread = match self.post(&address, text, true, true) {
+                Ok(id) => id,
+                Err(error) => {
+                    self.record_error("delivery_failed", error)?;
+                    continue;
+                }
+            };
             self.state.threads.push(Thread {
                 address,
                 agent: name.into(),
@@ -931,6 +1080,7 @@ impl Engine {
                 created: at,
                 used: at,
             });
+            self.save()?;
         }
         Ok(())
     }
@@ -940,14 +1090,16 @@ impl Engine {
         };
         let mut messages = Vec::new();
         for channel in config.channels {
-            let info = self
-                .connections
-                .get_mut(kind)
-                .unwrap()
-                .channel(&channel.id)?;
+            let info = match self.connections.get_mut(kind).unwrap().channel(&channel.id) {
+                Ok(info) => info,
+                Err(error) => {
+                    self.record_error("backfill_failed", error)?;
+                    continue;
+                }
+            };
             self.channels
                 .insert((kind.into(), channel.id.clone()), info);
-            let Some(cursor) = self
+            let after = self
                 .state
                 .cursors
                 .iter()
@@ -956,44 +1108,75 @@ impl Engine {
                         && c.address.channel == channel.id
                         && c.address.thread.is_empty()
                 })
-                .cloned()
-            else {
+                .map(|cursor| HistoryAfter {
+                    id: Some(cursor.id.clone()),
+                    at: cursor.at,
+                })
+                .or_else(|| {
+                    self.state
+                        .online
+                        .get(kind)
+                        .map(|at| HistoryAfter { id: None, at: *at })
+                });
+            let Some(after) = after else {
                 continue;
             };
-            let mut requests = vec![(None, cursor.clone())];
-            for thread in self
-                .state
-                .threads
-                .iter()
-                .filter(|t| t.address.kind == kind && t.address.channel == channel.id)
+            let found = match self
+                .connections
+                .get_mut(kind)
+                .unwrap()
+                .history(&channel.id, &after)
             {
-                let cursor = self
-                    .state
-                    .cursors
-                    .iter()
-                    .find(|c| c.address == thread.address)
-                    .cloned()
-                    .unwrap_or_else(|| Cursor {
-                        address: thread.address.clone(),
-                        id: thread.address.thread.clone(),
-                        at: thread.created,
-                    });
-                requests.push((Some(thread.address.thread.clone()), cursor));
-            }
-            for (thread, cursor) in requests {
-                let found = self.connections.get_mut(kind).unwrap().history(
-                    &channel.id,
-                    thread.as_deref(),
-                    &cursor.id,
-                )?;
-                messages.extend(found.into_iter().filter(|m| {
-                    m.sender == config.owner && m.channel == channel.id && m.at > cursor.at
-                }));
-            }
+                Ok(found) => found,
+                Err(error) => {
+                    self.record_error("backfill_failed", error)?;
+                    continue;
+                }
+            };
+            messages.extend(found.into_iter().filter(|m| {
+                m.sender == config.owner && m.channel == channel.id && m.at > after.at
+            }));
         }
         messages.sort_by(|a, b| a.at.total_cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
         for message in messages {
+            // Workers can enqueue live input while history is being fetched.
+            if self.store.inbox().iter().any(|input| input.kind == kind
+                && matches!(&input.event, Event::Message(live) if live.channel == message.channel && live.id == message.id)) {
+                continue;
+            }
             self.message(kind, message, corral, at, true)?;
+        }
+        Ok(())
+    }
+    fn verify_queue(&mut self) -> Result<()> {
+        self.unverified.retain(|(address, id)| {
+            self.state
+                .pending
+                .iter()
+                .any(|p| p.address == *address && p.message == *id && p.phase == Phase::Queued)
+        });
+        for (address, id) in self.unverified.clone() {
+            if !self.connected.contains(&address.kind) {
+                continue;
+            }
+            let thread = (address.thread != id).then_some(address.thread.as_str());
+            match self.connections.get_mut(&address.kind).unwrap().exists(
+                &address.channel,
+                thread,
+                &id,
+            ) {
+                Ok(exists) => {
+                    self.unverified.remove(&(address.clone(), id.clone()));
+                    if !exists {
+                        self.state
+                            .pending
+                            .retain(|p| !(p.address == address && p.message == id));
+                        self.save()?;
+                        self.say(&address, "撤回了", false)?;
+                    }
+                }
+                Err(error) => self.record_error("queue_check_failed", error)?,
+            }
         }
         Ok(())
     }

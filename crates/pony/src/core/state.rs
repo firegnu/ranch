@@ -5,7 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::{Read, Write},
     os::unix::fs::OpenOptionsExt,
@@ -40,6 +40,10 @@ pub enum Phase {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Pending {
     pub announcement: Option<String>,
+    #[serde(default)]
+    pub attachments: bool,
+    #[serde(default)]
+    pub rejection_reported: bool,
     pub address: Address,
     pub message: String,
     pub agent: String,
@@ -67,14 +71,56 @@ pub struct Cursor {
     pub at: f64,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Seen {
+    pub kind: String,
+    pub channel: String,
+    pub id: String,
+    pub at: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Expired {
+    #[serde(flatten)]
+    pub address: Address,
+    #[serde(default = "now")]
+    pub at: f64,
+}
+
+fn read_seen<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Vec<Seen>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Entry {
+        Timed(Seen),
+        Legacy((String, String, String)),
+    }
+    Ok(Vec::<Entry>::deserialize(deserializer)?
+        .into_iter()
+        .map(|entry| match entry {
+            Entry::Timed(seen) => seen,
+            Entry::Legacy((kind, channel, id)) => Seen {
+                kind,
+                channel,
+                id,
+                at: now(),
+            },
+        })
+        .collect())
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct State {
     pub threads: Vec<Thread>,
-    pub expired: BTreeSet<Address>,
+    pub expired: Vec<Expired>,
     pub pending: Vec<Pending>,
     pub watches: BTreeMap<String, Watch>,
-    pub seen: BTreeSet<(String, String, String)>,
+    #[serde(deserialize_with = "read_seen")]
+    pub seen: Vec<Seen>,
     pub cursors: Vec<Cursor>,
+    #[serde(default)]
+    pub online: BTreeMap<String, f64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -163,6 +209,11 @@ impl Store {
         next.state = state.clone();
         if let Some(id) = finished {
             next.inbox.retain(|v| v.sequence != id);
+        }
+        if serde_json::to_vec(&next).expect("state is JSON-compatible")
+            == serde_json::to_vec(&*data).expect("state is JSON-compatible")
+        {
+            return Ok(());
         }
         self.write(&next)?;
         *data = next;

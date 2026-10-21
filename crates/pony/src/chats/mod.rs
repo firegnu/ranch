@@ -83,6 +83,14 @@ pub struct SendError {
     pub resize: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct HistoryAfter {
+    /// Last processed message, if known; opaque to the core.
+    pub id: Option<String>,
+    /// Exclusive lower bound in Unix seconds, also usable without a message ID.
+    pub at: f64,
+}
+
 pub trait Connection {
     fn name(&self) -> &str {
         "聊天"
@@ -91,10 +99,13 @@ pub trait Connection {
     /// Return the posted message ID. Rate limits/retries/escaping belong to the adapter.
     fn send(&mut self, message: Outgoing<'_>) -> std::result::Result<String, SendError>;
     fn channel(&mut self, id: &str) -> Result<ChannelInfo>;
-    /// Fetch ALL pages newer than the opaque message ID; thread=None means channel history.
+    /// Fetch ALL newer messages in this channel, INCLUDING replies in old and new threads.
+    /// The adapter chooses how to find threads with new replies, without scanning each one.
     /// Translate identically to live messages; edits and bot messages are excluded.
-    fn history(&mut self, channel: &str, thread: Option<&str>, after: &str)
-    -> Result<Vec<Message>>;
+    fn history(&mut self, channel: &str, after: &HistoryAfter) -> Result<Vec<Message>>;
+    /// Return false only for a confirmed deletion, not inaccessible history/network errors.
+    /// thread is None for a channel root; otherwise it identifies the parent message.
+    fn exists(&mut self, channel: &str, thread: Option<&str>, id: &str) -> Result<bool>;
     /// Stop and join owned network workers when dropped, including on configuration reload.
     fn close(&mut self) {}
 }

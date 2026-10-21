@@ -125,5 +125,29 @@
 - `Connection::name`：用户提示里的平台名，Slack 填 Slack；`limits` 填 characters=10_000、threads=true。无线程平台的降级逻辑已经在核心。
 - `Connection::send(Outgoing)`：channel、可选 thread、markdown、notify，成功返回实际消息 ID。Slack 实现 markdown 块、通知文案和 @ owner、转义正文中的意外 @、关闭链接预览、每频道限频与重试。SendError.code 是公开错误码，resize=true 只用于确定未发出、可以缩小重试的格式／长度错误。
 - `Connection::channel(id)`：返回 name、private、problem；None 表示机器人在可用频道内，其他值使用 not_member／not_found／archived 等公开代码。
-- `Connection::history(channel, thread, after)`：读完所有分页，返回比不透明消息 ID 新的统一 Message；thread=None 为频道历史，否则为线程回复。核心再检查 owner、频道、时间与去重，按时间排序补收。首次没有游标不调用 history。
+- `Connection::history(channel, &HistoryAfter)`（返工 1 更新）：读完所有分页，返回频道里比游标新的统一 Message，包含新旧线程里的回复。HistoryAfter.id 为可选的不透明消息 ID，at 为 Unix 秒下界（不含）；没有 ID 时按 at 读。首次没有历史起点不调用，之后无频道游标时用上次在线时间。由适配器决定如何省请求，Slack 可按父消息 latest_reply 查有新回复的线程，也要覆盖旧父消息下的新回复；核心不再逐个线程调用。核心检查 owner、频道、时间与去重，跳过收件箱已有的在线消息，合并按时间排序补收。
+- `Connection::exists(channel, thread, id)`（返工 1 新增）：核对原消息是否仍在；顶层 thread=None，回复传父消息 ID。仅确定删除才返回 false，无权限／网络故障／无法判断返回错误。每次连接后核心核对全部 Queued，false 按撤回处理；错误记日志、暂缓该条、每轮重试，其他 agent 照常。
+- attachments 由核心处理：路由成功的 `→` 之后说「附件没送」；只有附件没有字时说「附件没送，只收文字」。发送失败只记日志和线程，`pony status` 的 connection 只由适配器 Connection 事件决定。
 - `Connection::close`：停止并等待自有网络线程。`chats/slack.rs` 的 Placeholder 已把本轮全部接口留齐；R38e 只改这个文件即可接入，共用核心不需要引用任何一家名字。详细说明也在 `crates/pony/README.md`。
+
+## 返工记录
+
+2026-10-21，第 1 次返工，按 R38d 审查文件末尾「主控对审查意见的决定」。
+
+### 改了什么
+
+- 必须改 1、建议改 5、11：history 改为整频道新消息（含新旧线程回复），核心不再逐线程读取；无频道游标时仅首次不补收，后续按上次在线时间补收。历史结果跳过收件箱已有的在线消息，其他消息合并排序后路由。README 和上面的「给 R38e 的接口说明」同步更新。
+- 必须改 2：在等回复时检查 `reply.at >= status.turn_started`；旧回复不贴回，改回「X 这一轮结束了，没有新回复」，再送下一句。
+- 必须改 3：路由错误回 error／message 后出队；盯 agent 错误只跳过该 agent 当轮，补收错误只跳过该频道，连接事件正常出队；错误码写日志。确认发不出去只拦住该条队列。回复／提醒先保存完成及去重标记，再发送分段，部分失败和重启都不重发成功段；已发出的提醒根消息仍能续聊。io／state_invalid 等致命错误继续退出。
+- 建议改 4：state 和 status 内容不变时不改写文件。seen 保留 24 小时（12 小时窗口加 12 小时余量）；不再创建逐线程游标，旧线程游标随线程清理；expired 保留 90 天。在线时间每分钟保存，给无游标频道留下最多一分钟重叠；旧版无时间的 seen／expired 仍能读取。
+- 建议改 6、7：发送失败只进日志和线程，connection 只取适配器事件；不改 status JSON 或 CONTRACT。这取代首次完成记录中「发送失败进 status」的说法。带附件路由后说「附件没送」，只有附件时说「附件没送，只收文字」。
+- 建议改 8：新增 `exists(channel, thread, id)`，每次连接后核对 Queued 原消息，确定删除则撤回并在线程说「撤回了」；核对出错暂缓该条并继续重试，其他 agent 照常。接口说明和 README 已写清 false 与错误的区别。
+- 建议改 9、10：同一句 human_active／not_idle 退回只提示一次，记号跨重启保存；同批消息给空闲 agent 时，排队计数不含马上发送的队首。corral_unavailable 明确说「没送」，不再说「结果不明」。
+- 12–17 未改；没有新增依赖，没有改设计稿、CONTRACT、corral 或其他包。paddock 不用动。未部署、合并或推送。
+
+### 验证了什么
+
+- 审查标「已复现」的场景分别补了测试：离线新线程回复、StopFailure 后旧回复、盯 agent 错误、路由错误、频道 channel／history 错误、发送失败后连接状态、重复拒绝提示、同批队列位置。另覆盖分段部分失败与重启、无游标提醒频道、在线与历史重叠、附件、离线撤回和核对失败、文件不改写与清理、旧状态读取、corral_unavailable。
+- 严格只执行一次 `cargo test -p pony`：lib 2 项、CLI 9 项通过，核心 32 项通过、1 项新增测试失败；Cargo 因该失败未继续运行后面的 corral／split 测试。失败在 `partial_reply_or_notice_failure_does_not_repost_successful_chunks_after_restart` 的夹具：提醒标题先单独成段，夹具只允许标题通过，却断言已有正文段发出。已把故障阈值改为允许标题（或已有确认）加一段正文通过，断言不变；遵照次数限制没有重跑，因此修正后的测试尚未执行确认。
+- `cargo clippy --all-targets -- -D warnings` 一次通过；`cargo fmt --check` 一次通过。没有重跑全仓测试或另跑定向测试。全部命令在前台等到结束，编译目录为 `.target/r38d-pony-core`；测试使用临时目录、内存适配器／corral 和隔离的假程序。
+- 主控已定的 1–11 均按决定实现，没有新增设计决策待确认。验证上请主控决定是否允许补跑修正后的测试；未擅自突破一次限制。
