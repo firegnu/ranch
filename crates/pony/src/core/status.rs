@@ -50,6 +50,12 @@ pub struct Snapshot {
     pub chats: Vec<ChatStatus>,
 }
 
+impl Default for Snapshot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn chats(config: &Config, connection: &str, since: Option<f64>) -> Vec<ChatStatus> {
     config
         .chats
@@ -79,6 +85,39 @@ pub fn chats(config: &Config, connection: &str, since: Option<f64>) -> Vec<ChatS
 }
 
 impl Snapshot {
+    pub fn update(&mut self, engine: &super::engine::Engine, at: f64) {
+        for chat in &mut self.chats {
+            if let Some(report) = engine.reports.get(&chat.kind) {
+                if chat.connection != report.connection {
+                    chat.since = Some(at);
+                }
+                chat.connection = report.connection.clone();
+                chat.reason = if report.connection == "failed" {
+                    report.reason.clone()
+                } else {
+                    None
+                };
+                chat.message = if report.connection == "failed" {
+                    report.message.clone()
+                } else {
+                    None
+                };
+                chat.workspace = report.workspace.clone();
+                chat.bot = report.bot.clone();
+                chat.other_connections = report.other_connections;
+            }
+            for channel in &mut chat.channels {
+                if let Some(info) = engine
+                    .channels
+                    .get(&(chat.kind.clone(), channel.id.clone()))
+                {
+                    channel.name = info.name.clone();
+                    channel.private = info.private;
+                    channel.problem = info.problem.clone();
+                }
+            }
+        }
+    }
     pub fn new() -> Self {
         Self {
             pid: std::process::id(),
@@ -104,6 +143,10 @@ impl Snapshot {
 
     pub fn save(&self, home: &Path) -> Result<()> {
         let directory = home.join("run");
+        let bytes = serde_json::to_vec(self).expect("status contains only JSON-compatible fields");
+        if fs::read(directory.join("status.json")).is_ok_and(|previous| previous == bytes) {
+            return Ok(());
+        }
         let temporary = directory.join(format!(".status.{}.{}.tmp", self.pid, now().to_bits()));
         let mut file = OpenOptions::new()
             .write(true)
@@ -112,8 +155,6 @@ impl Snapshot {
             .open(&temporary)
             .map_err(|e| files::io_error(&temporary, e))?;
         let result = (|| {
-            let bytes =
-                serde_json::to_vec(self).expect("status contains only JSON-compatible fields");
             file.write_all(&bytes)?;
             file.sync_all()?;
             fs::rename(&temporary, directory.join("status.json"))

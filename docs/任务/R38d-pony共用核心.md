@@ -80,3 +80,95 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话；另写一段「给 R38e 的接口说明」：`Chat` 上新加的每一项是什么、Slack 那边要填什么。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-21，ranch/dev-r38d，分支 `r38d-pony-core`。
+
+### 做了什么
+
+- 新增 corral 命令边界，只调用 `--version`、`ls`、`status`、`reply`、`send`；找程序的顺序、contract 1 校验、JSON 和退出码按约定处理，正文放在 `--` 后，不加 force。
+- 实现共用核心：owner 和频道隔离、全名／短名／默认主控路由、线程续聊、重开提示、排队和撤回、各发送结果、每轮回复、主控新回复、Needs you、去重、`?`、30 天线程过期、重启恢复和 12 小时离线补收。未绑定仓库不调用 status，不输出其信息。
+- `state.json` 用 0600 临时文件同步后改名并同步目录。适配器接收入口在回执前持久保存事件；核心等待 corral／发送时仍可接收。陌生人的正文在保存前丢弃，只留下固定的忽略事件。
+- Markdown 按字符和行切分，正文不改，代码围栏和段号单独添加；表格尽量整块。拒绝过长／格式错误时只重切失败段，最小 1,000 字；最终失败回线程并记日志和 status。已经成功的段不重发，重切部分有自己的 `(i/N)`。
+- 核心接进 `pony run`，沿用配置重读、锁、状态和日志。Slack 仍是纯占位，无网络请求，报 connecting；README 写明 R38e 接口和 paddock 影响。`pony status` 输出格式不变，paddock 不用动。
+
+### 验证了什么
+
+- 按任务限定的核心和命令边界做测试：路由、隐私、队列、撤回、状态说法、全部发送结果、稳定轮询、提醒与线程、分段与失败、重启去重和发送结果不明、补收顺序与 12 小时上限、首次不补收。关键行为先跑到目标断言失败再实现；队首 human_active 退避和发送确认失败也先复现再修。
+- pony 最后一次 `cargo test -p pony`：32 项通过。测试只用内存适配器／内存 corral，以及 Rust 编译的假命令；实际启动假命令或 pony 的 HOME、PONY_HOME、CORRAL_HOME 都是临时目录。核心源码不出现适配器名的原测试继续通过。
+- `cargo test --all-targets` 跑一次通过（228 通过、11 项按原标记忽略：3 项外部兼容基线、8 项真实 srt 环境）。之后自查补了发送确认失败的回归与持久恢复，并重跑上述 pony 全部测试通过；没有再跑全仓测试。
+- `cargo clippy --all-targets -- -D warnings` 首次发现新分段代码一处 collapsible_if；合并该条件后复跑通过。这一次必要的修正复核比原定的一次多跑了一次，未增加其他验证项目。`cargo fmt --check` 一次通过；`git diff --check` 通过。
+- 全部命令前台等到结束，编译目录均为 `.target/r38d-pony-core`。未改 `crates/corral/`、其他包、Cargo.lock 或公开约定文档。
+
+### 拿主意的地方
+
+- 主控明确决定采用方案 1：发送前记 Sending；重启遇到发送结果不明的，不自动重送，在原线程回「上次发送结果不明，没重送，请确认后重发」，日志记 send_uncertain；其余队列照常恢复。按主控要求只记在这里，不改设计稿。
+- 线程过期后移除 agent／实例对应，保留过期线程 ID，保证再次回复时能明确提示，而不是误当成陌生线程或猜路由。
+- 接收与回执通过持久 Events 入口分开；适配器工作线程先保存，再回执，避免 corral send 等待期间耽误入站回执。发送确认文字也随队列保存，确认未发成功前不会发送正文。
+- 没有新的待主控决定事项，也没有新增第三方依赖。
+
+### 没做的事
+
+不连 Slack，不做 service，不部署，不装技能，不读写真正的 `~/.pony`／`~/.corral`，不操作用户 agent，不改 paddock，不合并 main，不推送。真实平台的 Markdown 转换、意外 @ 转义、网络限频／重连和上线实测留给 R38e／R38f。R38c 留给 R38e 的 corral 保留名配置校验未顺带修改。
+
+### 踩过的坑
+
+直接调用 rustc 编译假程序时默认 edition 不随 Cargo 包走，2024 的 let-chain 被拒；给假程序编译显式加 `--edition=2024` 后通过。自查的回归还发现：队首等 human_active 时后面的消息可能越过它，以及发送确认失败后正文可能先送；分别用严格队首检查、持久保存待发送确认修好。没有通过删测试、放宽断言或缩短超时绕过。
+
+### 给 R38e 的接口说明
+
+`Chat` 原有 kind、secret_keys、config_keys、read_config 保留，新增 `connect(Connect) -> Result<Box<dyn Connection>>`。Connect 含本家的 ChatConfig、proxy、credentials 回调和 Events；credentials 必须每次连接／重连调用，重新校验权限和读取凭证；connect 起工作线程后返回，网络／认证失败通过事件报告，由适配器退避重试。工作线程在 close 和 Drop 时停止并等待退出。
+
+- `Events::emit(Event)`：成功意味着已落盘，可以 ACK；失败不能 ACK。Connection 事件给 connection、公开 reason／message、workspace、bot、other_connections。先报 connected，再交付这次连接的消息。不能把 ticket URL、token、原始 HTTP 错误放进公开说明。
+- `Event::Message`：channel、id、thread、sender、mentioned、去 @／解转义后的 Markdown text、attachments、Unix 秒 at。适配器排除机器人消息与编辑。`Event::Deleted` 给原消息 channel／id。核心统一 owner 检查、去重、路由和队列。
+- `Connection::name`：用户提示里的平台名，Slack 填 Slack；`limits` 填 characters=10_000、threads=true。无线程平台的降级逻辑已经在核心。
+- `Connection::send(Outgoing)`：channel、可选 thread、markdown、notify，成功返回实际消息 ID。Slack 实现 markdown 块、通知文案和 @ owner、转义正文中的意外 @、关闭链接预览、每频道限频与重试。SendError.code 是公开错误码，resize=true 只用于确定未发出、可以缩小重试的格式／长度错误。
+- `Connection::channel(id)`：返回 name、private、problem；None 表示机器人在可用频道内，其他值使用 not_member／not_found／archived 等公开代码。
+- `Connection::history(channel, &HistoryAfter)`（返工 1、2 更新）：读完所有分页，返回频道里比游标新的统一 Message，包含新旧线程里的回复。HistoryAfter.id 为可选的不透明消息 ID，at 为 Unix 秒下界（不含）；没有 ID 时按 at 读。首次没有历史起点不调用，之后无频道游标时用上次在线时间。由适配器决定如何省请求，Slack 可按父消息 latest_reply 查有新回复的线程；父消息向前找 30 天（与线程过期一致），覆盖这个范围内旧父消息下的新回复。核心不再逐个线程调用。核心检查 owner、频道、时间与去重，跳过收件箱已有的在线消息，合并按时间排序补收；失败下界持久保存，每轮重试，超过 12 小时说明后清除。
+- `Connection::exists(channel, thread, id)`（返工 1 新增、返工 2 更新）：核对原消息是否仍在；顶层 thread=None，回复传父消息 ID。仅确定删除才返回 false，无权限／网络故障／无法判断返回错误。每次连接后核心核对全部 Queued，false 按撤回处理；错误记日志、暂缓该条、按 2、4、8… 秒退避（间隔最多 5 分钟），超过 10 分钟还核对不了，在线程说「没法核对这句还在不在，先不送；要送请重发」后出队，其他 agent 照常。计时持久保存。
+- Connection 操作返回的错误一律非致命，包括 channel／history／exists 返回 io、state_invalid、secrets_too_open；核心按错误来源区分，同名代码不会误触发退出。核心自身的存储、凭证错误仍按原规则处理；适配器的公开错误不能含凭证。
+- attachments 由核心处理：路由成功的 `→` 之后说「附件没送」；只有附件没有字时说「附件没送，只收文字」。发送失败只记日志和线程，`pony status` 的 connection 只由适配器 Connection 事件决定。
+- `Connection::close`：停止并等待自有网络线程。`chats/slack.rs` 的 Placeholder 已把本轮全部接口留齐；R38e 只改这个文件即可接入，共用核心不需要引用任何一家名字。详细说明也在 `crates/pony/README.md`。
+
+## 返工记录
+
+2026-10-21，第 1 次返工，按 R38d 审查文件末尾「主控对审查意见的决定」。
+
+### 改了什么
+
+- 必须改 1、建议改 5、11：history 改为整频道新消息（含新旧线程回复），核心不再逐线程读取；无频道游标时仅首次不补收，后续按上次在线时间补收。历史结果跳过收件箱已有的在线消息，其他消息合并排序后路由。README 和上面的「给 R38e 的接口说明」同步更新。
+- 必须改 2：在等回复时检查 `reply.at >= status.turn_started`；旧回复不贴回，改回「X 这一轮结束了，没有新回复」，再送下一句。
+- 必须改 3：路由错误回 error／message 后出队；盯 agent 错误只跳过该 agent 当轮，补收错误只跳过该频道，连接事件正常出队；错误码写日志。确认发不出去只拦住该条队列。回复／提醒先保存完成及去重标记，再发送分段，部分失败和重启都不重发成功段；已发出的提醒根消息仍能续聊。io／state_invalid 等致命错误继续退出。
+- 建议改 4：state 和 status 内容不变时不改写文件。seen 保留 24 小时（12 小时窗口加 12 小时余量）；不再创建逐线程游标，旧线程游标随线程清理；expired 保留 90 天。在线时间每分钟保存，给无游标频道留下最多一分钟重叠；旧版无时间的 seen／expired 仍能读取。
+- 建议改 6、7：发送失败只进日志和线程，connection 只取适配器事件；不改 status JSON 或 CONTRACT。这取代首次完成记录中「发送失败进 status」的说法。带附件路由后说「附件没送」，只有附件时说「附件没送，只收文字」。
+- 建议改 8：新增 `exists(channel, thread, id)`，每次连接后核对 Queued 原消息，确定删除则撤回并在线程说「撤回了」；核对出错暂缓该条并继续重试，其他 agent 照常。接口说明和 README 已写清 false 与错误的区别。
+- 建议改 9、10：同一句 human_active／not_idle 退回只提示一次，记号跨重启保存；同批消息给空闲 agent 时，排队计数不含马上发送的队首。corral_unavailable 明确说「没送」，不再说「结果不明」。
+- 12–17 未改；没有新增依赖，没有改设计稿、CONTRACT、corral 或其他包。paddock 不用动。未部署、合并或推送。
+
+### 验证了什么
+
+- 审查标「已复现」的场景分别补了测试：离线新线程回复、StopFailure 后旧回复、盯 agent 错误、路由错误、频道 channel／history 错误、发送失败后连接状态、重复拒绝提示、同批队列位置。另覆盖分段部分失败与重启、无游标提醒频道、在线与历史重叠、附件、离线撤回和核对失败、文件不改写与清理、旧状态读取、corral_unavailable。
+- 严格只执行一次 `cargo test -p pony`：lib 2 项、CLI 9 项通过，核心 32 项通过、1 项新增测试失败；Cargo 因该失败未继续运行后面的 corral／split 测试。失败在 `partial_reply_or_notice_failure_does_not_repost_successful_chunks_after_restart` 的夹具：提醒标题先单独成段，夹具只允许标题通过，却断言已有正文段发出。已把故障阈值改为允许标题（或已有确认）加一段正文通过，断言不变；遵照次数限制没有重跑，因此修正后的测试尚未执行确认。
+- `cargo clippy --all-targets -- -D warnings` 一次通过；`cargo fmt --check` 一次通过。没有重跑全仓测试或另跑定向测试。全部命令在前台等到结束，编译目录为 `.target/r38d-pony-core`；测试使用临时目录、内存适配器／corral 和隔离的假程序。
+- 主控已定的 1–11 均按决定实现，没有新增设计决策待确认。验证上请主控决定是否允许补跑修正后的测试；未擅自突破一次限制。
+
+### 第 2 次返工（2026-10-21）
+
+按「复核意见（第 1 轮）」末尾主控决定修改 18、19、20、21、23；22 不改。
+
+#### 改了什么
+
+- 18：按频道把补收下界、首次尝试时间和错误码写入 state.json，每轮用原下界重读，跨重启保留。补收完成前冻结该频道游标及本平台在线时间，在线消息仍照常处理；全部返回消息处理完才清除待补收项。超过 12 小时仍未读成，在频道发「重连后没读到离线期间的消息（错误码），那段时间发的话请重发」，清除记录并保存新的时间下界，避免下次连接再次读取已经请用户重发的区间。游标 ID 允许为空，仍兼容原有字符串 ID。
+- 19：`?` 对非退出 2 的状态错误显示该 agent「读不出」，其余 agent 继续列出。
+- 20：exists 失败按 2、4、8… 秒退避，间隔上限 5 分钟；核对开始时间、下次重试时间和退避间隔随队列保存，重连不重置。超过 10 分钟仍无法核对，在线程说「没法核对这句还在不在，先不送；要送请重发」并出队，后面的消息照常继续。
+- 21：Connection 返回的错误按来源记录为非致命，channel／history／exists 即使使用 io、state_invalid、secrets_too_open 也不退出；核心自身状态存储的致命错误仍返回。接口说明和 README 已写明。
+- 23：接口注释、README、「给 R38e 的接口说明」注明 history 查找父消息的范围是向前 30 天，与线程过期一致；同时同步补收重试和 exists 退避说明。
+- 未改 22、设计稿、CONTRACT、corral、其他包或依赖。paddock 不用动；未部署、合并或推送。没有新的待主控决定事项。
+
+#### 验证了什么
+
+- 18 按复现场景补测试：建游标、离线消息 at 100、重连补收出错、再收到在线消息、重启后恢复，离线消息仍按原下界补入队列且不重复；同时覆盖无游标频道和 channel／history 两种失败。另测每轮重试、跨重启计时、超过 12 小时说明后清除及再次连接不重复说明。
+- 19–21 各补一条测试：坏 agent 不拖累状态汇总；exists 按退避时点尝试、上限 5 分钟、跨重启保留、超过 10 分钟出队并放行下一句；适配器三个保留名错误码在 channel／history／exists 都非致命，而真实的隔离状态文件写入失败仍返回 io。原 exists 恢复测试的重试时刻按新退避规则调整，保留「未到时不送、到时恢复」断言。
+- `cargo test -p pony` 一次通过，共 53 项（lib 2、CLI 9、core 38、corral 2、split 2）。上次修正的分段夹具测试本轮也通过，上次待补跑事项已了结；本轮没有失败后修正或追加补跑。
+- `cargo clippy --all-targets -- -D warnings` 一次通过；`cargo fmt --check` 一次通过。未重跑全仓测试，所有命令前台等到完成，使用 `.target/r38d-pony-core`。测试仅使用内存假适配器／corral、隔离的假程序及临时状态目录。

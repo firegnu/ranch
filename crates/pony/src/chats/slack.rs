@@ -1,9 +1,15 @@
-use super::Chat;
+use super::{
+    ChannelInfo, Chat, Connect, Connection, HistoryAfter, Limits, Message, Outgoing, SendError,
+};
 use crate::core::config::{ChatConfig, Problem};
 
 pub struct Slack;
 
 impl Chat for Slack {
+    fn connect(&self, options: Connect) -> crate::core::Result<Box<dyn Connection>> {
+        (options.credentials)()?;
+        Ok(Box::new(Placeholder))
+    }
     fn kind(&self) -> &'static str {
         "slack"
     }
@@ -29,6 +35,43 @@ impl Chat for Slack {
             }
         }
         Ok(config)
+    }
+}
+
+struct Placeholder;
+impl Connection for Placeholder {
+    fn name(&self) -> &str {
+        "Slack"
+    }
+    fn limits(&self) -> Limits {
+        Limits {
+            characters: 10_000,
+            threads: true,
+        }
+    }
+    fn send(&mut self, _: Outgoing<'_>) -> Result<String, SendError> {
+        Err(SendError {
+            code: "connecting".into(),
+            resize: false,
+        })
+    }
+    fn channel(&mut self, _: &str) -> crate::core::Result<ChannelInfo> {
+        Err(crate::core::Error::new(
+            "connecting",
+            "adapter is not connected",
+        ))
+    }
+    fn history(&mut self, _: &str, _: &HistoryAfter) -> crate::core::Result<Vec<Message>> {
+        Err(crate::core::Error::new(
+            "connecting",
+            "adapter is not connected",
+        ))
+    }
+    fn exists(&mut self, _: &str, _: Option<&str>, _: &str) -> crate::core::Result<bool> {
+        Err(crate::core::Error::new(
+            "connecting",
+            "adapter is not connected",
+        ))
     }
 }
 

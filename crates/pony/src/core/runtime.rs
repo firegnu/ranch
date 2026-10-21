@@ -7,10 +7,16 @@ use super::{
     now, secrets,
     status::{self, Snapshot},
 };
-use crate::chats::CHATS;
+use super::{engine::Engine, state::Store};
+use crate::{
+    chats::{CHATS, Connect, Connection},
+    corral::Process,
+};
 use std::{
+    collections::BTreeMap,
     io,
-    path::Path,
+    path::{Path, PathBuf},
+    sync::Arc,
     sync::atomic::{AtomicI32, Ordering},
     thread,
     time::Duration,
@@ -80,6 +86,13 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
     snapshot.chats = status::chats(&active, "off", None);
     snapshot.save(home)?;
     validate_credentials(home, &active)?;
+    let mut corral = open_corral(&active)?;
+    let store = Store::open(home)?;
+    let mut engine = Engine::new(
+        store.clone(),
+        active.chats.clone(),
+        connect(home, &active, &store)?,
+    );
     snapshot.chats = status::chats(&active, "connecting", Some(now()));
     snapshot.save(home)?;
     log.event("run_started")?;
@@ -90,12 +103,57 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
         }
         let next = match config::load(home) {
             Ok(None) => return missing(log, snapshot),
-            Ok(Some(next)) if next == active && snapshot.config_error.is_none() => continue,
+            Ok(Some(next)) if next == active && snapshot.config_error.is_none() => Ok(next),
             Ok(Some(next)) => validate_credentials(home, &next).map(|()| next),
             Err(error) => Err(error),
         };
         match next {
+            Ok(next) if next == active => {
+                snapshot.config_error = None;
+            }
             Ok(next) => {
+                let updated_corral = if next.corral != active.corral {
+                    Some(open_corral(&next)?)
+                } else {
+                    None
+                };
+                let mut connections = BTreeMap::new();
+                for config in &next.chats {
+                    if next.proxy == active.proxy && active.chats.iter().any(|old| old == config) {
+                        if let Some(connection) = engine.connections.remove(&config.kind) {
+                            connections.insert(config.kind.clone(), connection);
+                        }
+                    } else {
+                        if let Some(mut connection) = engine.connections.remove(&config.kind) {
+                            connection.close();
+                        }
+                        engine.disconnect(&config.kind);
+                        let one = Config {
+                            corral: next.corral.clone(),
+                            proxy: next.proxy.clone(),
+                            chats: vec![config.clone()],
+                        };
+                        connections.extend(connect(home, &one, &store)?);
+                    }
+                }
+                for connection in engine.connections.values_mut() {
+                    connection.close();
+                }
+                engine.connections = connections;
+                engine.configs = next.chats.clone();
+                engine.reports.retain(|kind, _| {
+                    next.proxy == active.proxy
+                        && next
+                            .chats
+                            .iter()
+                            .any(|c| c.kind == *kind && active.chats.contains(c))
+                });
+                engine
+                    .channels
+                    .retain(|(kind, _), _| engine.reports.contains_key(kind));
+                if let Some(updated) = updated_corral {
+                    corral = updated;
+                }
                 let mut chats = status::chats(&next, "connecting", Some(now()));
                 if next.proxy == active.proxy {
                     for chat in &mut chats {
@@ -119,18 +177,71 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
                     .as_ref()
                     .is_some_and(|old| old.code == error.code && old.message == error.message)
                 {
-                    continue;
+                    // Keep serving the last valid configuration.
+                } else {
+                    log.event(&error.code)?;
+                    snapshot.config_error = Some(error);
                 }
-                log.event(&error.code)?;
-                snapshot.config_error = Some(error);
             }
         }
+        if let Err(error) = engine.step(&mut corral, now()) {
+            if matches!(
+                error.code.as_str(),
+                "io" | "state_invalid" | "secrets_too_open"
+            ) {
+                return Err(error);
+            }
+            // Adapter/corral errors never put reply bodies or command stderr in logs.
+            log.event(&super::engine::safe_code(&error.code))?;
+        }
+        for entry in engine.log.drain(..) {
+            log.event(&entry)?;
+        }
+        snapshot.update(&engine, now());
         snapshot.save(home)?;
     }
     snapshot.exit(
         "stopped",
         &format!("stopped by signal {}", STOP.load(Ordering::Relaxed)),
     );
+    for connection in engine.connections.values_mut() {
+        connection.close();
+    }
     log.event("stopped")?;
     Ok(())
+}
+
+fn open_corral(config: &Config) -> Result<Process> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| Error::new("corral_unavailable", "HOME is not set"))?;
+    Process::discover(
+        config.corral.as_deref(),
+        std::env::var_os("PATH").as_deref(),
+        &home,
+    )
+    .map_err(|e| Error::new(&e.code, e.message))
+}
+
+fn connect(
+    home: &Path,
+    config: &Config,
+    store: &Store,
+) -> Result<BTreeMap<String, Box<dyn Connection>>> {
+    let mut connections = BTreeMap::new();
+    for adapter in CHATS {
+        let Some(chat) = config.chats.iter().find(|c| c.kind == adapter.kind()) else {
+            continue;
+        };
+        let home = home.to_path_buf();
+        let adapter = *adapter;
+        let connection = adapter.connect(Connect {
+            config: chat.clone(),
+            proxy: config.proxy.clone(),
+            events: store.events(&chat.kind, &chat.owner),
+            credentials: Arc::new(move || secrets::load(&home, adapter)),
+        })?;
+        connections.insert(chat.kind.clone(), connection);
+    }
+    Ok(connections)
 }

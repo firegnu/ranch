@@ -1,7 +1,116 @@
-//! Code-level adapters. Connection, events and delivery are added in R38e.
+//! Transport boundary. Adapters own network workers, retries and platform syntax.
 mod slack;
 
 use crate::core::config::{ChatConfig, Problem};
+use crate::core::{Result, secrets::Credentials};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Message {
+    pub channel: String,
+    pub id: String,
+    pub thread: Option<String>,
+    pub sender: String,
+    pub mentioned: bool,
+    pub text: String,
+    pub attachments: bool,
+    pub at: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChannelInfo {
+    pub id: String,
+    pub name: Option<String>,
+    pub private: Option<bool>,
+    /// None means the bot is a member. Otherwise: not_member, not_found, archived.
+    pub problem: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConnectionInfo {
+    pub connection: String,
+    /// Public, sanitized error code and explanation; never include network URLs or tokens.
+    pub reason: Option<String>,
+    pub message: Option<String>,
+    pub workspace: Option<String>,
+    pub bot: Option<String>,
+    pub other_connections: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Event {
+    Message(Message),
+    Deleted { channel: String, id: String },
+    Connection(ConnectionInfo),
+    Ignored,
+}
+
+/// Calling emit durably records messages before returning. ACK only after Ok.
+/// A worker can emit while the core is waiting for corral or outgoing delivery.
+#[derive(Clone)]
+pub struct Events(pub Arc<dyn Fn(Event) -> Result<()> + Send + Sync>);
+impl Events {
+    pub fn emit(&self, event: Event) -> Result<()> {
+        (self.0)(event)
+    }
+}
+
+pub struct Connect {
+    pub config: ChatConfig,
+    pub proxy: Option<String>,
+    /// Call before EVERY connection/reconnection; permissions and values are reread.
+    pub credentials: Arc<dyn Fn() -> Result<Credentials> + Send + Sync>,
+    pub events: Events,
+}
+
+#[derive(Clone, Copy)]
+pub struct Limits {
+    pub characters: usize,
+    pub threads: bool,
+}
+
+pub struct Outgoing<'a> {
+    pub channel: &'a str,
+    pub thread: Option<&'a str>,
+    pub markdown: &'a str,
+    pub notify: bool,
+}
+
+#[derive(Debug)]
+pub struct SendError {
+    pub code: String,
+    pub resize: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HistoryAfter {
+    /// Last processed message, if known; opaque to the core.
+    pub id: Option<String>,
+    /// Exclusive lower bound in Unix seconds, also usable without a message ID.
+    pub at: f64,
+}
+
+pub trait Connection {
+    fn name(&self) -> &str {
+        "聊天"
+    }
+    fn limits(&self) -> Limits;
+    /// Return the posted message ID. Rate limits/retries/escaping belong to the adapter.
+    fn send(&mut self, message: Outgoing<'_>) -> std::result::Result<String, SendError>;
+    /// Connection operation errors are nonfatal, regardless of their public code.
+    fn channel(&mut self, id: &str) -> Result<ChannelInfo>;
+    /// Fetch ALL newer messages in this channel, INCLUDING replies in old and new threads.
+    /// The adapter chooses how to find threads with new replies, without scanning each one.
+    /// Look back 30 days for parent messages, matching the core's thread retention.
+    /// Translate identically to live messages; edits and bot messages are excluded.
+    fn history(&mut self, channel: &str, after: &HistoryAfter) -> Result<Vec<Message>>;
+    /// Return false only for a confirmed deletion, not inaccessible history/network errors.
+    /// thread is None for a channel root; otherwise it identifies the parent message.
+    fn exists(&mut self, channel: &str, thread: Option<&str>, id: &str) -> Result<bool>;
+    /// Stop and join owned network workers when dropped, including on configuration reload.
+    fn close(&mut self) {}
+}
 
 pub trait Chat: Sync {
     fn kind(&self) -> &'static str;
@@ -9,7 +118,8 @@ pub trait Chat: Sync {
     fn config_keys(&self) -> &'static [&'static str] {
         &[]
     }
-    fn read_config(&self, table: &toml::Table) -> Result<ChatConfig, Problem>;
+    fn read_config(&self, table: &toml::Table) -> std::result::Result<ChatConfig, Problem>;
+    fn connect(&self, options: Connect) -> crate::core::Result<Box<dyn Connection>>;
 }
 
 pub static CHATS: &[&dyn Chat] = &[&slack::Slack];
