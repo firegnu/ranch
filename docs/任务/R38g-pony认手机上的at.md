@@ -64,3 +64,11 @@
 - 拿主意的地方：没有新增设计取舍；沿用适配器原有的必填认证字段读取方式、前导空白处理和事件过滤，只扩充匹配用的 ID。无需主控决定。
 - 没做的事：没有修改共用核心、`chats/mod.rs`、`crates/corral/` 或其他行为；没有连接真实 Slack、读取真实 pony/corral 状态、调用真实 launchctl、操作用户 agent、部署、合并或推送。按任务限定，没有增加其他测试或运行 clippy、fmt 检查。默认忽略的测试需要外部旧版 corral 或真实 srt，本次未启用。
 - 踩过的坑：没有。
+
+## 主控审查
+
+- 看了 diff：只动了 `chats/slack.rs`、`chats/slack/tests.rs`、README 和本文件；共用核心、`chats/mod.rs`、corral 没改。`bot_id` 和机器人用户 ID 一样在连上时从 `auth.test` 取，在线接收和补收都传进 `translate`；测试只用假 ID `BBOT`，没有真实 ID。
+- 主控重跑全套 285 通过、0 失败、11 忽略；clippy、fmt 通过。
+- 留下：`auth.test` 没返回 `bot_id` 时这次连接按 `slack_error` 失败（和取 `user_id` 一样）；bot token 的 `auth.test` 会返回它，上线实测确认。
+
+结果：一次过
