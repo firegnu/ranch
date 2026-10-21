@@ -1,5 +1,4 @@
-mod chats;
-mod core;
+use pony::core;
 
 use serde_json::{Value, json};
 use std::{env, path::PathBuf};

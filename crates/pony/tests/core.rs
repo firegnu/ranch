@@ -1,0 +1,986 @@
+use pony::{
+    chats::*,
+    core::{
+        self,
+        config::{Channel, ChatConfig, Problem},
+        engine::Engine,
+        state::Store,
+    },
+    corral::{self, Agent, Corral, Reply, Sent, Status},
+};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
+
+#[derive(Clone, Debug)]
+struct Posted {
+    channel: String,
+    thread: Option<String>,
+    text: String,
+    notify: bool,
+    id: String,
+}
+#[derive(Default)]
+struct Memory {
+    posted: Vec<Posted>,
+    history: Vec<Message>,
+    history_reads: Vec<(String, Option<String>, String)>,
+    fail_over: Option<usize>,
+}
+struct MemoryConnection(Rc<RefCell<Memory>>, usize, bool);
+impl Connection for MemoryConnection {
+    fn limits(&self) -> Limits {
+        Limits {
+            characters: self.1,
+            threads: self.2,
+        }
+    }
+    fn send(&mut self, m: Outgoing<'_>) -> Result<String, SendError> {
+        let mut data = self.0.borrow_mut();
+        if data
+            .fail_over
+            .is_some_and(|n| m.markdown.chars().count() > n)
+        {
+            return Err(SendError {
+                code: "too_long".into(),
+                resize: true,
+            });
+        }
+        let id = format!("bot-{}", data.posted.len());
+        data.posted.push(Posted {
+            channel: m.channel.into(),
+            thread: m.thread.map(str::to_owned),
+            text: m.markdown.into(),
+            notify: m.notify,
+            id: id.clone(),
+        });
+        Ok(id)
+    }
+    fn channel(&mut self, id: &str) -> core::Result<ChannelInfo> {
+        Ok(ChannelInfo {
+            id: id.into(),
+            name: Some(id.to_lowercase()),
+            private: Some(true),
+            problem: None,
+        })
+    }
+    fn history(
+        &mut self,
+        channel: &str,
+        thread: Option<&str>,
+        after: &str,
+    ) -> core::Result<Vec<Message>> {
+        let mut data = self.0.borrow_mut();
+        data.history_reads
+            .push((channel.into(), thread.map(str::to_owned), after.into()));
+        Ok(data
+            .history
+            .iter()
+            .filter(|m| m.channel == channel && m.thread.as_deref() == thread)
+            .cloned()
+            .collect())
+    }
+}
+// Test-only registration exercises the same Chat boundary as production.
+struct MemoryChat;
+impl Chat for MemoryChat {
+    fn kind(&self) -> &'static str {
+        "memory"
+    }
+    fn secret_keys(&self) -> &'static [&'static str] {
+        &[]
+    }
+    fn read_config(&self, t: &toml::Table) -> Result<ChatConfig, Problem> {
+        ChatConfig::parse(self.kind(), t)
+    }
+    fn connect(&self, _: Connect) -> core::Result<Box<dyn Connection>> {
+        Ok(Box::new(MemoryConnection(Rc::default(), 10_000, true)))
+    }
+}
+static TEST_CHATS: &[&dyn Chat] = &[&MemoryChat];
+
+#[derive(Default)]
+struct FakeCorral {
+    agents: BTreeMap<String, Status>,
+    replies: BTreeMap<String, Result<Reply, corral::Failure>>,
+    sent: Vec<(String, String)>,
+    status_reads: Vec<String>,
+    outcomes: Vec<Result<Sent, corral::Failure>>,
+}
+impl Corral for FakeCorral {
+    fn list(&mut self) -> corral::Result<Vec<Agent>> {
+        Ok(self
+            .agents
+            .values()
+            .map(|s| Agent {
+                name: s.name.clone(),
+                instance: Some(s.instance.clone()),
+            })
+            .collect())
+    }
+    fn status(&mut self, name: &str) -> corral::Result<Status> {
+        self.status_reads.push(name.into());
+        self.agents
+            .get(name)
+            .cloned()
+            .ok_or_else(|| failure(2, "not_found"))
+    }
+    fn reply(&mut self, name: &str) -> corral::Result<Reply> {
+        self.replies
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Err(failure(1, "no_reply")))
+    }
+    fn send(&mut self, name: &str, text: &str) -> corral::Result<Sent> {
+        self.sent.push((name.into(), text.into()));
+        if self.outcomes.is_empty() {
+            Ok(Sent::default())
+        } else {
+            self.outcomes.remove(0)
+        }
+    }
+}
+fn failure(exit: i32, code: &str) -> corral::Failure {
+    corral::Failure {
+        exit: Some(exit),
+        code: code.into(),
+        message: "reason".into(),
+        interrupted: false,
+    }
+}
+fn status(name: &str, state: &str) -> Status {
+    Status {
+        name: name.into(),
+        instance: "instance-1".into(),
+        state: state.into(),
+        state_started: Some(1.),
+        turn_started: Some(1.),
+        last_event: Some("Stop".into()),
+        last_event_at: Some(1.),
+        last_tool: None,
+        title: None,
+        paused: false,
+        interrupted: false,
+    }
+}
+struct Fixture {
+    _dir: tempfile::TempDir,
+    engine: Engine,
+    corral: FakeCorral,
+    memory: Rc<RefCell<Memory>>,
+    events: Events,
+}
+impl Fixture {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let config = ChatConfig {
+            kind: TEST_CHATS[0].kind().into(),
+            owner: "owner".into(),
+            channels: vec![
+                Channel {
+                    id: "C1".into(),
+                    repo: "paddock".into(),
+                },
+                Channel {
+                    id: "C2".into(),
+                    repo: "ranch".into(),
+                },
+            ],
+        };
+        let events = store.events(&config.kind, &config.owner);
+        let memory = Rc::new(RefCell::new(Memory::default()));
+        let connections = BTreeMap::from([(
+            "memory".into(),
+            Box::new(MemoryConnection(memory.clone(), 10_000, true)) as Box<dyn Connection>,
+        )]);
+        let mut corral = FakeCorral::default();
+        for name in ["paddock/main", "paddock/dev", "ranch/main", "private/main"] {
+            corral.agents.insert(name.into(), status(name, "idle"));
+        }
+        let fixture = Self {
+            _dir: dir,
+            engine: Engine::new(store, vec![config], connections),
+            corral,
+            memory,
+            events,
+        };
+        fixture.connected();
+        fixture
+    }
+    fn step(&mut self, at: f64) {
+        self.engine.step(&mut self.corral, at).unwrap();
+    }
+    fn message(&mut self, id: &str, thread: Option<&str>, text: &str, mentioned: bool) {
+        self.events
+            .emit(Event::Message(Message {
+                channel: "C1".into(),
+                id: id.into(),
+                thread: thread.map(str::to_owned),
+                sender: "owner".into(),
+                mentioned,
+                text: text.into(),
+                attachments: false,
+                at: 10.,
+            }))
+            .unwrap();
+    }
+    fn texts(&self) -> String {
+        self.memory
+            .borrow()
+            .posted
+            .iter()
+            .map(|p| p.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+#[test]
+fn owner_message_and_thread_followup_reach_agent_and_reply_returns_to_thread() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.message("m1", None, "请检查代码", true);
+    f.step(10.);
+    assert_eq!(
+        f.corral.sent,
+        vec![("paddock/main".into(), "请检查代码".into())]
+    );
+    assert!(f.texts().contains("→ paddock/main"));
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.turn_started = Some(11.);
+    s.last_event_at = Some(12.);
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "完成\n原样回复".into(),
+            at: 12.,
+        }),
+    );
+    f.step(12.);
+    f.step(14.);
+    let data = f.memory.borrow();
+    let reply = data
+        .posted
+        .iter()
+        .find(|p| p.text == "完成\n原样回复")
+        .unwrap();
+    assert_eq!(reply.thread.as_deref(), Some("m1"));
+    assert!(reply.notify);
+    drop(data);
+    f.message("m2", Some("m1"), "dev 仍是原正文", false);
+    f.step(16.);
+    assert_eq!(
+        f.corral.sent.last().unwrap(),
+        &("paddock/main".into(), "dev 仍是原正文".into())
+    );
+}
+
+#[test]
+fn routing_table_privacy_and_status() {
+    for (text, expected, body) in [
+        ("ranch/main 看看", Some("ranch/main"), "看看"),
+        ("dev 检查", Some("paddock/dev"), "检查"),
+        ("--flag unchanged", Some("paddock/main"), "--flag unchanged"),
+        ("private/main secret", None, ""),
+        ("ranch/missing test", None, ""),
+        ("dev", None, ""),
+        ("   ", None, ""),
+    ] {
+        let mut f = Fixture::new();
+        f.message("m1", None, text, true);
+        f.step(10.);
+        assert_eq!(
+            f.corral.sent.first().map(|(n, _)| n.as_str()),
+            expected,
+            "{text}: {}",
+            f.texts()
+        );
+        if expected.is_some() {
+            assert_eq!(f.corral.sent[0].1, body)
+        }
+        assert!(
+            !f.corral
+                .status_reads
+                .iter()
+                .any(|n| n.starts_with("private/"))
+        );
+        if text.starts_with("private/") {
+            assert!(!f.texts().contains("private"));
+        }
+    }
+    let mut f = Fixture::new();
+    f.events
+        .emit(Event::Message(Message {
+            channel: "C1".into(),
+            id: "other".into(),
+            thread: None,
+            sender: "intruder".into(),
+            mentioned: true,
+            text: "private body".into(),
+            attachments: false,
+            at: 9.,
+        }))
+        .unwrap();
+    assert!(
+        !std::fs::read_to_string(f._dir.path().join("state.json"))
+            .unwrap()
+            .contains("private body")
+    );
+    f.message("note", None, "note", false);
+    f.message("unknown", Some("unknown-thread"), "reply", false);
+    f.step(10.);
+    assert!(f.corral.sent.is_empty());
+    assert!(f.memory.borrow().posted.is_empty());
+    assert_eq!(
+        f.engine
+            .log
+            .iter()
+            .filter(|l| !l.starts_with("connection "))
+            .collect::<Vec<_>>(),
+        vec!["忽略了一条别人的消息"]
+    );
+    f.events
+        .emit(Event::Message(Message {
+            channel: "unbound".into(),
+            id: "u".into(),
+            thread: None,
+            sender: "owner".into(),
+            mentioned: true,
+            text: "?".into(),
+            attachments: false,
+            at: 11.,
+        }))
+        .unwrap();
+    f.step(12.);
+    assert_eq!(f.texts(), "这个频道没绑仓库");
+    f.message("s", None, "？", true);
+    f.step(14.);
+    assert!(f.corral.sent.is_empty());
+    assert!(f.texts().contains("paddock"));
+    assert!(f.texts().contains("空闲"));
+    assert!(!f.texts().contains("private"));
+    let mut f = Fixture::new();
+    f.corral.agents.remove("paddock/main");
+    f.message("m", None, "请看看", true);
+    f.step(10.);
+    assert!(f.texts().contains("paddock/main 没在跑，没送"));
+    let mut f = Fixture::new();
+    f.message("m", Some("external"), "dev hello", true);
+    f.step(10.);
+    assert_eq!(f.corral.sent[0].0, "paddock/dev");
+}
+
+#[test]
+fn busy_states_queue_in_order_deletion_withdraws_and_exit_cancels() {
+    for (state, paused, label) in [
+        ("working", false, "正在干活"),
+        ("starting", false, "正在干活"),
+        ("blocked", false, "对话框"),
+        ("idle", true, "暂停中"),
+    ] {
+        let mut f = Fixture::new();
+        let s = f.corral.agents.get_mut("paddock/main").unwrap();
+        s.state = state.into();
+        s.paused = paused;
+        f.message("a", None, "第一句", true);
+        f.message("b", None, "第二句", true);
+        f.step(10.);
+        assert!(f.corral.sent.is_empty());
+        assert!(f.texts().contains(label), "{}", f.texts());
+        f.events
+            .emit(Event::Deleted {
+                channel: "C1".into(),
+                id: "a".into(),
+            })
+            .unwrap();
+        f.step(12.);
+        assert!(f.texts().contains("撤回了"));
+        let s = f.corral.agents.get_mut("paddock/main").unwrap();
+        s.state = "idle".into();
+        s.paused = false;
+        s.turn_started = Some(11.);
+        s.last_event_at = Some(13.);
+        f.step(14.);
+        f.step(16.);
+        assert_eq!(
+            f.corral.sent,
+            vec![("paddock/main".into(), "第二句".into())]
+        );
+        assert!(f.texts().contains("已送给 paddock/main"));
+        f.message("c", None, "第三句", true);
+        f.step(18.);
+        assert_eq!(f.corral.sent.len(), 1);
+        f.corral.agents.remove("paddock/main");
+        f.step(20.);
+        assert!(f.texts().contains("退出了，没等到回复"));
+        assert!(f.texts().contains("已经不在了，没送"));
+        assert!(f.engine.state.pending.is_empty());
+    }
+}
+
+#[test]
+fn send_outcomes_do_not_force_or_duplicate_and_unknown_does_not_wait() {
+    for (exit, code, label, retry) in [
+        (7, "not_idle", "排", true),
+        (8, "human_active", "30 秒", true),
+        (10, "paused", "暂停中", true),
+        (3, "not_delivered", "没重送", false),
+        (2, "not_found", "不在了", false),
+        (6, "other", "other: reason", false),
+    ] {
+        let mut f = Fixture::new();
+        f.corral.outcomes.push(Err(failure(exit, code)));
+        f.message("m", None, "hello", true);
+        f.step(10.);
+        assert!(f.texts().contains(label), "{code}: {}", f.texts());
+        f.step(12.);
+        if exit == 8 {
+            assert_eq!(f.corral.sent.len(), 1);
+            f.step(40.);
+        }
+        assert_eq!(f.corral.sent.len(), if retry { 2 } else { 1 }, "{code}");
+    }
+    let mut f = Fixture::new();
+    f.corral.outcomes.push(Ok(Sent {
+        merged_with_draft: true,
+    }));
+    f.message("m", None, "hi", true);
+    f.step(10.);
+    assert!(f.texts().contains("输入框里原有没提交的字"));
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/main").unwrap().state = "unknown".into();
+    f.message("m", None, "hi", true);
+    f.step(10.);
+    assert!(f.texts().contains("等不到回复"));
+    assert!(f.engine.state.pending.is_empty());
+}
+
+#[test]
+fn notifications_baseline_two_polls_dedup_and_notification_threads() {
+    let mut f = Fixture::new();
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "旧回复".into(),
+            at: 1.,
+        }),
+    );
+    f.step(2.);
+    f.step(4.);
+    assert!(f.memory.borrow().posted.is_empty());
+    let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+    s.state = "blocked".into();
+    s.state_started = Some(5.);
+    s.last_tool = Some("Bash".into());
+    s.title = Some("等待权限".into());
+    f.step(6.);
+    assert!(f.memory.borrow().posted.is_empty());
+    f.step(8.);
+    let notice = f.memory.borrow().posted.last().unwrap().clone();
+    assert_eq!(notice.channel, "C1");
+    assert!(notice.thread.is_none());
+    assert!(notice.notify);
+    assert!(notice.text.contains("paddock/dev 在等你"));
+    f.step(10.);
+    assert_eq!(f.memory.borrow().posted.len(), 1);
+    f.message("answer", Some(&notice.id), "同意继续", false);
+    f.step(12.);
+    assert!(f.corral.sent.is_empty());
+    assert_eq!(f.engine.state.pending[0].agent, "paddock/dev");
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.turn_started = Some(13.);
+    s.last_event_at = Some(14.);
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "新回复".into(),
+            at: 14.,
+        }),
+    );
+    f.step(14.);
+    f.step(16.);
+    let notice = f.memory.borrow().posted.last().unwrap().clone();
+    assert!(notice.text.contains("paddock/main 新回复\n新回复"));
+    assert!(notice.thread.is_none());
+    f.message("next", Some(&notice.id), "你好", false);
+    f.step(18.);
+    assert_eq!(f.corral.sent[0].0, "paddock/main");
+    f.step(20.);
+    assert_eq!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .filter(|p| p.text.contains("新回复\n新回复"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn interrupted_turn_and_empty_reply_are_reported() {
+    for interrupted in [false, true] {
+        let mut f = Fixture::new();
+        f.step(2.);
+        f.message("m", None, "hello", true);
+        f.step(10.);
+        let s = f.corral.agents.get_mut("paddock/main").unwrap();
+        s.turn_started = Some(11.);
+        s.last_event_at = Some(12.);
+        if interrupted {
+            let mut e = failure(1, "no_reply");
+            e.interrupted = true;
+            f.corral.replies.insert("paddock/main".into(), Err(e));
+        } else {
+            f.corral.replies.insert(
+                "paddock/main".into(),
+                Ok(Reply {
+                    instance: "instance-1".into(),
+                    text: String::new(),
+                    at: 12.,
+                }),
+            );
+        }
+        f.step(12.);
+        f.step(14.);
+        assert!(f.texts().contains(if interrupted {
+            "paddock/main 这一轮被打断了，没有回复"
+        } else {
+            "（空回复）"
+        }));
+        assert!(f.engine.state.pending.is_empty());
+    }
+}
+
+impl Fixture {
+    fn restart(&mut self) {
+        let store = Store::open(self._dir.path()).unwrap();
+        self.events = store.events("memory", "owner");
+        let connections = BTreeMap::from([(
+            "memory".into(),
+            Box::new(MemoryConnection(self.memory.clone(), 10_000, true)) as Box<dyn Connection>,
+        )]);
+        self.engine = Engine::new(store, self.engine.configs.clone(), connections);
+        self.connected();
+    }
+    fn connected(&self) {
+        self.events
+            .emit(Event::Connection(ConnectionInfo {
+                connection: "connected".into(),
+                reason: None,
+                message: None,
+                workspace: Some("workspace".into()),
+                bot: Some("pony".into()),
+                other_connections: 0,
+            }))
+            .unwrap();
+    }
+}
+#[test]
+fn restart_restores_queue_waiting_dedup_and_ambiguous_send_is_never_retried() {
+    use pony::core::state::Phase;
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.message("a", None, "first", true);
+    f.message("b", None, "second", true);
+    f.step(10.);
+    assert_eq!(f.corral.sent.len(), 1);
+    f.restart();
+    f.message("a", None, "first", true);
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.turn_started = Some(11.);
+    s.last_event_at = Some(12.);
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "done".into(),
+            at: 12.,
+        }),
+    );
+    f.step(14.);
+    f.step(16.);
+    assert_eq!(f.corral.sent.len(), 2);
+    assert_eq!(f.corral.sent[1].1, "second");
+    assert!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .any(|p| p.text == "done" && p.thread.as_deref() == Some("a"))
+    );
+    assert_eq!(
+        std::fs::metadata(f._dir.path().join("state.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    f.engine.state.pending[0].phase = Phase::Sending;
+    f.engine.store.save(&f.engine.state, None).unwrap();
+    f.restart();
+    f.step(18.);
+    f.step(20.);
+    assert_eq!(f.corral.sent.len(), 2);
+    assert_eq!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .filter(|p| p.text == "上次发送结果不明，没重送，请确认后重发")
+            .count(),
+        1
+    );
+    assert!(f.engine.log.iter().any(|s| s.contains("send_uncertain")));
+}
+#[test]
+fn reconnect_backfills_sorted_messages_with_age_limit_and_first_start_skips_history() {
+    let mut f = Fixture::new();
+    f.connected();
+    f.step(2.);
+    assert!(f.memory.borrow().history_reads.is_empty());
+    f.message("old", None, "请开始", true);
+    f.step(10.);
+    let mk = |id: &str, t: f64, thread: Option<&str>| Message {
+        channel: "C1".into(),
+        id: id.into(),
+        thread: thread.map(str::to_owned),
+        sender: "owner".into(),
+        mentioned: true,
+        text: format!("消息 {id}"),
+        attachments: false,
+        at: t,
+    };
+    f.memory.borrow_mut().history = vec![
+        mk("newer", 49_000., None),
+        mk("ancient", 11., None),
+        mk("earlier", 48_000., Some("old")),
+    ];
+    f.restart();
+    f.connected();
+    f.step(50_000.);
+    assert!(f.texts().contains("12 小时以前发的，没送"));
+    assert!(f.texts().contains("离线期间发的"));
+    let queue: Vec<_> = f
+        .engine
+        .state
+        .pending
+        .iter()
+        .filter(|p| p.phase == pony::core::state::Phase::Queued)
+        .collect();
+    assert_eq!(queue.len(), 2);
+    assert_eq!(queue[0].message, "earlier");
+    assert_eq!(queue[1].message, "newer");
+    assert!(
+        queue[0]
+            .text
+            .contains("pony 当时离线，现在才送到）\n消息 earlier")
+    );
+    let before = f.engine.state.pending.len();
+    f.message("newer", None, "消息 newer", true);
+    f.step(50_002.);
+    assert_eq!(f.engine.state.pending.len(), before);
+    assert!(
+        f.memory
+            .borrow()
+            .history_reads
+            .iter()
+            .any(|(_, thread, _)| thread.as_deref() == Some("old"))
+    );
+}
+#[test]
+fn expired_threads_do_not_guess_and_reopened_instances_are_named() {
+    let mut f = Fixture::new();
+    f.message("root", None, "dev hello", true);
+    f.step(10.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().instance = "instance-2".into();
+    f.message("next", Some("root"), "hello again", false);
+    f.step(12.);
+    assert!(f.texts().contains("→ paddock/dev（重开过）"));
+    f.message("late", Some("root"), "hello", false);
+    f.step(31. * 86400.);
+    assert!(
+        f.texts()
+            .contains("这个线程太久没用，对应关系已清掉，请在频道里重新 @ 我")
+    );
+}
+
+#[test]
+fn long_reply_retries_smaller_chunks_notifies_once_and_reports_final_failure() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.message("m", None, "hello", true);
+    f.step(10.);
+    let text = "字🙂".repeat(11_000);
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.turn_started = Some(11.);
+    s.last_event_at = Some(12.);
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: text.clone(),
+            at: 12.,
+        }),
+    );
+    f.memory.borrow_mut().fail_over = Some(1800);
+    f.step(12.);
+    f.step(14.);
+    let data = f.memory.borrow();
+    let replies: Vec<_> = data
+        .posted
+        .iter()
+        .filter(|p| p.text.contains('字'))
+        .collect();
+    assert!(replies.len() > 10);
+    assert_eq!(replies.iter().filter(|p| p.notify).count(), 1);
+    assert!(replies.iter().all(|p| p.thread.as_deref() == Some("m")));
+    assert_eq!(
+        replies
+            .iter()
+            .flat_map(|p| p.text.chars())
+            .filter(|c| *c == '字' || *c == '🙂')
+            .collect::<String>(),
+        text
+    );
+    drop(data);
+    f.message("next", Some("m"), "again", false);
+    f.step(16.);
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.turn_started = Some(17.);
+    s.last_event_at = Some(18.);
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "x".repeat(3000),
+            at: 18.,
+        }),
+    );
+    f.memory.borrow_mut().fail_over = Some(50);
+    f.step(18.);
+    f.step(20.);
+    assert!(f.texts().contains("段发不出去：too_long"));
+    assert!(f.engine.log.iter().any(|l| l.contains("too_long")));
+    assert_eq!(
+        f.engine.reports["memory"].reason.as_deref(),
+        Some("too_long")
+    );
+}
+
+#[test]
+fn status_labels_queue_counts_and_current_repository_order() {
+    let mut f = Fixture::new();
+    for (name, state, paused, interrupted) in [
+        ("paddock/main", "working", false, false),
+        ("paddock/dev", "idle", false, true),
+        ("ranch/main", "blocked", false, false),
+        ("ranch/paused", "idle", true, false),
+        ("ranch/start", "starting", false, false),
+        ("ranch/raw", "unknown", false, false),
+    ] {
+        let mut s = status(name, state);
+        s.paused = paused;
+        s.interrupted = interrupted;
+        f.corral.agents.insert(name.into(), s);
+    }
+    f.message("q", None, "hello", true);
+    f.step(120.);
+    f.message("s", None, "?", true);
+    f.step(122.);
+    let summary = f
+        .memory
+        .borrow()
+        .posted
+        .iter()
+        .find(|p| p.text.starts_with("paddock（"))
+        .unwrap()
+        .text
+        .clone();
+    for expected in [
+        "干活中，2 分钟",
+        "空闲（上一轮被打断）",
+        "等你（对话框）",
+        "暂停中",
+        "启动中",
+        "读不出",
+        "排着 1 句",
+    ] {
+        assert!(summary.contains(expected), "{summary}");
+    }
+    assert!(summary.find("paddock（").unwrap() < summary.find("ranch（").unwrap());
+    assert!(!summary.contains("private"));
+}
+#[test]
+fn offline_controller_reply_is_delivered_once_and_fresh_instances_start_at_baseline() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.step(4.);
+    f.restart();
+    let s = f.corral.agents.get_mut("ranch/main").unwrap();
+    s.turn_started = Some(5.);
+    s.last_event_at = Some(6.);
+    f.corral.replies.insert(
+        "ranch/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "离线完成".into(),
+            at: 6.,
+        }),
+    );
+    f.step(8.);
+    f.step(10.);
+    assert_eq!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .filter(|p| p.text.contains("（pony 不在线时）ranch/main 新回复"))
+            .count(),
+        1
+    );
+    f.restart();
+    f.step(12.);
+    f.step(14.);
+    assert_eq!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .filter(|p| p.text.contains("离线完成"))
+            .count(),
+        1
+    );
+    f.corral.agents.get_mut("ranch/main").unwrap().instance = "new".into();
+    f.corral.replies.insert(
+        "ranch/main".into(),
+        Ok(Reply {
+            instance: "new".into(),
+            text: "重开后的起点".into(),
+            at: 15.,
+        }),
+    );
+    f.step(16.);
+    f.step(18.);
+    assert!(!f.texts().contains("重开后的起点"));
+}
+#[test]
+fn named_route_preserves_trailing_whitespace_and_edited_messages_do_not_replace_queue() {
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.message("m", None, "dev --正文  \n ", true);
+    f.step(10.);
+    f.message("m", None, "dev changed", true);
+    f.step(12.);
+    assert_eq!(f.engine.state.pending.len(), 1);
+    assert_eq!(f.engine.state.pending[0].text, "--正文  \n ");
+}
+#[test]
+fn platforms_without_threads_require_mentions_and_explicit_names() {
+    let mut f = Fixture::new();
+    f.engine.connections.insert(
+        "memory".into(),
+        Box::new(MemoryConnection(f.memory.clone(), 10_000, false)),
+    );
+    f.message("a", None, "hello", true);
+    f.step(10.);
+    assert!(f.corral.sent.is_empty());
+    f.message("b", None, "dev hello", true);
+    f.step(12.);
+    assert_eq!(f.corral.sent[0].0, "paddock/dev");
+    let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+    s.turn_started = Some(13.);
+    s.last_event_at = Some(14.);
+    f.corral.replies.insert(
+        "paddock/dev".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "完成".into(),
+            at: 14.,
+        }),
+    );
+    f.step(14.);
+    f.step(16.);
+    assert!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .any(|p| p.thread.is_none() && p.text == "paddock/dev: 完成")
+    );
+    f.message("c", Some("b"), "不应该送", false);
+    f.step(18.);
+    assert_eq!(f.corral.sent.len(), 1);
+}
+
+#[test]
+fn human_active_backoff_keeps_later_messages_behind_the_head() {
+    let mut f = Fixture::new();
+    f.corral.outcomes.push(Err(failure(8, "human_active")));
+    f.message("first", None, "first", true);
+    f.message("second", None, "second", true);
+    f.step(10.);
+    f.step(12.);
+    assert_eq!(f.corral.sent, vec![("paddock/main".into(), "first".into())]);
+    f.step(40.);
+    assert_eq!(f.corral.sent[1].1, "first");
+    assert_eq!(f.corral.sent.len(), 2);
+}
+
+#[test]
+fn connection_and_channel_metadata_flow_to_the_existing_status_schema() {
+    use pony::core::{
+        config::Config,
+        status::{Snapshot, chats},
+    };
+    let mut f = Fixture::new();
+    f.step(2.);
+    let mut snapshot = Snapshot::new();
+    snapshot.chats = chats(
+        &Config {
+            corral: None,
+            proxy: None,
+            chats: f.engine.configs.clone(),
+        },
+        "connecting",
+        Some(1.),
+    );
+    snapshot.update(&f.engine, 2.);
+    let value = serde_json::to_value(&snapshot).unwrap();
+    assert_eq!(value["chats"][0]["connection"], "connected");
+    assert_eq!(value["chats"][0]["channels"][0]["name"], "c1");
+    assert_eq!(value["chats"][0]["channels"][0]["private"], true);
+    assert!(!value.to_string().contains("owner"));
+    f.events
+        .emit(Event::Connection(ConnectionInfo {
+            connection: "failed".into(),
+            reason: Some("network".into()),
+            message: Some("connection lost".into()),
+            workspace: Some("workspace".into()),
+            bot: Some("pony".into()),
+            other_connections: 2,
+        }))
+        .unwrap();
+    f.step(4.);
+    snapshot.update(&f.engine, 4.);
+    let value = serde_json::to_value(&snapshot).unwrap();
+    assert_eq!(value["chats"][0]["since"], 4.);
+    assert_eq!(value["chats"][0]["reason"], "network");
+    assert_eq!(value["chats"][0]["other_connections"], 2);
+}
+
+#[test]
+fn routing_acknowledgement_must_be_posted_before_corral_send_even_after_retry() {
+    let mut f = Fixture::new();
+    f.memory.borrow_mut().fail_over = Some(0);
+    f.message("m", None, "hello", true);
+    assert!(f.engine.step(&mut f.corral, 10.).is_err());
+    assert!(f.corral.sent.is_empty());
+    f.memory.borrow_mut().fail_over = None;
+    f.step(12.);
+    assert!(f.texts().contains("→ paddock/main"));
+    assert_eq!(f.corral.sent.len(), 1);
+}

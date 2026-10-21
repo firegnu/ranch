@@ -50,6 +50,12 @@ pub struct Snapshot {
     pub chats: Vec<ChatStatus>,
 }
 
+impl Default for Snapshot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn chats(config: &Config, connection: &str, since: Option<f64>) -> Vec<ChatStatus> {
     config
         .chats
@@ -79,6 +85,39 @@ pub fn chats(config: &Config, connection: &str, since: Option<f64>) -> Vec<ChatS
 }
 
 impl Snapshot {
+    pub fn update(&mut self, engine: &super::engine::Engine, at: f64) {
+        for chat in &mut self.chats {
+            if let Some(report) = engine.reports.get(&chat.kind) {
+                if chat.connection != report.connection {
+                    chat.since = Some(at);
+                }
+                chat.connection = report.connection.clone();
+                chat.reason = if report.connection == "failed" {
+                    report.reason.clone()
+                } else {
+                    None
+                };
+                chat.message = if report.connection == "failed" {
+                    report.message.clone()
+                } else {
+                    None
+                };
+                chat.workspace = report.workspace.clone();
+                chat.bot = report.bot.clone();
+                chat.other_connections = report.other_connections;
+            }
+            for channel in &mut chat.channels {
+                if let Some(info) = engine
+                    .channels
+                    .get(&(chat.kind.clone(), channel.id.clone()))
+                {
+                    channel.name = info.name.clone();
+                    channel.private = info.private;
+                    channel.problem = info.problem.clone();
+                }
+            }
+        }
+    }
     pub fn new() -> Self {
         Self {
             pid: std::process::id(),

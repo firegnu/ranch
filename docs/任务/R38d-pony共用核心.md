@@ -80,3 +80,50 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话；另写一段「给 R38e 的接口说明」：`Chat` 上新加的每一项是什么、Slack 那边要填什么。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-21，ranch/dev-r38d，分支 `r38d-pony-core`。
+
+### 做了什么
+
+- 新增 corral 命令边界，只调用 `--version`、`ls`、`status`、`reply`、`send`；找程序的顺序、contract 1 校验、JSON 和退出码按约定处理，正文放在 `--` 后，不加 force。
+- 实现共用核心：owner 和频道隔离、全名／短名／默认主控路由、线程续聊、重开提示、排队和撤回、各发送结果、每轮回复、主控新回复、Needs you、去重、`?`、30 天线程过期、重启恢复和 12 小时离线补收。未绑定仓库不调用 status，不输出其信息。
+- `state.json` 用 0600 临时文件同步后改名并同步目录。适配器接收入口在回执前持久保存事件；核心等待 corral／发送时仍可接收。陌生人的正文在保存前丢弃，只留下固定的忽略事件。
+- Markdown 按字符和行切分，正文不改，代码围栏和段号单独添加；表格尽量整块。拒绝过长／格式错误时只重切失败段，最小 1,000 字；最终失败回线程并记日志和 status。已经成功的段不重发，重切部分有自己的 `(i/N)`。
+- 核心接进 `pony run`，沿用配置重读、锁、状态和日志。Slack 仍是纯占位，无网络请求，报 connecting；README 写明 R38e 接口和 paddock 影响。`pony status` 输出格式不变，paddock 不用动。
+
+### 验证了什么
+
+- 按任务限定的核心和命令边界做测试：路由、隐私、队列、撤回、状态说法、全部发送结果、稳定轮询、提醒与线程、分段与失败、重启去重和发送结果不明、补收顺序与 12 小时上限、首次不补收。关键行为先跑到目标断言失败再实现；队首 human_active 退避和发送确认失败也先复现再修。
+- pony 最后一次 `cargo test -p pony`：32 项通过。测试只用内存适配器／内存 corral，以及 Rust 编译的假命令；实际启动假命令或 pony 的 HOME、PONY_HOME、CORRAL_HOME 都是临时目录。核心源码不出现适配器名的原测试继续通过。
+- `cargo test --all-targets` 跑一次通过（228 通过、11 项按原标记忽略：3 项外部兼容基线、8 项真实 srt 环境）。之后自查补了发送确认失败的回归与持久恢复，并重跑上述 pony 全部测试通过；没有再跑全仓测试。
+- `cargo clippy --all-targets -- -D warnings` 首次发现新分段代码一处 collapsible_if；合并该条件后复跑通过。这一次必要的修正复核比原定的一次多跑了一次，未增加其他验证项目。`cargo fmt --check` 一次通过；`git diff --check` 通过。
+- 全部命令前台等到结束，编译目录均为 `.target/r38d-pony-core`。未改 `crates/corral/`、其他包、Cargo.lock 或公开约定文档。
+
+### 拿主意的地方
+
+- 主控明确决定采用方案 1：发送前记 Sending；重启遇到发送结果不明的，不自动重送，在原线程回「上次发送结果不明，没重送，请确认后重发」，日志记 send_uncertain；其余队列照常恢复。按主控要求只记在这里，不改设计稿。
+- 线程过期后移除 agent／实例对应，保留过期线程 ID，保证再次回复时能明确提示，而不是误当成陌生线程或猜路由。
+- 接收与回执通过持久 Events 入口分开；适配器工作线程先保存，再回执，避免 corral send 等待期间耽误入站回执。发送确认文字也随队列保存，确认未发成功前不会发送正文。
+- 没有新的待主控决定事项，也没有新增第三方依赖。
+
+### 没做的事
+
+不连 Slack，不做 service，不部署，不装技能，不读写真正的 `~/.pony`／`~/.corral`，不操作用户 agent，不改 paddock，不合并 main，不推送。真实平台的 Markdown 转换、意外 @ 转义、网络限频／重连和上线实测留给 R38e／R38f。R38c 留给 R38e 的 corral 保留名配置校验未顺带修改。
+
+### 踩过的坑
+
+直接调用 rustc 编译假程序时默认 edition 不随 Cargo 包走，2024 的 let-chain 被拒；给假程序编译显式加 `--edition=2024` 后通过。自查的回归还发现：队首等 human_active 时后面的消息可能越过它，以及发送确认失败后正文可能先送；分别用严格队首检查、持久保存待发送确认修好。没有通过删测试、放宽断言或缩短超时绕过。
+
+### 给 R38e 的接口说明
+
+`Chat` 原有 kind、secret_keys、config_keys、read_config 保留，新增 `connect(Connect) -> Result<Box<dyn Connection>>`。Connect 含本家的 ChatConfig、proxy、credentials 回调和 Events；credentials 必须每次连接／重连调用，重新校验权限和读取凭证；connect 起工作线程后返回，网络／认证失败通过事件报告，由适配器退避重试。工作线程在 close 和 Drop 时停止并等待退出。
+
+- `Events::emit(Event)`：成功意味着已落盘，可以 ACK；失败不能 ACK。Connection 事件给 connection、公开 reason／message、workspace、bot、other_connections。先报 connected，再交付这次连接的消息。不能把 ticket URL、token、原始 HTTP 错误放进公开说明。
+- `Event::Message`：channel、id、thread、sender、mentioned、去 @／解转义后的 Markdown text、attachments、Unix 秒 at。适配器排除机器人消息与编辑。`Event::Deleted` 给原消息 channel／id。核心统一 owner 检查、去重、路由和队列。
+- `Connection::name`：用户提示里的平台名，Slack 填 Slack；`limits` 填 characters=10_000、threads=true。无线程平台的降级逻辑已经在核心。
+- `Connection::send(Outgoing)`：channel、可选 thread、markdown、notify，成功返回实际消息 ID。Slack 实现 markdown 块、通知文案和 @ owner、转义正文中的意外 @、关闭链接预览、每频道限频与重试。SendError.code 是公开错误码，resize=true 只用于确定未发出、可以缩小重试的格式／长度错误。
+- `Connection::channel(id)`：返回 name、private、problem；None 表示机器人在可用频道内，其他值使用 not_member／not_found／archived 等公开代码。
+- `Connection::history(channel, thread, after)`：读完所有分页，返回比不透明消息 ID 新的统一 Message；thread=None 为频道历史，否则为线程回复。核心再检查 owner、频道、时间与去重，按时间排序补收。首次没有游标不调用 history。
+- `Connection::close`：停止并等待自有网络线程。`chats/slack.rs` 的 Placeholder 已把本轮全部接口留齐；R38e 只改这个文件即可接入，共用核心不需要引用任何一家名字。详细说明也在 `crates/pony/README.md`。

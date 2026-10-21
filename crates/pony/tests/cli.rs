@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+mod support;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::{
     fs,
@@ -42,6 +43,7 @@ impl Fixture {
 
     fn configured() -> Self {
         let fixture = Self::new();
+        support::fake_corral(fixture.0.path());
         fs::create_dir(fixture.home()).unwrap();
         fs::set_permissions(fixture.home(), fs::Permissions::from_mode(0o700)).unwrap();
         fs::create_dir(fixture.home().join("secrets")).unwrap();
@@ -50,7 +52,7 @@ impl Fixture {
             fs::Permissions::from_mode(0o700),
         )
         .unwrap();
-        fs::write(fixture.home().join("config.toml"), CONFIG).unwrap();
+        fixture.write_config(CONFIG);
         let secret = fixture.home().join("secrets/slack.toml");
         fs::write(
             &secret,
@@ -59,6 +61,17 @@ impl Fixture {
         .unwrap();
         fs::set_permissions(secret, fs::Permissions::from_mode(0o600)).unwrap();
         fixture
+    }
+
+    fn write_config(&self, text: &str) {
+        fs::write(
+            self.home().join("config.toml"),
+            format!(
+                "corral = '{}'\n{text}",
+                self.0.path().join("corral-test").display()
+            ),
+        )
+        .unwrap();
     }
 
     fn assert_private(&self, values: &[Value]) {
@@ -364,11 +377,7 @@ fn running_holds_one_lock_reloads_config_and_stale_status_is_off() {
     let invalid = running.wait_for(&fixture, |s| s["config"] == "invalid");
     assert_eq!(invalid["chats"][0]["channels"][0]["repo"], "ranch");
     assert_eq!(invalid["chats"][0]["connection"], "connecting");
-    fs::write(
-        fixture.home().join("config.toml"),
-        CONFIG.replace("'ranch'", "'other'"),
-    )
-    .unwrap();
+    fixture.write_config(&CONFIG.replace("'ranch'", "'other'"));
     let updated = running.wait_for(&fixture, |s| {
         s["config"] == "ok" && s["chats"][0]["channels"][0]["repo"] == "other"
     });
@@ -482,4 +491,34 @@ fn unknown_keys_report_safe_names_or_source_locations_without_values() {
         assert!(message.contains("unknown key"), "{message}");
         fixture.assert_private(&[status]);
     }
+}
+
+#[test]
+fn run_checks_corral_contract_before_starting_the_core() {
+    let fixture = Fixture::configured();
+    let response = fixture.0.path().join("response.json");
+    fs::write(&response, r#"{"ok":true,"contract":"unsupported"}"#).unwrap();
+    let mut child = fixture
+        .command()
+        .env("FAKE_CORRAL_RESPONSE", &response)
+        .arg("run")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let exited = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break None;
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(exited.and_then(|s| s.code()), Some(1));
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(decode(&output)["error"], "corral_protocol");
 }
