@@ -169,15 +169,15 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
   用同步后 rename。写删前重查内容，bootout 后再查一次。
 - 重装相同内容（`same`）不改写 plist、不主动重启；只有这个状态下，bootstrap
   报错而 `/bin/launchctl print gui/<uid>/local.ranch.pony` 成功才按「已加载」处理。
-  内容不同（`replace`）先 bootout，确认卸下后再原子写入、bootstrap，让新定义
+  内容不同（`replace`）先准备日志，再 bootout，确认卸下后再原子写入、bootstrap，让新定义
   真正生效；预览也会列出这一步。卸载失败时旧文件不变，可以重试。
 - 新建（`create`）时 bootstrap 失败而 print 成功，报 `already_loaded`：已有
   别处加载的同名定义，不自动卸它；复查后回收本次新建的 plist，避免重试时
   错当作 `same`。先手动 bootout 或注销再装。其他加载失败报 `launchctl_failed`，
   保留 plist；若此前已卸下旧服务，错误说明会明确指出，并提示排除原因后重试。
-- uninstall 先 `/bin/launchctl bootout gui/<uid>/local.ranch.pony`，成功后
-  删自有 plist；已卸载（ESRCH）也可删。返回 36（EINPROGRESS）时，按一秒间隔
-  查 print，直到返回 113（找不到服务），最多等 30 秒；超时报 `stop_pending`，
+- uninstall 先 `/bin/launchctl bootout gui/<uid>/local.ranch.pony`，确认卸下后
+  删自有 plist；已卸载（ESRCH）也可删。返回 0 或 36（EINPROGRESS）时，立即查 print，
+  若还在则按一秒间隔重查，直到返回 113（找不到服务），最多等 30 秒；超时报 `stop_pending`，
   留着原文件、提示稍后重跑。`replace` 共用这个等待过程。其他 bootout 错误
   保留文件并报错；卸下后若删写文件失败，说明服务已卸下以及需要重试的命令。
   plist 已不存在时直接成功。卸载保留 `~/.pony` 的配置、凭证、状态和日志，
@@ -185,9 +185,11 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 - 服务固定使用上述 HOME 下的默认路径，不把调用者的 `PONY_HOME`、代理或
   token 写入 plist。`PONY_HOME` 仍可用于前台 run/status 的隔离数据；要查看
   默认服务的数据，调用 status 时不要设另一个 `PONY_HOME`。
-- 加载前准备 `~/.pony` 和 `~/.pony/logs`（0700），及 `launchd.log`（0600）。
-  已有日志不截断；目录和日志必须属于当前用户、权限匹配且不是链接。
-  不自动放宽或修改已有权限。正式程序只执行固定的 `/bin/launchctl`，
+- install 在 bootout／bootstrap 前准备 `~/.pony` 和 `~/.pony/logs`（0700），
+  及 `launchd.log`（0600）。目录和日志必须属于当前用户且不是链接，目录权限不符仍报错。
+  已有日志不截断；当前用户自己的普通日志文件若权限比 0600 宽（如 launchd 重建的 0644），
+  通过已打开的文件收紧到 0600，不放宽权限。准备失败时不停止旧服务。
+  正式程序只执行固定的 `/bin/launchctl`，
   不能通过 PATH、配置或环境变量换成别的程序；测试替身仅由内部单元测试传入。
 
 所有结果是一行 JSON。成功退出 0；操作失败退出 1，输出
@@ -211,8 +213,8 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 | `status` | 执行前的计划：`create`、`same`、`replace`、`remove`、`absent`。 |
 | `content` | install 将写入的完整 plist 字符串；uninstall 为 `null`。 |
 | `directories` | install 需要的目录：`path`、`mode`、`operation: "create_if_missing"`；已有目录不改权限，新建权限还受 umask 限制。uninstall 为空数组。 |
-| `log` | 日志的 `path`、`mode`、`operation: "create_if_missing"`；uninstall 为 `null`。 |
-| `commands` | 按顺序列出可能执行的命令：`argv` 是参数数组（含程序绝对路径），`when` 为 `apply`、`bootstrap_failed` 或 `bootout_in_progress`；后者有 `interval_seconds: 1`、`timeout_seconds: 30`。缺失 plist 的卸载为空数组。 |
+| `log` | 日志的 `path`、`mode`、`operation: "create_if_missing"`；`restrict_if_wider: true` 表示已有自有普通文件权限过宽时收紧到 0600。uninstall 为 `null`。 |
+| `commands` | 按顺序列出可能执行的命令：`argv` 是参数数组（含程序绝对路径），`when` 为 `apply`、`bootstrap_failed` 或 `bootout_in_progress`；后者用于 bootout 返回 0 或 36 后确认卸下，有 `interval_seconds: 1`、`timeout_seconds: 30`。缺失 plist 的卸载为空数组。 |
 
 ## 部署与退回
 

@@ -2,6 +2,82 @@ use super::*;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 
 #[test]
+fn revision_two_log_is_prepared_before_stop_and_permissions_only_narrow() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path();
+    let path = plist(home);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let old = format!("{MARKER}\nold definition");
+    fs::write(&path, &old).unwrap();
+    let pony = home.join(".pony");
+    let logs = pony.join("logs");
+    fs::create_dir_all(&logs).unwrap();
+    fs::set_permissions(&pony, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&logs, fs::Permissions::from_mode(0o755)).unwrap();
+    let error = manage(home, false, false, &mut |_| {
+        panic!("invalid logs must not stop the service")
+    })
+    .unwrap_err();
+    assert_eq!(error.code, "unsafe_path");
+    assert_eq!(fs::read_to_string(&path).unwrap(), old);
+    assert_eq!(fs::metadata(&logs).unwrap().mode() & 0o7777, 0o755);
+
+    fs::set_permissions(&logs, fs::Permissions::from_mode(0o700)).unwrap();
+    let log = logs.join("launchd.log");
+    fs::write(&log, "retained log").unwrap();
+    for expected in ["replace", "same"] {
+        fs::set_permissions(&log, fs::Permissions::from_mode(0o644)).unwrap();
+        manage(home, false, true, &mut |_| panic!("preview")).unwrap();
+        assert_eq!(fs::metadata(&log).unwrap().mode() & 0o7777, 0o644);
+        let result = manage(home, false, false, &mut |args: &[String]| {
+            assert_eq!(
+                fs::metadata(&log).unwrap().mode() & 0o7777,
+                0o600,
+                "repair log before any launchctl command"
+            );
+            assert_eq!(fs::read_to_string(&log).unwrap(), "retained log");
+            Ok(Some(if args[0] == "bootout" { libc::ESRCH } else { 0 }))
+        })
+        .unwrap();
+        assert_eq!(result["status"], expected);
+    }
+    fs::write(&path, &old).unwrap();
+    fs::set_permissions(&log, fs::Permissions::from_mode(0o200)).unwrap();
+    let error = manage(home, false, false, &mut |_| {
+        panic!("do not widen permissions or stop service")
+    })
+    .unwrap_err();
+    assert_eq!(error.code, "unsafe_path");
+    assert_eq!(fs::metadata(&log).unwrap().mode() & 0o7777, 0o200);
+    assert_eq!(fs::read_to_string(path).unwrap(), old);
+}
+
+#[test]
+fn revision_two_successful_bootout_is_confirmed_before_completion() {
+    use std::collections::VecDeque;
+    let mut prints = VecDeque::from([0, 0, 113]);
+    let mut waits = 0;
+    bootout(
+        "gui/501/local.ranch.pony",
+        &mut |args: &[String]| match args[0].as_str() {
+            "bootout" => Ok(Some(0)),
+            "print" => Ok(Some(prints.pop_front().unwrap())),
+            _ => panic!("unexpected command"),
+        },
+        &mut || {
+            waits += 1;
+            true
+        },
+    )
+    .unwrap();
+    assert!(
+        prints.is_empty(),
+        "bootout success alone does not confirm removal"
+    );
+    assert_eq!(waits, 2);
+}
+
+#[test]
 fn revision_replace_loads_new_definition_and_create_rejects_loaded_name() {
     use std::cell::RefCell;
     let temp = tempfile::tempdir().unwrap();
@@ -149,11 +225,19 @@ fn revision_bootout_waits_for_removal_and_reports_partial_failures() {
         assert_eq!(path.exists(), !remove);
 
         fs::write(&path, &old).unwrap();
-        let error = manage(home, remove, false, &mut |args: &[String]| {
-            assert_eq!(args[0], "bootout");
-            fs::write(&path, "changed while stopping").unwrap();
-            Ok(Some(0))
-        })
+        let error = manage(
+            home,
+            remove,
+            false,
+            &mut |args: &[String]| match args[0].as_str() {
+                "bootout" => {
+                    fs::write(&path, "changed while stopping").unwrap();
+                    Ok(Some(0))
+                }
+                "print" => Ok(Some(113)),
+                _ => panic!("unexpected command"),
+            },
+        )
         .unwrap_err();
         assert_eq!(error.code, "foreign");
         assert!(error.message.contains("service was unloaded"));
@@ -165,12 +249,21 @@ fn revision_bootout_waits_for_removal_and_reports_partial_failures() {
     let path = plist(temp.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, format!("{MARKER}\nold definition")).unwrap();
-    let error = manage(temp.path(), false, false, &mut |args: &[String]| {
-        Ok(Some(if args[0] == "bootout" { 0 } else { libc::EIO }))
-    })
+    let error = manage(
+        temp.path(),
+        false,
+        false,
+        &mut |args: &[String]| match args[0].as_str() {
+            "bootout" => Ok(Some(0)),
+            "print" => Ok(Some(113)),
+            "bootstrap" => Ok(Some(libc::EIO)),
+            _ => panic!("unexpected command"),
+        },
+    )
     .unwrap_err();
     assert!(error.message.contains("previous service was unloaded"));
     assert!(error.message.contains("exit 5"));
+    assert_eq!(error.message.matches("plist left in place").count(), 1);
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         content(temp.path()).unwrap()
@@ -326,7 +419,8 @@ fn install_and_uninstall_are_idempotent_and_preserve_user_data() {
                 plist(&home).to_str().unwrap().into()
             ],
             vec!["print".into(), target.clone()],
-            vec!["bootout".into(), target],
+            vec!["bootout".into(), target.clone()],
+            vec!["print".into(), target],
         ]
     );
     assert_eq!(
@@ -408,7 +502,17 @@ fn owned_plist_updates_atomically_and_changed_files_are_left_alone() {
     fs::write(&path, &old).unwrap();
     let old_inode = fs::metadata(&path).unwrap().ino();
     assert_eq!(
-        manage(home, false, false, &mut |_| Ok(Some(0))).unwrap()["status"],
+        manage(
+            home,
+            false,
+            false,
+            &mut |args: &[String]| match args[0].as_str() {
+                "bootout" | "bootstrap" => Ok(Some(0)),
+                "print" => Ok(Some(113)),
+                _ => panic!("unexpected command"),
+            }
+        )
+        .unwrap()["status"],
         "replace"
     );
     assert_eq!(fs::read_to_string(&path).unwrap(), content(home).unwrap());
@@ -437,10 +541,19 @@ fn owned_plist_updates_atomically_and_changed_files_are_left_alone() {
     );
 
     fs::write(&path, &old).unwrap();
-    let error = manage(home, true, false, &mut |_| {
-        fs::write(&path, "changed during bootout").unwrap();
-        Ok(Some(0))
-    })
+    let error = manage(
+        home,
+        true,
+        false,
+        &mut |args: &[String]| match args[0].as_str() {
+            "bootout" => {
+                fs::write(&path, "changed during bootout").unwrap();
+                Ok(Some(0))
+            }
+            "print" => Ok(Some(113)),
+            _ => panic!("unexpected command"),
+        },
+    )
     .unwrap_err();
     assert_eq!(error.code, "foreign");
     assert_eq!(fs::read_to_string(&path).unwrap(), "changed during bootout");

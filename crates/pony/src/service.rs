@@ -7,7 +7,7 @@ use std::{
     io::{self, Read, Write},
     os::unix::{
         ffi::OsStrExt,
-        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -250,11 +250,14 @@ fn manage(
             json!({"path": home.join(".pony"), "mode": "0700", "operation": "create_if_missing"}),
             json!({"path": home.join(".pony/logs"), "mode": "0700", "operation": "create_if_missing"}),
         ] },
-        "log": if remove { Value::Null } else { json!({"path": home.join(".pony/logs/launchd.log"), "mode": "0600", "operation": "create_if_missing"}) },
+        "log": if remove { Value::Null } else { json!({"path": home.join(".pony/logs/launchd.log"), "mode": "0600", "operation": "create_if_missing", "restrict_if_wider": true}) },
         "commands": commands,
     });
     if dry {
         return Ok(result);
+    }
+    if !remove {
+        prepare_log(home)?;
     }
     unchanged(home, &previous)?;
     let unloaded = (remove && previous.is_some()) || state == "replace";
@@ -277,7 +280,6 @@ fn manage(
             }
         } else {
             unchanged(home, &previous)?;
-            prepare_log(home)?;
             if state != "same" {
                 write_plist(home, &body, &previous)?;
             }
@@ -310,7 +312,7 @@ fn manage(
             error.message.push_str(if remove {
                 "; service was unloaded; plist was not removed; resolve the error and rerun pony service uninstall --yes"
             } else {
-                "; previous service was unloaded; new service was not confirmed loaded; plist left in place; resolve the error and rerun pony service install --yes"
+                "; previous service was unloaded; new service was not confirmed loaded; resolve the error and rerun pony service install --yes"
             });
         }
         error
@@ -336,8 +338,8 @@ fn bootout(
     wait: &mut impl FnMut() -> bool,
 ) -> Result<()> {
     match launch(&["bootout".into(), target.into()])? {
-        Some(0) | Some(libc::ESRCH) => return Ok(()),
-        Some(libc::EINPROGRESS) => {}
+        Some(libc::ESRCH) => return Ok(()),
+        Some(0) | Some(libc::EINPROGRESS) => {}
         code => return Err(launch_error("bootout", code)),
     }
     loop {
@@ -437,6 +439,16 @@ fn prepare_log(home: &Path) -> Result<()> {
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(&path)
         .map_err(|e| io_error(&path, e))?;
+    let metadata = file.metadata().map_err(|e| io_error(&path, e))?;
+    let mode = metadata.mode() & 0o7777;
+    if metadata.is_file()
+        && metadata.uid() == unsafe { libc::geteuid() }
+        && mode & 0o600 == 0o600
+        && mode != 0o600
+    {
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|e| io_error(&path, e))?;
+    }
     check_private(&file, &path, false)
 }
 
