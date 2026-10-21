@@ -175,14 +175,17 @@ impl Connection for SlackConnection {
             json!({"channel":channel,"limit":100,
             "oldest":format!("{:.6}", bound.min(parents_since)),"inclusive":true}),
         )?;
-        let user = self.session.lock().unwrap().user.clone();
+        let (user, bot_id) = {
+            let session = self.session.lock().unwrap();
+            (session.user.clone(), session.bot_id.clone())
+        };
         let mut found = Vec::new();
         for mut parent in parents {
             let ts = required(&parent, "ts")?;
             let at = timestamp(&ts)?;
             parent["channel"] = channel.into();
             if at > bound
-                && let Some(Event::Message(m)) = translate(&parent, &user)
+                && let Some(Event::Message(m)) = translate(&parent, &user, &bot_id)
             {
                 found.push(m);
             }
@@ -197,7 +200,7 @@ impl Connection for SlackConnection {
                     "oldest":lower,"inclusive":false,"limit":100}),
                 )? {
                     reply["channel"] = channel.into();
-                    if let Some(Event::Message(m)) = translate(&reply, &user)
+                    if let Some(Event::Message(m)) = translate(&reply, &user, &bot_id)
                         && m.at > bound
                     {
                         found.push(m);
@@ -535,6 +538,7 @@ impl Api {
 struct Session {
     token: String,
     user: String,
+    bot_id: String,
     workspace: Option<String>,
     bot: Option<String>,
 }
@@ -707,6 +711,7 @@ fn receive(
     let session = Session {
         token: token("bot_token")?.into(),
         user: required(&auth, "user_id")?,
+        bot_id: required(&auth, "bot_id")?,
         workspace: Some(required(&auth, "team")?),
         bot: Some(required(&auth, "user")?),
     };
@@ -765,7 +770,8 @@ fn receive(
                 return Err(error("network"));
             }
             let event = if value["type"] == "events_api" {
-                translate(&value["payload"]["event"], &session.user).unwrap_or(Event::Ignored)
+                translate(&value["payload"]["event"], &session.user, &session.bot_id)
+                    .unwrap_or(Event::Ignored)
             } else {
                 Event::Ignored
             };
@@ -786,7 +792,7 @@ fn required(value: &Value, field: &str) -> CoreResult<String> {
         .map(str::to_owned)
         .ok_or_else(|| error("slack_error"))
 }
-fn translate(value: &Value, bot: &str) -> Option<Event> {
+fn translate(value: &Value, bot: &str, bot_id: &str) -> Option<Event> {
     if value["type"].as_str().is_some_and(|t| t != "message") || value.get("bot_id").is_some() {
         return None;
     }
@@ -811,13 +817,11 @@ fn translate(value: &Value, bot: &str) -> Option<Event> {
         return None;
     }
     let text = value["text"].as_str().unwrap_or_default();
-    let mention = format!("<@{bot}>");
-    let mentioned = text.trim_start().starts_with(&mention);
-    let text = if mentioned {
-        text.trim_start().strip_prefix(&mention)?.trim_start()
-    } else {
-        text
-    };
+    let stripped = [bot, bot_id]
+        .iter()
+        .find_map(|id| text.trim_start().strip_prefix(&format!("<@{id}>")));
+    let mentioned = stripped.is_some();
+    let text = stripped.map(str::trim_start).unwrap_or(text);
     Some(Event::Message(Message {
         channel,
         thread: value["thread_ts"]
