@@ -2,7 +2,7 @@
 
 2026-10-21，ranch/dev-r38a。只出设计，不写代码、不连 Slack、不注册应用。依据：`docs/任务/R38-从Slack等聊天软件at着agent开发.md`（用户已定的、交给 ranch 定的、验收 1–7）、`docs/任务/R38a-Slack机器人设计.md`、DESIGN §1–4、§7、§8，CONTRACT，corral 的 `cli.rs`（send、wait、reply 的实现和参数解析）和 `agents/mod.rs`（适配器登记），本机只读的 `corral ls`、`corral status`，paddock 收件箱判新回复和等你的代码（`app/src/agents.rs`、`attention.rs`）。Slack 文档和 Rust 库的出处在文末，都是 2026-10-21 查的。
 
-用户已定的各条照用，没有改。名字暂定 **pony**（Pony Express，送信的马）：包 `crates/pony`、命令 `pony`、目录 `~/.pony`。不合意可以换，只影响这三处的名字。
+用户已定的各条照用，没有改。名字定为 **pony**（Pony Express，送信的马；用户 10-21 定）：包 `crates/pony`、命令 `pony`、目录 `~/.pony`。
 
 ## 要用户定的（按重要程度）
 
@@ -24,9 +24,21 @@
 
 上面五条以外的都给了推荐；主控审查时有异议再提。
 
+## 用户定的（10-21）
+
+1. **主控新回复和提醒**：每一轮都发到 Slack。提醒（主控新回复、Needs you）和每一轮回复的第一段，照原设计 @ 用户。pony 不判断用户在不在电脑前；手机吵不吵，靠 Slack 自己的通知设置（频道静音、只收 @、电脑上不活跃时才推到手机等）。用户原话：「先这么定，如果以后嫌吵，咱们再改。」R38f 上线实测时，核对 Slack 有没有「电脑上不活跃时才推到手机」这类设置。
+2. **后台怎么常驻**（问题 1）：A，launchd 用户服务。
+3. **Needs you 时手机上能做到哪一步**（问题 4）：A。第一期只发提醒；在提醒线程里回的话先排着，对话框在电脑上处理完再送。
+4. **Slack 用哪个 Rust 库**（问题 2）：A，自己用 ureq + tungstenite 接。
+5. **agent 忙时又来了话**（问题 3）：A，排队；删掉还在排队的那条 Slack 消息就是撤回。
+6. **名字**：照推荐，就叫 pony。
+7. **P5-147 什么时候开**（问题 5）：照推荐，R38b 把 `pony status` 写进 CONTRACT 之后，paddock 的 P5-147 就可以开工。
+
+下面正文已照这些决定改成定稿说法，没选的选项不再展开。
+
 ## 和已定的各条对不上的地方
 
-- **Needs you 的线程里回复，送不进正在等对话框的 agent**。已定的是「在提醒的线程里回复，能送到这个 agent」（验收 2），但 agent 是 `blocked` 时 `corral send` 一律退回 7 `not_idle`（`cli.rs` 的 `send_once`）。要在手机上答对话框，得用已定五条以外的 `read`、`keys`。按问题 4 的 A：先排着，对话框处理完再送，送到了。主控新回复的提醒线程不受影响，那时 agent 是 `idle`。
+- **Needs you 的线程里回复，送不进正在等对话框的 agent**。已定的是「在提醒的线程里回复，能送到这个 agent」（验收 2），但 agent 是 `blocked` 时 `corral send` 一律退回 7 `not_idle`（`cli.rs` 的 `send_once`）。要在手机上答对话框，得用已定五条以外的 `read`、`keys`。用户 10-21 定：第一期不用这两条，先排着，对话框在电脑上处理完再送，这样也算送到了。主控新回复的提醒线程不受影响，那时 agent 是 `idle`。
 - 其余照用，设计里各处的落点：
   - 插件式：第 2 节。
   - 和 agent 只走 corral 公开命令：pony 只用 `ls`、`status`、`reply`、`send`。不用 `wait`，理由见 3.7。
@@ -47,7 +59,7 @@ pony 是 ranch 里单独的一块，照 DESIGN §8 fence 的做法：
 - 和 corral 只通过命令来往：调 `corral ls`、`status`、`reply`、`send`，读它们的 JSON。Cargo 里不依赖 `corral-core`、`ranch-dispatch`、`fence`，不读 `~/.corral` 里的任何东西。
 - 找 corral：配置里的 `corral`（绝对路径），没有就先找 PATH，再找 `~/.local/bin/corral`（launchd 起的程序 PATH 只有系统目录，会落到后一个）。起来时调一次 `corral --version`，看 `contract` 是不是 `"1"`。
 - 以后整块拆出去：把 `crates/pony` 挪到自己的仓库，自己打包、部署。corral 一侧本来就没有任何关于它的代码，不用改。
-- **不改 corral 的代码**。第一期用到的都是 corral 现有的公开命令。曾考虑过的 corral 改动都不需要：`corral ls` 带上状态能少调几次 `status`，但每 2 秒十几次进程开销很小；看对话框、按键要的 `read`、`keys` 已经有了，只是超出已定的范围（问题 4）。
+- **不改 corral 的代码**。第一期用到的都是 corral 现有的公开命令。曾考虑过的 corral 改动都不需要：`corral ls` 带上状态能少调几次 `status`，但每 2 秒十几次进程开销很小；看对话框、按键要的 `read`、`keys` 已经有了，只是超出已定的范围，用户 10-21 定第一期不用。
 
 ```
     Slack（Socket Mode，wss 往外连）            Slack Web API
@@ -126,7 +138,7 @@ crates/pony/src/
 | --- | --- |
 | `pony run` | 前台跑机器人。launchd 用它，调试时也可以在终端里直接跑。同一个 `PONY_HOME` 只能有一份：拿不到锁就退出 1，launchd 10 秒后再试，等前一份退了自然接上。没有配置文件就记一行日志、退出 0。 |
 | `pony status` | 给 paddock 的只读命令（第 4 节）。 |
-| `pony service install\|uninstall [--dry-run] [--yes]` | 装、卸 launchd 服务（问题 1 选 A 时才有）。不带 `--yes` 只列要写什么、要跑哪条 `launchctl`。非 macOS 报 `unsupported`。 |
+| `pony service install\|uninstall [--dry-run] [--yes]` | 装、卸 launchd 服务。不带 `--yes` 只列要写什么、要跑哪条 `launchctl`。非 macOS 报 `unsupported`。 |
 | `pony --version` | `{"ok":true,"version":"0.1.0","contract":"1"}`，和 corral 一样。 |
 
 - 所有命令输出一行 JSON；参数错退出 2、`usage`。
@@ -189,7 +201,7 @@ channels = [
 - 发消息：
   - `chat.postMessage` 带 `thread_ts`，正文放 markdown 块（`type: markdown`，认标准 Markdown，含代码块和表格），另给一行 `text` 当通知里显示的那句。
   - 关掉链接预览（`unfurl_links`、`unfurl_media` 为 false），免得 Slack 的服务器去抓回复里私有仓库的链接。
-  - 要提醒的消息（Needs you、主控新回复、每一轮回复的第一段），开头放一个 mrkdwn 的 section 块，写 `<@owner> ranch/main 新回复` 这样的一行。Slack 默认只在被 @、私信时推送，频道里机器人的普通消息手机不响。@ 的只有用户本人。`→` 那一行、排队说明、后面几段不 @。
+  - 要提醒的消息（Needs you、主控新回复、每一轮回复的第一段），开头放一个 mrkdwn 的 section 块，写 `<@owner> ranch/main 新回复` 这样的一行。Slack 默认只在被 @、私信时推送，频道里机器人的普通消息手机不响。@ 的只有用户本人。`→` 那一行、排队说明、后面几段不 @。pony 不判断用户在不在电脑前，每一轮都照这样发；手机吵不吵靠 Slack 自己的通知设置（用户 10-21）。
   - 限频大致每频道每秒 1 条：发送线程按频道排着发，遇到 429 照 `Retry-After` 等。
 - 收消息（适配器里做）：
   - 要的只有三种：没有子类型的普通消息、带附件的 `file_share`、`message_deleted`。带 `bot_id` 的、其余子类型（`message_changed` 等）都不要。
@@ -219,7 +231,7 @@ settings:
   token_rotation_enabled: false
 ```
 
-### 3.4 后台怎么常驻（问题 1 选 A 时）
+### 3.4 后台怎么常驻（用户 10-21 定：launchd 用户服务）
 
 - `pony service install` 写的 plist：
   - `ProgramArguments` 是 `~/.local/bin/pony run`：指向链接，部署切了链接、`launchctl kickstart -k gui/<uid>/local.ranch.pony` 就换到新版本，旧版本目录不被引用。
@@ -229,7 +241,7 @@ settings:
 - 加载用 `launchctl bootstrap gui/<uid> <plist>`，卸载 `bootout` 后删文件。macOS 可能弹「已添加后台项目」的通知。
 - 单实例：`~/.pony/run/lock`，`pony run` 起来先拿锁。`pony status` 只查锁、不拿锁（`fcntl` 的 `F_GETLK` 能查出谁拿着锁），免得和正在起来的 `run` 抢。
 - 日志 `~/.pony/logs/pony.log`，满 1 MiB 轮转，留 3 份。记连接变化、路由到哪个 agent、频道 ID、消息 `ts`、corral 和 Slack 的错误码。**不记**消息正文、回复正文、任何 token、`Authorization` 头、wss 地址（地址里带一次性的 ticket）。
-- 选 B 时：`pony start` 用 `setsid` 转后台、关掉继承来的描述符（R9 的教训），`pony stop` 按锁里的进程号停。其余相同。
+- 不采用 pony 自己转后台（`pony start`/`stop`）。
 
 ### 3.5 一句话进来之后
 
@@ -257,7 +269,7 @@ settings:
 - 机器人先在线程里回一行 `→ <全名>`，再去送；送的结果跟在后面（3.6）。线程开头记的那个 agent 后来重开过（实例变了），这一行写成 `→ paddock/main（重开过）`。
 - 送的就是用户打的字：`corral send <全名> -- <正文>`。`--` 让以 `-` 开头的话也原样送过去（corral 的参数解析认 `--`，之后不再当选项）。不加前缀、不加工，不加 `--force`。
 
-### 3.6 agent 正在干活时（问题 3 选 A 时）
+### 3.6 agent 正在干活时（用户 10-21 定：排队）
 
 送之前先 `corral status`。另外，pony 送出的话还没等到这一轮结束时，这个 agent 算「在等回复」，再来的话也排队，不会在它开始这一轮之前连送两句。
 
@@ -285,7 +297,7 @@ settings:
 - 排队的话按顺序送，一轮一句。真送出去时在原线程说「已送给 X（排了 12 分钟）」，这一轮的回复贴回那个线程。
 - 撤回：删掉还在排队的那条 Slack 消息，就从队里拿掉，线程里说一句「撤回了」。改消息不算，排着的照原文送，要改就删了重发。
 - agent 退出了：排着的都不送，在各自线程里说。
-- 选 B 时：表里排队的几行都改成「不送」，线程里说明原因，没有队列。
+- 不采用「忙时不送、让用户再发」。
 
 ### 3.7 一轮结束，贴回线程
 
@@ -312,7 +324,7 @@ settings:
 - 发在绑的频道顶层：第一行 `ranch/main 新回复`（Slack 里前面 @ 用户，见 3.3），接着是回复正文；太长时第一段在这条里，其余在它的线程里（3.9）。
 - 这条提醒的线程对应这个主控，在里面回就是送给它。
 - 不是主控的 agent 的新回复不提醒（paddock 收件箱也是这样），除非这一轮是 pony 开的。
-- 人在电脑上和主控对话时，每一轮也照样提醒（已定）。
+- 人在电脑上和主控对话时，每一轮也照样提醒。pony 不判断用户在不在电脑前，手机吵不吵靠 Slack 自己的通知设置。用户 10-21：「先这么定，如果以后嫌吵，咱们再改。」
 
 **Needs you**：
 
@@ -412,7 +424,7 @@ ranch（#ranch）
 | 字段 | 含义 |
 | --- | --- |
 | `config` | `ok`、`missing`（没有配置文件：这台机器没开）、`invalid`。`invalid` 时 `config_message` 写文件、位置和原因，凭证文件的错不带原文（第 6 节）。在跑的 pony 遇到改坏的配置会继续用旧的，这里照样报 `invalid`。 |
-| `service` | `installed`、`not_installed`、`unsupported`（非 macOS）。问题 1 选 B 时没有这个字段。 |
+| `service` | `installed`、`not_installed`、`unsupported`（非 macOS）。 |
 | `running` | 有 `pony run` 拿着锁。为真时有 `pid`、`started`（Unix 秒）。 |
 | `last_exit` | 没在跑时上一次为什么退出：`{"at":…,"code":"secrets_too_open","message":"…"}`；不知道时为 `null`。 |
 | `chats` | 配置里每家一项，按登记顺序。没配置时是空数组。 |
@@ -456,7 +468,7 @@ Slack 官方没有 Rust SDK。候选：
 
 **结论**：
 
-- slack-morphism 照 AGENTS.md 够格，但推荐自己接（问题 2）。理由：
+- 用户 10-21 定：自己接（ureq + tungstenite），不采用 slack-morphism。slack-morphism 照 AGENTS.md 够格，不用它的理由：
   - pony 只用 5 个接口：`apps.connections.open`、`auth.test`、`conversations.info`、`chat.postMessage`，加 Socket Mode。为它引入一百多个包和一个异步运行时不划算。
   - 本机可能要走代理，slack-morphism 的 Socket Mode 不支持。
 - 自己接要做的：
@@ -499,7 +511,7 @@ Slack 官方没有 Rust SDK。候选：
 ## 7. 对 `docs/DESIGN.md` 的改动建议（不在这次改）
 
 - §1 表格加一行：`pony（聊天软件机器人，命令 pony，每台机器一份、后台常驻）`｜新做（R38）｜第一期，见 §10。
-- §2 全局位置加 `~/.pony/`、`~/.local/bin/pony`，选 launchd 时还有 `~/Library/LaunchAgents/local.ranch.pony.plist`；前端同样只通过命令（`pony status`）用它。
+- §2 全局位置加 `~/.pony/`、`~/.local/bin/pony`、`~/Library/LaunchAgents/local.ranch.pony.plist`；前端同样只通过命令（`pony status`）用它。
 - §3 安装：
   - 版本目录加 `bin/pony`。
   - 部署多切一个链接 `~/.local/bin/pony`。
@@ -521,11 +533,11 @@ Slack 官方没有 Rust SDK。候选：
 
 | 件 | 做什么 | 依赖 | 对 paddock |
 | --- | --- | --- | --- |
-| R38b 定文档 | 照第 7 节改 DESIGN，CONTRACT 加 `pony status`（照第 4 节）。只改文档 | 用户定了上面的问题 | 合并后 paddock 可以照 CONTRACT 开 P5-147（问题 5） |
+| R38b 定文档 | 照第 7 节改 DESIGN，CONTRACT 加 `pony status`（照第 4 节）。只改文档 | 用户已定（10-21） | 合并后 paddock 就可以照 CONTRACT 开 P5-147（用户 10-21 定） |
 | R38c 包和外壳 | 建 `crates/pony`；`--version`、`status`、`run` 外壳；配置和凭证的读取、校验、权限检查；单实例锁、状态文件、日志轮转；打包工具把 `bin/pony` 放进版本目录。在隔离的 `PONY_HOME` 里测 status 的各种情况（没配置、配置错、凭证太宽、在跑、没在跑） | R38b | 部署后 `pony status` 是真命令，没配置时报 `missing` |
 | R38d 共用核心 | 路由、线程表、送话和排队、盯 agent 和提醒、去重、分段、`?`、重启恢复。用内存假适配器和假 corral 测验收 1–5 的逻辑：没绑仓库的 agent 连 `status` 都不读、别人的消息不理、跨仓库被拒、分段不丢字。加「核心源码不出现适配器名」的测试 | R38c（接口在 R38c 定好） | 无 |
 | R38e Slack 适配器 | Socket Mode（代理、回执、重连、`hello` 里的连接数）、4 个 Web API、事件翻译、markdown 块、限频。用本机假 HTTP 和 WebSocket 服务器测 | R38c；和 R38d 可以同时做 | 无 |
-| R38f 常驻和上线 | `pony service install\|uninstall`；部署说明。用户在场时：用 manifest 建 Slack 应用、生成两个 token、写 `~/.pony`、建私有频道并邀请机器人、装服务。实测验收 1–6，实测 markdown 块里 `<!channel>` 和长回复的样子，实测要不要代理 | R38d、R38e | paddock 拿到真实数据，验收 7 |
+| R38f 常驻和上线 | `pony service install\|uninstall`；部署说明。用户在场时：用 manifest 建 Slack 应用、生成两个 token、写 `~/.pony`、建私有频道并邀请机器人、装服务。实测验收 1–6，实测 markdown 块里 `<!channel>` 和长回复的样子，实测要不要代理；核对 Slack 有没有「电脑上不活跃时才推到手机」这类通知设置（用户 10-21） | R38d、R38e | paddock 拿到真实数据，验收 7 |
 
 - 每件照 AGENTS.md 跑 `cargo test --all-targets`、`clippy -D warnings`、`fmt --check`。
 - 测试不连 Slack、不碰真实 agent：corral 那层用内存假实现，或用工作区编出的 corral 和 `/bin/cat` 这类合成程序，HOME、`CORRAL_HOME`、`PONY_HOME` 都隔离。
@@ -546,7 +558,8 @@ Slack 官方没有 Rust SDK。候选：
 - 多台机器（已定）。
 - 补收不在线时的消息。
 - 改消息后跟着改。
-- 在 Slack 里答对话框（问题 4）。
+- 在 Slack 里答对话框（用户 10-21 定）。
+- 判断用户在不在电脑前、据此少发提醒（用户 10-21：以后嫌吵再改）。
 
 ## 出处（都在 2026-10-21 查）
 

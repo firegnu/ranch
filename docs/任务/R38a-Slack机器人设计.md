@@ -104,3 +104,17 @@ ranch/dev-r38a，2026-10-21。
   - docs.rs 上 `tungstenite/client/fn.client_tls_with_config.html` 是 404，这个函数在库的根下；改读本地 crate 源码 `src/tls.rs` 核对了签名。
   - crates.io 的网页对命令行请求返回 404，改用它的 JSON 接口。
   - Slack 的 Socket Mode 页没写回执时限和重发次数，改引 Events API 页的 3 秒、最多 3 次。
+
+## 用户定稿
+
+用户 10-21 定，已写进设计稿「用户定的（10-21）」一节，正文各处改成定稿说法：
+
+1. 主控新回复和提醒：每一轮都发到 Slack。提醒（主控新回复、Needs you）和每一轮回复的第一段 @ 用户。pony 不判断用户在不在电脑前，手机吵不吵靠 Slack 自己的通知设置。用户原话：「先这么定，如果以后嫌吵，咱们再改。」R38f 上线实测时，加一条核对 Slack 有没有「电脑上不活跃时才推到手机」这类设置。
+2. 常驻：A，launchd 用户服务。
+3. Needs you：A，第一期只发提醒，线程里回的话排着，对话框在电脑上处理完再送。
+4. Slack 库：A，自己用 ureq + tungstenite 接。
+5. agent 忙时来话：A，排队，删掉还在排队的 Slack 消息就是撤回。
+6. 名字就叫 pony。
+7. R38b 把 `pony status` 写进 CONTRACT 之后，paddock 的 P5-147 就可以开工。
+
+「要用户定的」那一节保留当时提的问题和选项，没删。
