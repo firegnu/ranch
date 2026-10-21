@@ -83,7 +83,7 @@ pub struct SendError {
     pub resize: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryAfter {
     /// Last processed message, if known; opaque to the core.
     pub id: Option<String>,
@@ -98,9 +98,11 @@ pub trait Connection {
     fn limits(&self) -> Limits;
     /// Return the posted message ID. Rate limits/retries/escaping belong to the adapter.
     fn send(&mut self, message: Outgoing<'_>) -> std::result::Result<String, SendError>;
+    /// Connection operation errors are nonfatal, regardless of their public code.
     fn channel(&mut self, id: &str) -> Result<ChannelInfo>;
     /// Fetch ALL newer messages in this channel, INCLUDING replies in old and new threads.
     /// The adapter chooses how to find threads with new replies, without scanning each one.
+    /// Look back 30 days for parent messages, matching the core's thread retention.
     /// Translate identically to live messages; edits and bot messages are excluded.
     fn history(&mut self, channel: &str, after: &HistoryAfter) -> Result<Vec<Message>>;
     /// Return false only for a confirmed deletion, not inaccessible history/network errors.

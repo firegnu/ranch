@@ -1,7 +1,10 @@
 use super::{
     Error, Result,
     config::ChatConfig,
-    state::{Address, Cursor, Expired, Pending, Phase, Seen, State, Store, Thread, Watch},
+    state::{
+        Address, Backfill, Cursor, Expired, Pending, Phase, Seen, State, Store, Thread,
+        Verification, Watch,
+    },
 };
 use crate::{
     chats::{ChannelInfo, Connection, ConnectionInfo, Event, HistoryAfter, Message, Outgoing},
@@ -20,7 +23,6 @@ pub struct Engine {
     previous: BTreeMap<String, Status>,
     recovering: BTreeSet<String>,
     connected: BTreeSet<String>,
-    unverified: BTreeSet<(Address, String)>,
 }
 impl Engine {
     pub fn new(
@@ -46,7 +48,6 @@ impl Engine {
             previous: BTreeMap::new(),
             recovering,
             connected: BTreeSet::new(),
-            unverified: BTreeSet::new(),
         }
     }
     fn save(&self) -> Result<()> {
@@ -62,6 +63,10 @@ impl Engine {
         self.log
             .push(format!("{context} {}", safe_code(&error.code)));
         Ok(())
+    }
+    fn record_adapter_error(&mut self, context: &str, error: &Error) {
+        self.log
+            .push(format!("{context} {}", safe_code(&error.code)));
     }
     fn say(&mut self, address: &Address, text: &str, notify: bool) -> Result<()> {
         if let Err(error) = self.post(address, text, notify, false) {
@@ -179,16 +184,27 @@ impl Engine {
             channel: m.channel.clone(),
             thread: String::new(),
         };
-        if let Some(c) = self.state.cursors.iter_mut().find(|c| c.address == address) {
-            if m.at > c.at {
-                c.at = m.at;
-                c.id = m.id.clone();
+        if !self.state.backfills.iter().any(|b| b.address == address) {
+            self.advance_cursor(
+                address,
+                HistoryAfter {
+                    id: Some(m.id.clone()),
+                    at: m.at,
+                },
+            );
+        }
+    }
+    fn advance_cursor(&mut self, address: Address, after: HistoryAfter) {
+        if let Some(cursor) = self.state.cursors.iter_mut().find(|c| c.address == address) {
+            if after.at > cursor.at {
+                cursor.at = after.at;
+                cursor.id = after.id;
             }
         } else {
             self.state.cursors.push(Cursor {
                 address,
-                id: m.id.clone(),
-                at: m.at,
+                id: after.id,
+                at: after.at,
             });
         }
     }
@@ -446,6 +462,7 @@ impl Engine {
             announcement: Some(announcement.clone()),
             attachments: m.attachments,
             rejection_reported: false,
+            verification: None,
             address: address.clone(),
             message: m.id,
             agent: name.clone(),
@@ -511,14 +528,14 @@ impl Engine {
                     .is_some_and(|(r, _)| r == channel.repo)
             }) {
                 let s = match corral.status(&agent.name) {
-                    Ok(s) => s,
+                    Ok(s) => Some(s),
                     Err(e) if e.exit == Some(2) => continue,
-                    Err(e) => return Err(corral_error(e)),
+                    Err(_) => None,
                 };
-                let label = if s.paused {
-                    "暂停中".into()
-                } else {
-                    match s.state.as_str() {
+                let label = match s {
+                    None => "读不出".into(),
+                    Some(s) if s.paused => "暂停中".into(),
+                    Some(s) => match s.state.as_str() {
                         "working" => format!(
                             "干活中，{} 分钟",
                             minutes(at - s.turn_started.unwrap_or(at))
@@ -532,7 +549,7 @@ impl Engine {
                         "blocked" => "等你（对话框）".into(),
                         "starting" => "启动中".into(),
                         _ => "读不出".into(),
-                    }
+                    },
                 };
                 let count = self
                     .state
@@ -589,6 +606,14 @@ impl Engine {
             })
         };
         self.state.pending.retain(permitted);
+        self.state.backfills.retain(|b| {
+            self.configs.iter().any(|c| {
+                c.kind == b.address.kind
+                    && c.channels
+                        .iter()
+                        .any(|channel| channel.id == b.address.channel)
+            })
+        });
         self.save()?;
         let uncertain: Vec<_> = self
             .state
@@ -608,6 +633,7 @@ impl Engine {
             self.save()?;
             self.say(&p.address, "上次发送结果不明，没重送，请确认后重发", false)?;
         }
+        let mut backfilled = BTreeSet::new();
         for input in self.store.inbox() {
             if matches!(input.event, Event::Message(_) | Event::Deleted { .. })
                 && !self.connected.contains(&input.kind)
@@ -627,17 +653,26 @@ impl Engine {
                     self.reports.insert(input.kind.clone(), info);
                     if connected {
                         self.connected.insert(input.kind.clone());
-                        self.backfill(&input.kind, corral, at)?;
-                        self.state.online.insert(input.kind.clone(), at);
-                        self.unverified.extend(
-                            self.state
-                                .pending
-                                .iter()
-                                .filter(|p| {
-                                    p.address.kind == input.kind && p.phase == Phase::Queued
-                                })
-                                .map(|p| (p.address.clone(), p.message.clone())),
-                        );
+                        self.backfill(&input.kind, corral, at, true)?;
+                        backfilled.insert(input.kind.clone());
+                        if !self
+                            .state
+                            .backfills
+                            .iter()
+                            .any(|b| b.address.kind == input.kind)
+                        {
+                            self.state.online.insert(input.kind.clone(), at);
+                        }
+                        for pending in &mut self.state.pending {
+                            if pending.address.kind == input.kind && pending.phase == Phase::Queued
+                            {
+                                pending.verification.get_or_insert(Verification {
+                                    started: at,
+                                    retry_at: at,
+                                    delay: 2.,
+                                });
+                            }
+                        }
                     } else {
                         self.disconnect(&input.kind);
                     }
@@ -672,19 +707,23 @@ impl Engine {
         if self.connected.is_empty() {
             return self.save();
         }
+        for kind in self.connected.clone().difference(&backfilled) {
+            self.backfill(kind, corral, at, false)?;
+        }
         // Checkpoint online time at most once a minute. This gives cursorless channels
         // a conservative overlap after an unclean stop without forcing writes every tick.
         for kind in &self.connected {
-            if self
-                .state
-                .online
-                .get(kind)
-                .is_none_or(|last| at - last >= 60.)
+            if !self.state.backfills.iter().any(|b| b.address.kind == *kind)
+                && self
+                    .state
+                    .online
+                    .get(kind)
+                    .is_none_or(|last| at - last >= 60.)
             {
                 self.state.online.insert(kind.clone(), at);
             }
         }
-        self.verify_queue()?;
+        self.verify_queue(at)?;
         for i in 0..self.state.pending.len() {
             let pending = self.state.pending[i].clone();
             if self.connected.contains(&pending.address.kind)
@@ -896,9 +935,7 @@ impl Engine {
             let p = self.state.pending[i].clone();
             if p.phase != Phase::Queued
                 || p.announcement.is_some()
-                || self
-                    .unverified
-                    .contains(&(p.address.clone(), p.message.clone()))
+                || p.verification.is_some()
                 || self.state.pending[..i]
                     .iter()
                     .any(|earlier| earlier.agent == p.agent)
@@ -1084,58 +1121,117 @@ impl Engine {
         }
         Ok(())
     }
-    fn backfill(&mut self, kind: &str, corral: &mut dyn Corral, at: f64) -> Result<()> {
+    fn backfill(
+        &mut self,
+        kind: &str,
+        corral: &mut dyn Corral,
+        at: f64,
+        reconnect: bool,
+    ) -> Result<()> {
         let Some(config) = self.configs.iter().find(|c| c.kind == kind).cloned() else {
             return Ok(());
         };
         let mut messages = Vec::new();
+        let mut completed = Vec::new();
         for channel in config.channels {
+            let address = Address {
+                kind: kind.into(),
+                channel: channel.id.clone(),
+                thread: String::new(),
+            };
+            let mut pending = self
+                .state
+                .backfills
+                .iter()
+                .find(|b| b.address == address)
+                .cloned();
+            if pending.is_none() && reconnect {
+                let after = self
+                    .state
+                    .cursors
+                    .iter()
+                    .find(|c| c.address == address)
+                    .map(|cursor| HistoryAfter {
+                        id: cursor.id.clone(),
+                        at: cursor.at,
+                    })
+                    .or_else(|| {
+                        self.state
+                            .online
+                            .get(kind)
+                            .map(|at| HistoryAfter { id: None, at: *at })
+                    });
+                if let Some(after) = after {
+                    let job = Backfill {
+                        address: address.clone(),
+                        after,
+                        started: at,
+                        error: "backfill_pending".into(),
+                    };
+                    self.state.backfills.push(job.clone());
+                    self.save()?;
+                    pending = Some(job);
+                }
+            }
+            if let Some(job) = &pending {
+                if at - job.started > 12. * 3600. {
+                    self.state.backfills.retain(|b| b.address != address);
+                    self.advance_cursor(address.clone(), HistoryAfter { id: None, at });
+                    self.save()?;
+                    self.log.push(format!("backfill_expired {}", job.error));
+                    if let Err(error) = self.post(
+                        &address,
+                        &format!(
+                            "重连后没读到离线期间的消息（{}），那段时间发的话请重发",
+                            job.error
+                        ),
+                        false,
+                        true,
+                    ) {
+                        self.record_error("delivery_failed", error)?;
+                    }
+                    continue;
+                }
+            } else if !reconnect {
+                continue;
+            }
             let info = match self.connections.get_mut(kind).unwrap().channel(&channel.id) {
                 Ok(info) => info,
                 Err(error) => {
-                    self.record_error("backfill_failed", error)?;
+                    self.backfill_failed(&address, error)?;
                     continue;
                 }
             };
             self.channels
                 .insert((kind.into(), channel.id.clone()), info);
-            let after = self
-                .state
-                .cursors
-                .iter()
-                .find(|c| {
-                    c.address.kind == kind
-                        && c.address.channel == channel.id
-                        && c.address.thread.is_empty()
-                })
-                .map(|cursor| HistoryAfter {
-                    id: Some(cursor.id.clone()),
-                    at: cursor.at,
-                })
-                .or_else(|| {
-                    self.state
-                        .online
-                        .get(kind)
-                        .map(|at| HistoryAfter { id: None, at: *at })
-                });
-            let Some(after) = after else {
+            let Some(job) = pending else {
                 continue;
             };
             let found = match self
                 .connections
                 .get_mut(kind)
                 .unwrap()
-                .history(&channel.id, &after)
+                .history(&channel.id, &job.after)
             {
                 Ok(found) => found,
                 Err(error) => {
-                    self.record_error("backfill_failed", error)?;
+                    self.backfill_failed(&address, error)?;
                     continue;
                 }
             };
-            messages.extend(found.into_iter().filter(|m| {
-                m.sender == config.owner && m.channel == channel.id && m.at > after.at
-            }));
+            let mut through = HistoryAfter { id: None, at };
+            for message in found.into_iter().filter(|m| {
+                m.sender == config.owner && m.channel == channel.id && m.at > job.after.at
+            }) {
+                if message.at > through.at {
+                    through = HistoryAfter {
+                        id: Some(message.id.clone()),
+                        at: message.at,
+                    };
+                }
+                messages.push(message);
+            }
+            completed.push((address, through));
         }
         messages.sort_by(|a, b| a.at.total_cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
         for message in messages {
@@ -1146,17 +1242,47 @@ impl Engine {
             }
             self.message(kind, message, corral, at, true)?;
         }
-        Ok(())
+        // Keep the lower bound durable until every returned message has been handled.
+        for (address, through) in completed {
+            self.state.backfills.retain(|b| b.address != address);
+            self.advance_cursor(address, through);
+        }
+        self.save()
     }
-    fn verify_queue(&mut self) -> Result<()> {
-        self.unverified.retain(|(address, id)| {
-            self.state
-                .pending
-                .iter()
-                .any(|p| p.address == *address && p.message == *id && p.phase == Phase::Queued)
-        });
-        for (address, id) in self.unverified.clone() {
-            if !self.connected.contains(&address.kind) {
+    fn backfill_failed(&mut self, address: &Address, error: Error) -> Result<()> {
+        if let Some(job) = self
+            .state
+            .backfills
+            .iter_mut()
+            .find(|b| b.address == *address)
+        {
+            job.error = safe_code(&error.code);
+        }
+        self.record_adapter_error("backfill_failed", &error);
+        self.save()
+    }
+    fn verify_queue(&mut self, at: f64) -> Result<()> {
+        let mut i = 0;
+        while i < self.state.pending.len() {
+            let pending = self.state.pending[i].clone();
+            let Some(mut check) = pending.verification else {
+                i += 1;
+                continue;
+            };
+            let address = pending.address;
+            let id = pending.message;
+            if pending.phase != Phase::Queued || !self.connected.contains(&address.kind) {
+                i += 1;
+                continue;
+            }
+            if at - check.started > 600. {
+                self.state.pending.remove(i);
+                self.save()?;
+                self.say(&address, "没法核对这句还在不在，先不送；要送请重发", false)?;
+                continue;
+            }
+            if at < check.retry_at {
+                i += 1;
                 continue;
             }
             let thread = (address.thread != id).then_some(address.thread.as_str());
@@ -1165,18 +1291,22 @@ impl Engine {
                 thread,
                 &id,
             ) {
-                Ok(exists) => {
-                    self.unverified.remove(&(address.clone(), id.clone()));
-                    if !exists {
-                        self.state
-                            .pending
-                            .retain(|p| !(p.address == address && p.message == id));
-                        self.save()?;
-                        self.say(&address, "撤回了", false)?;
-                    }
+                Ok(false) => {
+                    self.state.pending.remove(i);
+                    self.save()?;
+                    self.say(&address, "撤回了", false)?;
+                    continue;
                 }
-                Err(error) => self.record_error("queue_check_failed", error)?,
+                Ok(true) => self.state.pending[i].verification = None,
+                Err(error) => {
+                    self.record_adapter_error("queue_check_failed", &error);
+                    check.retry_at = at + check.delay;
+                    check.delay = (check.delay * 2.).min(300.);
+                    self.state.pending[i].verification = Some(check);
+                }
             }
+            self.save()?;
+            i += 1;
         }
         Ok(())
     }

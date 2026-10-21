@@ -1,6 +1,6 @@
 use super::{Error, Result, files, now};
 use crate::{
-    chats::{Event, Events},
+    chats::{Event, Events, HistoryAfter},
     corral::Status,
 };
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,8 @@ pub struct Pending {
     pub attachments: bool,
     #[serde(default)]
     pub rejection_reported: bool,
+    #[serde(default)]
+    pub verification: Option<Verification>,
     pub address: Address,
     pub message: String,
     pub agent: String,
@@ -57,6 +59,13 @@ pub struct Pending {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct Verification {
+    pub started: f64,
+    pub retry_at: f64,
+    pub delay: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Watch {
     pub status: Status,
     pub turn: Option<f64>,
@@ -67,8 +76,16 @@ pub struct Watch {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Cursor {
     pub address: Address,
-    pub id: String,
+    pub id: Option<String>,
     pub at: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Backfill {
+    pub address: Address,
+    pub after: HistoryAfter,
+    pub started: f64,
+    pub error: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -121,6 +138,8 @@ pub struct State {
     pub cursors: Vec<Cursor>,
     #[serde(default)]
     pub online: BTreeMap<String, f64>,
+    #[serde(default)]
+    pub backfills: Vec<Backfill>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

@@ -34,6 +34,7 @@ struct Memory {
     deleted: BTreeSet<String>,
     exists_errors: BTreeSet<String>,
     exists_reads: Vec<String>,
+    adapter_error_code: Option<String>,
 }
 struct MemoryConnection(Rc<RefCell<Memory>>, usize, bool);
 impl Connection for MemoryConnection {
@@ -72,7 +73,14 @@ impl Connection for MemoryConnection {
     }
     fn channel(&mut self, id: &str) -> core::Result<ChannelInfo> {
         if self.0.borrow().channel_errors.contains(id) {
-            return Err(core::Error::new("not_member", "not a member"));
+            return Err(core::Error::new(
+                self.0
+                    .borrow()
+                    .adapter_error_code
+                    .as_deref()
+                    .unwrap_or("not_member"),
+                "not a member",
+            ));
         }
         Ok(ChannelInfo {
             id: id.into(),
@@ -85,7 +93,12 @@ impl Connection for MemoryConnection {
         let mut data = self.0.borrow_mut();
         data.history_reads.push((channel.into(), after.clone()));
         if data.history_errors.contains(channel) {
-            return Err(core::Error::new("history_failed", "cannot read history"));
+            return Err(core::Error::new(
+                data.adapter_error_code
+                    .as_deref()
+                    .unwrap_or("history_failed"),
+                "cannot read history",
+            ));
         }
         Ok(data
             .history
@@ -98,7 +111,10 @@ impl Connection for MemoryConnection {
         let mut data = self.0.borrow_mut();
         data.exists_reads.push(id.into());
         if data.exists_errors.contains(id) {
-            return Err(core::Error::new("network", "cannot check message"));
+            return Err(core::Error::new(
+                data.adapter_error_code.as_deref().unwrap_or("network"),
+                "cannot check message",
+            ));
         }
         Ok(!data.deleted.contains(id))
     }
@@ -1344,6 +1360,8 @@ fn reconnect_withdraws_deleted_queue_and_defers_unverifiable_message_only() {
     assert!(f.memory.borrow().exists_reads.contains(&"deleted".into()));
     f.memory.borrow_mut().exists_errors.clear();
     f.step(16.);
+    assert_eq!(f.corral.sent.len(), 1);
+    f.step(18.);
     assert_eq!(f.corral.sent.last().unwrap().1, "核对我");
 }
 
@@ -1396,7 +1414,7 @@ fn unchanged_polling_preserves_state_and_status_files_and_retention_is_bounded()
     });
     f.engine.state.cursors.push(Cursor {
         address: old,
-        id: "old".into(),
+        id: Some("old".into()),
         at: 1.,
     });
     f.engine.state.seen.push(Seen {
@@ -1428,4 +1446,267 @@ fn previous_untimed_state_remains_readable_with_queued_messages() {
     assert_eq!(f.engine.state.pending[0].text, "hello");
     assert_eq!(f.engine.state.seen[0].id, "queued");
     assert_eq!(f.engine.state.expired[0].address.thread, "expired");
+}
+
+#[test]
+fn failed_backfill_keeps_its_lower_bound_across_live_messages_and_restarts() {
+    for has_cursor in [true, false] {
+        for channel_error in [false, true] {
+            let mut f = Fixture::new();
+            f.step(2.);
+            if has_cursor {
+                f.events
+                    .emit(Event::Message(incoming("C2", "seed", None, "?", 10.)))
+                    .unwrap();
+                f.step(10.);
+            }
+            let online = f.engine.state.online["memory"];
+            f.corral.agents.get_mut("ranch/main").unwrap().state = "working".into();
+            f.memory
+                .borrow_mut()
+                .history
+                .push(incoming("C2", "offline", None, "离线那句", 100.));
+            if channel_error {
+                f.memory.borrow_mut().channel_errors.insert("C2".into());
+            } else {
+                f.memory.borrow_mut().history_errors.insert("C2".into());
+            }
+            f.restart();
+            f.step(200.);
+            let live = incoming("C2", "live", None, "在线那句", 201.);
+            f.memory.borrow_mut().history.push(live.clone());
+            f.events.emit(Event::Message(live)).unwrap();
+            f.step(202.);
+            assert_eq!(f.engine.state.online["memory"], online);
+            let cursor = f
+                .engine
+                .state
+                .cursors
+                .iter()
+                .find(|c| c.address.channel == "C2");
+            assert_eq!(cursor.map(|c| c.at), has_cursor.then_some(10.));
+            f.restart();
+            f.memory.borrow_mut().channel_errors.clear();
+            f.memory.borrow_mut().history_errors.clear();
+            f.step(204.);
+            let pending: Vec<_> = f
+                .engine
+                .state
+                .pending
+                .iter()
+                .filter(|p| p.agent == "ranch/main")
+                .collect();
+            assert_eq!(pending.iter().filter(|p| p.message == "live").count(), 1);
+            let offline = pending.iter().find(|p| p.message == "offline").unwrap();
+            assert!(
+                offline
+                    .text
+                    .contains("pony 当时离线，现在才送到）\n离线那句")
+            );
+            assert!(f.engine.store.state().backfills.is_empty());
+            assert_eq!(
+                f.memory
+                    .borrow()
+                    .history_reads
+                    .iter()
+                    .rev()
+                    .find(|(channel, _)| channel == "C2")
+                    .unwrap()
+                    .1
+                    .at,
+                if has_cursor { 10. } else { online }
+            );
+            f.step(206.);
+            assert_eq!(
+                f.engine
+                    .state
+                    .pending
+                    .iter()
+                    .filter(|p| p.message == "offline")
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[test]
+fn failed_backfill_retries_each_tick_then_reports_and_clears_after_twelve_hours() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.memory.borrow_mut().history_errors.insert("C2".into());
+    f.restart();
+    f.step(100.);
+    f.step(102.);
+    f.step(104.);
+    assert_eq!(
+        f.memory
+            .borrow()
+            .history_reads
+            .iter()
+            .filter(|(c, _)| c == "C2")
+            .count(),
+        3
+    );
+    f.restart();
+    let deadline = 100. + 12. * 3600.;
+    f.step(deadline);
+    assert!(!f.texts().contains("那段时间发的话请重发"));
+    f.step(deadline + 2.);
+    let data = f.memory.borrow();
+    let notice = data
+        .posted
+        .iter()
+        .find(|p| p.text == "重连后没读到离线期间的消息（history_failed），那段时间发的话请重发")
+        .unwrap();
+    assert_eq!(notice.channel, "C2");
+    assert!(notice.thread.is_none());
+    drop(data);
+    assert!(f.engine.store.state().backfills.is_empty());
+    f.memory.borrow_mut().history_errors.clear();
+    f.restart();
+    f.step(deadline + 4.);
+    assert_eq!(f.texts().matches("那段时间发的话请重发").count(), 1);
+    assert_eq!(
+        f.memory
+            .borrow()
+            .history_reads
+            .iter()
+            .rev()
+            .find(|(c, _)| c == "C2")
+            .unwrap()
+            .1
+            .at,
+        deadline + 2.
+    );
+}
+
+#[test]
+fn status_summary_keeps_other_agents_when_one_status_is_unreadable() {
+    let mut f = Fixture::new();
+    f.corral
+        .status_errors
+        .insert("paddock/dev".into(), failure(9, "incompatible"));
+    f.message("summary", None, "?", true);
+    f.step(10.);
+    let text = f.texts();
+    assert!(text.contains("• dev — 读不出"));
+    assert!(text.contains("• main — 空闲"));
+    assert!(text.contains("ranch（"));
+    assert!(!text.contains("incompatible: reason"));
+    assert!(!text.contains("private"));
+}
+
+#[test]
+fn unverifiable_queue_backs_off_across_restart_and_expires_once_after_ten_minutes() {
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.message("uncertain", None, "dev 核对我", true);
+    f.message("next", None, "dev 下一句", true);
+    f.step(10.);
+    f.memory
+        .borrow_mut()
+        .exists_errors
+        .insert("uncertain".into());
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.restart();
+    let mut attempts = 0;
+    for at in [20., 22., 26., 34., 50., 82., 146., 274., 530.] {
+        f.step(at);
+        attempts += 1;
+        f.step(at + 1.);
+        assert_eq!(
+            f.memory
+                .borrow()
+                .exists_reads
+                .iter()
+                .filter(|id| *id == "uncertain")
+                .count(),
+            attempts
+        );
+        if at == 34. {
+            f.restart();
+            f.step(36.);
+        }
+    }
+    assert!(f.corral.sent.is_empty());
+    let check = f
+        .engine
+        .state
+        .pending
+        .iter()
+        .find(|p| p.message == "uncertain")
+        .unwrap()
+        .verification
+        .as_ref()
+        .unwrap();
+    assert_eq!(check.retry_at, 830.);
+    assert_eq!(check.delay, 300.);
+    f.step(620.);
+    assert!(!f.texts().contains("没法核对这句还在不在"));
+    f.step(622.);
+    f.step(624.);
+    assert_eq!(
+        f.texts()
+            .matches("没法核对这句还在不在，先不送；要送请重发")
+            .count(),
+        1
+    );
+    assert_eq!(f.corral.sent, [("paddock/dev".into(), "下一句".into())]);
+    assert!(
+        !f.engine
+            .store
+            .state()
+            .pending
+            .iter()
+            .any(|p| p.message == "uncertain")
+    );
+    assert_eq!(
+        f.memory
+            .borrow()
+            .exists_reads
+            .iter()
+            .filter(|id| *id == "uncertain")
+            .count(),
+        9
+    );
+}
+
+#[test]
+fn adapter_reserved_error_codes_do_not_abort_the_core_but_state_io_still_does() {
+    for code in ["io", "state_invalid", "secrets_too_open"] {
+        for operation in ["channel", "history", "exists"] {
+            let mut f = Fixture::new();
+            f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+            f.message("queued", None, "dev hi", true);
+            f.step(10.);
+            f.memory.borrow_mut().adapter_error_code = Some(code.into());
+            match operation {
+                "channel" => {
+                    f.memory.borrow_mut().channel_errors.insert("C1".into());
+                }
+                "history" => {
+                    f.memory.borrow_mut().history_errors.insert("C1".into());
+                }
+                _ => {
+                    f.memory.borrow_mut().exists_errors.insert("queued".into());
+                }
+            }
+            f.restart();
+            f.events
+                .emit(Event::Message(incoming("C2", "good", None, "继续", 12.)))
+                .unwrap();
+            f.step(12.);
+            assert_eq!(f.corral.sent, [("ranch/main".into(), "继续".into())]);
+            assert!(f.engine.log.iter().any(|line| line.ends_with(code)));
+        }
+    }
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.message("queued", None, "hello", true);
+    let path = f._dir.path().join("state.json");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert_eq!(f.engine.step(&mut f.corral, 10.).unwrap_err().code, "io");
+    assert!(f.corral.sent.is_empty());
 }
