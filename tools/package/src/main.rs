@@ -11,7 +11,7 @@ use std::{
 };
 
 /// Programs placed in `bin/`.
-const PROGRAMS: &[&str] = &["corral", "ranch", "fence"];
+const PROGRAMS: &[&str] = &["corral", "ranch", "fence", "pony"];
 
 /// Files shipped beside the program, from the repository root.
 const SHARED: &[&str] = &[
@@ -88,6 +88,10 @@ fn run() -> Result<(), String> {
             "fence",
             "--bin",
             "fence",
+            "-p",
+            "pony",
+            "--bin",
+            "pony",
             "--release",
             "--locked",
         ])
@@ -167,7 +171,14 @@ fn run() -> Result<(), String> {
     let digest = output_of(
         &staging.0,
         "shasum",
-        &["-a", "256", "bin/corral", "bin/ranch", "bin/fence"],
+        &[
+            "-a",
+            "256",
+            "bin/corral",
+            "bin/ranch",
+            "bin/fence",
+            "bin/pony",
+        ],
     )?;
     let build = format!(
         "revision: {revision}\ntarget: {host}\nworking-tree: {}\nsource: {}\nbranch: {branch}\nsrt: 0.0.80\nnode: {node_version} ({node})\n{digest}\n",
