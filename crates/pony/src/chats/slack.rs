@@ -7,6 +7,7 @@ use crate::core::{Error, Result as CoreResult, now};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
+    io::Write,
     sync::{Arc, Condvar, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -313,7 +314,7 @@ fn api_code(raw: &str) -> &'static str {
         "channel_not_found" => "not_found",
         "is_archived" => "archived",
         "message_too_long" | "msg_too_long" => "message_too_long",
-        "invalid_blocks" | "invalid_blocks_format" => "invalid_blocks",
+        "invalid_blocks" | "invalid_blocks_format" | "msg_blocks_too_long" => "invalid_blocks",
         "missing_scope" => "missing_scope",
         "thread_not_found" => "thread_not_found",
         "ratelimited" | "rate_limited" => "rate_limited",
@@ -335,6 +336,61 @@ struct Heartbeat {
     ping: f64,
     dead: f64,
 }
+
+// Only errors raised while building the transport can establish that no HTTP
+// request was sent. The same I/O kinds during request/response I/O are ambiguous.
+#[derive(Debug, Default)]
+struct HttpConnector(DefaultConnector);
+impl Connector for HttpConnector {
+    type Out = Box<dyn Transport>;
+    fn connect(
+        &self,
+        details: &ConnectionDetails<'_>,
+        chained: Option<()>,
+    ) -> std::result::Result<Option<Self::Out>, ureq::Error> {
+        self.0.connect(details, chained).map_err(connection_error)
+    }
+}
+#[derive(Debug, Default)]
+struct HttpResolver(DefaultResolver);
+impl Resolver for HttpResolver {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: NextTimeout,
+    ) -> std::result::Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        self.0.resolve(uri, config, timeout).map_err(|e| match e {
+            // getaddrinfo failures arrive as Io too; the resolver has not sent HTTP.
+            ureq::Error::Io(_) => ureq::Error::HostNotFound,
+            e => e,
+        })
+    }
+}
+fn connection_error(e: ureq::Error) -> ureq::Error {
+    if let ureq::Error::Io(io) = &e
+        && matches!(
+            io.kind(),
+            std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::NetworkUnreachable
+                | std::io::ErrorKind::HostUnreachable
+        )
+    {
+        ureq::Error::ConnectionFailed
+    } else {
+        e
+    }
+}
+fn unsent(e: &ureq::Error) -> bool {
+    matches!(
+        e,
+        ureq::Error::HostNotFound
+            | ureq::Error::ConnectionFailed
+            | ureq::Error::ConnectProxyFailed(_)
+            | ureq::Error::Timeout(ureq::Timeout::Resolve | ureq::Timeout::Connect)
+    )
+}
+
 impl Api {
     fn new(proxy: Option<&str>) -> CoreResult<Self> {
         let proxy = proxy
@@ -355,9 +411,15 @@ impl Api {
             .max_redirects(0) // Never forward credentials to another host.
             .http_status_as_error(false)
             .timeout_global(Some(Duration::from_secs(10)))
+            .timeout_resolve(Some(Duration::from_secs(3)))
+            .timeout_connect(Some(Duration::from_secs(5)))
             .build();
         Ok(Self {
-            agent: ureq::Agent::new_with_config(config),
+            agent: ureq::Agent::with_parts(
+                config,
+                HttpConnector::default(),
+                HttpResolver::default(),
+            ),
             stop: Arc::new((Mutex::new(false), Condvar::new())),
             heartbeat: Heartbeat {
                 ping: 30.,
@@ -394,6 +456,7 @@ impl Api {
         let base = "https://slack.com/api/";
         #[cfg(test)]
         let base = &self.base;
+        let mut network_retries = 0;
         loop {
             if self.stopped() {
                 return Err(error("stopped"));
@@ -423,7 +486,15 @@ impl Api {
                 }
                 request.call()
             };
-            let mut response = response.map_err(|_| error("network"))?;
+            let mut response = match response {
+                Err(e) if method == "chat.postMessage" && network_retries < 3 && unsent(&e) => {
+                    self.wait(Duration::from_secs(1 << network_retries))?;
+                    network_retries += 1;
+                    continue;
+                }
+                Err(_) => return Err(error("network")),
+                Ok(response) => response,
+            };
             if response.status().as_u16() == 429 {
                 let seconds = response
                     .headers()
@@ -432,7 +503,7 @@ impl Api {
                     .and_then(|s| s.parse::<u64>().ok())
                     .unwrap_or(1)
                     .max(1);
-                eprintln!("rate_limited wait_seconds={seconds}");
+                let _ = writeln!(std::io::stderr(), "rate_limited wait_seconds={seconds}");
                 if let Some(report) = on_rate_limit {
                     report()?;
                 }
@@ -500,17 +571,15 @@ fn start(options: Connect, api: Api) -> CoreResult<Box<dyn Connection>> {
             while !api.stopped() {
                 let mut connected_since = None;
                 let old = session.lock().unwrap().clone();
-                if report(&options.events, "connecting", None, &old, 0).is_err() {
-                    break;
-                }
-                let result = receive(&api, &options, &session, &mut connected_since);
+                let result = report(&options.events, "connecting", None, &old, 0)
+                    .and_then(|()| receive(&api, &options, &session, &mut connected_since));
                 if api.stopped() {
                     break;
                 }
                 let reason = result.err().map_or("network".into(), |e| e.code);
                 let old = session.lock().unwrap().clone();
                 if report(&options.events, "failed", Some(&reason), &old, 0).is_err() {
-                    break;
+                    let _ = writeln!(std::io::stderr(), "event_persist_failed");
                 }
                 if connected_since.is_some_and(|at| at.elapsed() >= Duration::from_secs(90)) {
                     delay = 1;
@@ -729,7 +798,7 @@ fn translate(value: &Value, bot: &str) -> Option<Event> {
                 id: value["deleted_ts"].as_str()?.into(),
             });
         }
-        None | Some("file_share") => {}
+        None | Some("file_share") | Some("thread_broadcast") => {}
         _ => return None,
     }
     let id = value["ts"].as_str()?.to_owned();
@@ -762,9 +831,11 @@ fn translate(value: &Value, bot: &str) -> Option<Event> {
         text: decode(text),
         attachments: value["subtype"] == "file_share"
             || value["files"].as_array().is_some_and(|a| !a.is_empty())
-            || value["attachments"]
-                .as_array()
-                .is_some_and(|a| !a.is_empty()),
+            || value["attachments"].as_array().is_some_and(|a| {
+                a.iter().any(|item| {
+                    item.get("from_url").is_none() && item.get("original_url").is_none()
+                })
+            }),
     }))
 }
 fn decode(text: &str) -> String {

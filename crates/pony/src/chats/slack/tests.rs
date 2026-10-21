@@ -42,6 +42,11 @@ struct Http {
 }
 impl Http {
     fn new(mut handle: impl FnMut(Request) -> Reply + Send + 'static) -> Self {
+        Self::with_optional_reply(move |request| Some(handle(request)))
+    }
+    fn with_optional_reply(
+        mut handle: impl FnMut(Request) -> Option<Reply> + Send + 'static,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
         let stopped = Arc::new(AtomicBool::new(false));
@@ -99,7 +104,9 @@ impl Http {
                     },
                     authorization: field("authorization").unwrap_or_default(),
                 };
-                let response = handle(request);
+                let Some(response) = handle(request) else {
+                    continue;
+                };
                 let body = response.body.to_string();
                 write!(stream, "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}", response.status, body.len(), response.retry.map(|s| format!("Retry-After: {s}\r\n")).unwrap_or_default(), body).unwrap();
             }
@@ -819,4 +826,298 @@ fn size_errors_request_resize_and_membership_errors_are_remembered() {
         c.channel("COUT").unwrap().problem.as_deref(),
         Some("not_member")
     );
+}
+
+#[test]
+fn socket_recovers_after_a_connection_report_cannot_be_persisted() {
+    for failing_state in ["connecting", "failed"] {
+        let (listener, url) = socket();
+        let http = Http::new(move |r| {
+            if r.method == "auth.test" {
+                auth().into()
+            } else {
+                json!({"ok":true,"url":url}).into()
+            }
+        });
+        let (events, rx) = events();
+        let failed_once = Arc::new(AtomicBool::new(false));
+        let failed = failed_once.clone();
+        let events = Events(Arc::new(move |event| {
+            if matches!(&event, Event::Connection(info) if info.connection == failing_state)
+                && !failed.swap(true, Ordering::Relaxed)
+            {
+                return Err(error("io"));
+            }
+            events.emit(event)
+        }));
+        let peer = thread::spawn(move || {
+            let mut first = accept(&listener);
+            write(&mut first, json!({"type":"hello"}));
+            drop(first);
+            let mut second = accept(&listener);
+            write(&mut second, json!({"type":"hello"}));
+            write(
+                &mut second,
+                json!({"type":"events_api","envelope_id":"recovered","payload":{"event":{
+                    "type":"message","channel":"C1","user":"UOWNER","ts":"123.001","text":"after recovery"
+                }}}),
+            );
+            assert!(
+                second
+                    .read()
+                    .unwrap()
+                    .to_text()
+                    .unwrap()
+                    .contains("recovered")
+            );
+        });
+        let mut c = connect_at(options(events), &http.url).unwrap();
+        wait_connection(&rx, "connected", None);
+        wait_connection(&rx, "connected", None);
+        let Event::Message(message) = rx.recv_timeout(Duration::from_secs(3)).unwrap() else {
+            panic!("message after recovery");
+        };
+        assert_eq!(message.text, "after recovery");
+        assert!(failed_once.load(Ordering::Relaxed));
+        peer.join().unwrap();
+        c.close();
+    }
+}
+
+#[test]
+fn oversized_markdown_blocks_request_resize() {
+    let http = Http::new(|_| json!({"ok":false,"error":"msg_blocks_too_long"}).into());
+    let mut c = http_connection(&http);
+    let e = c
+        .send(Outgoing {
+            channel: "C1",
+            thread: None,
+            markdown: "<>&",
+            notify: false,
+        })
+        .unwrap_err();
+    assert_eq!(e.code, "invalid_blocks");
+    assert!(e.resize);
+}
+
+#[test]
+fn broadcast_thread_reply_is_delivered_live_and_deduplicated_in_history() {
+    let (listener, url) = socket();
+    let at = now() - 5.;
+    let parent = format!("{:.6}", at - 10.);
+    let message = json!({"type":"message","subtype":"thread_broadcast","channel":"C1",
+        "user":"UOWNER","ts":format!("{at:.6}"),"thread_ts":parent,"text":"<@UBOT> continue"});
+    let history_message = message.clone();
+    let http = Http::new(move |r| {
+        match r.method.as_str() {
+        "apps.connections.open" => json!({"ok":true,"url":url}).into(),
+        "auth.test" => auth().into(),
+        "conversations.history" => json!({"ok":true,"messages":[history_message,
+            {"ts":history_message["thread_ts"],"user":"UOWNER","text":"parent","latest_reply":history_message["ts"]}
+        ]}).into(),
+        "conversations.replies" => json!({"ok":true,"messages":[history_message]}).into(),
+        _ => panic!("unexpected method"),
+    }
+    });
+    let peer = thread::spawn(move || {
+        let mut ws = accept(&listener);
+        write(&mut ws, json!({"type":"hello"}));
+        write(
+            &mut ws,
+            json!({"type":"events_api","envelope_id":"broadcast","payload":{"event":message}}),
+        );
+        assert!(ws.read().unwrap().to_text().unwrap().contains("broadcast"));
+    });
+    let (events, rx) = events();
+    let mut c = connect_at(options(events), &http.url).unwrap();
+    wait_connection(&rx, "connected", None);
+    let Event::Message(live) = rx.recv_timeout(Duration::from_secs(3)).unwrap() else {
+        panic!("broadcast must be a message");
+    };
+    assert_eq!(live.thread.as_deref(), Some(parent.as_str()));
+    assert_eq!(live.text, "continue");
+    assert!(live.mentioned);
+    let found = c
+        .history(
+            "C1",
+            &HistoryAfter {
+                id: None,
+                at: at - 1.,
+            },
+        )
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&found[0]).unwrap(),
+        serde_json::to_value(live).unwrap()
+    );
+    peer.join().unwrap();
+    c.close();
+}
+
+#[test]
+fn link_previews_in_history_are_not_reported_as_omitted_attachments() {
+    let at = now() - 10.;
+    let http = Http::new(move |_| {
+        let variants = [
+            json!({"attachments":[{"from_url":"https://test.invalid"}]}),
+            json!({"attachments":[{"original_url":"https://test.invalid"}]}),
+            json!({"attachments":[{"from_url":"https://test.invalid","original_url":"https://test.invalid"}]}),
+            json!({"attachments":[{"from_url":"https://test.invalid"},{"fallback":"actual attachment"}]}),
+            json!({"files":[{"id":"F1"}]}),
+            json!({"subtype":"file_share"}),
+        ];
+        let messages: Vec<_> = variants
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut m)| {
+                m["ts"] = format!("{:.6}", at + i as f64).into();
+                m["user"] = "UOWNER".into();
+                m["text"] = "<https://test.invalid|link>".into();
+                m
+            })
+            .collect();
+        json!({"ok":true,"messages":messages}).into()
+    });
+    let mut c = http_connection(&http);
+    let found = c
+        .history(
+            "C1",
+            &HistoryAfter {
+                id: None,
+                at: at - 1.,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        found.iter().map(|m| m.attachments).collect::<Vec<_>>(),
+        [false, false, false, true, true, true]
+    );
+    assert!(found.iter().all(|m| m.text == "https://test.invalid"));
+}
+
+#[test]
+fn send_retries_only_unsent_requests_and_close_interrupts_backoff() {
+    use std::{collections::VecDeque, sync::atomic::AtomicUsize};
+    #[derive(Debug)]
+    struct FailSetup {
+        attempts: Arc<Mutex<Vec<Instant>>>,
+        errors: Mutex<VecDeque<ureq::Error>>,
+        attempted: Option<mpsc::Sender<()>>,
+    }
+    impl Connector for FailSetup {
+        type Out = Box<dyn Transport>;
+        fn connect(
+            &self,
+            details: &ConnectionDetails<'_>,
+            chained: Option<()>,
+        ) -> std::result::Result<Option<Self::Out>, ureq::Error> {
+            self.attempts.lock().unwrap().push(Instant::now());
+            if let Some(tx) = &self.attempted {
+                let _ = tx.send(());
+            }
+            if let Some(e) = self.errors.lock().unwrap().pop_front() {
+                return Err(e);
+            }
+            HttpConnector::default().connect(details, chained)
+        }
+    }
+    let received = Arc::new(AtomicUsize::new(0));
+    let count = received.clone();
+    let http = Http::new(move |request| {
+        assert_eq!(request.method, "chat.postMessage");
+        assert_eq!(request.body["blocks"][0]["text"], "send once");
+        count.fetch_add(1, Ordering::Relaxed);
+        json!({"ok":true,"ts":"123.001"}).into()
+    });
+    let mut c = http_connection(&http);
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    c.api.agent = ureq::Agent::with_parts(
+        c.api.agent.config().clone(),
+        FailSetup {
+            attempts: attempts.clone(),
+            attempted: None,
+            errors: Mutex::new(VecDeque::from([
+                ureq::Error::HostNotFound,
+                ureq::Error::Timeout(ureq::Timeout::Connect),
+                ureq::Error::ConnectProxyFailed("test CONNECT failure".into()),
+            ])),
+        },
+        DefaultResolver::default(),
+    );
+    assert_eq!(
+        c.send(Outgoing {
+            channel: "C1",
+            thread: None,
+            markdown: "send once",
+            notify: false
+        })
+        .unwrap(),
+        "123.001"
+    );
+    assert_eq!(received.load(Ordering::Relaxed), 1);
+    let times = attempts.lock().unwrap();
+    assert_eq!(times.len(), 4);
+    for (pair, seconds) in times.windows(2).zip([1, 2, 4]) {
+        assert!(pair[1].duration_since(pair[0]) >= Duration::from_secs(seconds));
+    }
+    drop(times);
+
+    // The same low-level I/O kind is retryable only when the connector produced it.
+    for kind in [
+        std::io::ErrorKind::ConnectionRefused,
+        std::io::ErrorKind::NetworkUnreachable,
+        std::io::ErrorKind::HostUnreachable,
+    ] {
+        assert!(unsent(&connection_error(ureq::Error::Io(kind.into()))));
+        assert!(!unsent(&ureq::Error::Io(kind.into())));
+    }
+    assert!(unsent(&ureq::Error::Timeout(ureq::Timeout::Resolve)));
+    for phase in [
+        ureq::Timeout::Global,
+        ureq::Timeout::SendRequest,
+        ureq::Timeout::SendBody,
+        ureq::Timeout::RecvResponse,
+        ureq::Timeout::RecvBody,
+    ] {
+        assert!(!unsent(&ureq::Error::Timeout(phase)));
+    }
+
+    // Slack accepted the whole request, but its response was lost: never replay it.
+    let received = Arc::new(AtomicUsize::new(0));
+    let count = received.clone();
+    let lost_response = Http::with_optional_reply(move |_| {
+        count.fetch_add(1, Ordering::Relaxed);
+        None
+    });
+    let mut ambiguous = http_connection(&lost_response);
+    let e = ambiguous
+        .send(Outgoing {
+            channel: "C1",
+            thread: None,
+            markdown: "do not repeat",
+            notify: false,
+        })
+        .unwrap_err();
+    assert_eq!(e.code, "network");
+    assert!(!e.resize);
+    assert_eq!(received.load(Ordering::Relaxed), 1);
+
+    let (tx, rx) = mpsc::channel();
+    c.api.agent = ureq::Agent::with_parts(
+        c.api.agent.config().clone(),
+        FailSetup {
+            attempts: Arc::new(Mutex::new(Vec::new())),
+            attempted: Some(tx),
+            errors: Mutex::new(VecDeque::from([ureq::Error::ConnectionFailed])),
+        },
+        DefaultResolver::default(),
+    );
+    let api = c.api.clone();
+    let waiting = thread::spawn(move || api.call("chat.postMessage", "xoxb-test", json!({}), None));
+    rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let closing = Instant::now();
+    c.close();
+    assert_eq!(waiting.join().unwrap().unwrap_err().code, "stopped");
+    assert!(closing.elapsed() < Duration::from_millis(500));
 }

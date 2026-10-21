@@ -107,3 +107,47 @@
 用户在场时按设计稿 3.3 的 manifest 建应用，启用 Socket Mode，只订 `message.channels`、`message.groups`；安装到工作区取得 bot token，再在 Basic Information 创建带 `connections:write` 的 app token。两枚真 token 只写本机 `~/.pony/secrets/slack.toml` 的 `app_token`/`bot_token`，不要粘进任务、命令参数、仓库或日志。`~/.pony`、`secrets/` 为当前用户所有且 0700，凭证普通文件 0600，不使用符号链接；owner 和频道 ID 写 config.toml，私有频道要邀请机器人。
 
 先试直连，必要时在配置写 HTTP(S) `proxy`，不要依赖 shell/系统代理；服务要收集标准错误中的限频等待日志。实测连接状态、工作区/机器人/频道名、其他连接数、合盖重连及补收、删除排队消息、长回复、附件提示、每轮 owner 推送；尤其核对私有频道线程历史 `conversations.replies` 的实际授权与分页。确认 markdown/代码/表格及转义的显示，默认不放开正文中的意外 @，是否放开交用户定；核对 Slack 手机通知及电脑不活跃时才推送的设置。量大时观察限频带来的核心延迟，再决定是否另做异步投递。
+
+## 返工记录
+
+2026-10-21，第 1 次返工，按主控对 R38e 审查意见的决定执行。
+
+### 做了什么
+
+- 1：连接状态的 `report` 写盘失败不再结束 Socket 线程，照常退避重试；恢复后继续连接、收事件和 ACK。状态仍写不进去时只向标准错误写固定代码。
+- 2、3、6：`msg_blocks_too_long` 映射成 `invalid_blocks` 并要求缩小重试；`thread_broadcast` 按普通线程回复翻译，保留线程，历史按 ID 去重；attachments 只计没有 `from_url`、`original_url` 的项，链接展开不再触发「附件没送」，files/file_share 仍算附件。
+- 4：发送仅对确定未发送的 DNS、建连、连接阶段超时、代理 CONNECT 失败隔 1、2、4 秒重试，close 能中断等待。解析、连接超时分别为 3、5 秒，单次请求仍最多 10 秒；发送后的 I/O 错误和响应阶段超时不重发。
+- 5、7、9：README 补私有频道 `not_found` 的邀请说明，下面补 R38f 实测项；标准错误改用忽略写失败的 `writeln!`，管道关闭不会因此 panic。
+- 对 paddock：只改适配器内部行为，公开接口和 JSON 格式不变，paddock 不用动。
+
+### 验证了什么
+
+- 为 1、2、3、4、6 各新增一条自动测试：分别覆盖 connecting/failed 状态落盘失败后的恢复、块超长错误、在线广播线程回复及历史去重、1/2/4 秒重试与响应丢失不重发及 close 中断、链接展开和真正附件的区别。
+- 按这次「测试只跑一次」的要求，没有另跑 RED；补测试和实现后只运行一次 `cargo test --offline -p pony`，75 项全部通过（lib 19、cli 9、core 43、corral 2、split 2），0 失败、0 忽略。
+- `cargo clippy --offline --all-targets -- -D warnings`、`cargo fmt --check` 各运行一次，均通过。本轮没有跑全套测试，留给主控；所有命令前台完成，继续使用本分支独立编译目录和隔离的 HOME/PONY_HOME/CORRAL_HOME，只用本机假服务器、假凭证和合成程序。
+
+### 拿主意的地方
+
+- `thread_broadcast` 照用户已定、主控已写入 main `e51b588` 的设计稿 3.3 实现，本分支不重复改设计稿。
+- 在解析器和连接器边界标记确定未发送的错误；同一种底层 I/O 错误如果发生在发送或读取响应时，仍视为可能已经送达。这样既处理断网建连失败，也避免回复重复。
+- 保留原同步接口和限频决定：**限频期间核心暂停，只是延迟不丢**；Socket 线程继续独立收事件、emit、ACK、心跳，量大以后再改。私有频道 `not_found` 的映射不改，只补说明。
+- 没有需要主控再决定的事。
+
+### 没做的事
+
+按决定不改审查 8、10、11、12：计划内换连接的状态、额外 reason 码、30 天父消息范围、核心过时注释均保留。本轮没有改核心、公共接口、依赖或设计稿，没有连接真实 Slack、读取真实凭证、操作用户 agent、部署、合并或推送。
+
+### 踩过的坑
+
+没有新的试错失败。
+
+### 给 R38f 补充的上线说明
+
+- 私有频道显示 `not_found` 多半是还没邀请机器人；先核对频道 ID，再 `/invite @pony`。实测 Slack 对未邀请、已邀请分别报什么，当前不改错误映射。
+- 在线程回复中勾「同时发到频道」，确认仍送给同一个 agent、回到原线程；断线补收同一句时只送一次。
+- 在 markdown 块中实测不带尖括号的 `@here`、`@channel`、`@everyone`、`@名字` 是否真的通知别人；当前对 `<…>` 的转义不能代替这项实测。
+- 真实 wss 经 rustls 连上后挂几分钟，跨过多次 250 毫秒读超时，再收几条消息，最好观察一次 `refresh_requested` 后的恢复。本机假 ws 测试没有覆盖 TLS 的这条实际路径。
+- 让线程回复进入排队、断线再连，确认 `conversations.replies` 带 `oldest`、`latest` 的 exists 查询不会把仍在的回复误判为撤回。
+- 核对转义的 `&lt;`、`&gt;`、`&amp;` 在 markdown 和代码块里的实际显示；若原样显示实体、代码走样，再调整转义办法。发送很长且 `<>&` 很多的代码，确认实际超长错误及核心缩小重试后能完整发出。
+- `notify` 目前只在 section 块里 @ owner，fallback `text` 没有 mention；确认手机会响。如果不响，再补 `text` 开头的 `<@owner>`，本轮不先改通知行为。
+- 记录一次重连补收 30 天父消息用了多少次 `conversations.history`、`conversations.replies`，是否遇到 429，以及等待带来的核心延迟。
