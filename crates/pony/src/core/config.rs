@@ -1,5 +1,6 @@
 use super::{Error, Result, files};
 use crate::chats::CHATS;
+use serde::Deserialize;
 use std::{collections::HashSet, fs, io, path::Path};
 
 #[derive(Clone, PartialEq)]
@@ -115,7 +116,7 @@ pub fn load(home: &Path) -> Result<Option<Config>> {
             ));
         }
     };
-    let table: toml::Table = toml::from_str(&source).map_err(|error: toml::de::Error| {
+    let syntax_error = |error: toml::de::Error| {
         let offset = error.span().map_or(0, |span| span.start).min(source.len());
         let prefix = &source.as_bytes()[..offset];
         let line = prefix.iter().filter(|&&b| b == b'\n').count() + 1;
@@ -127,18 +128,17 @@ pub fn load(home: &Path) -> Result<Option<Config>> {
             "config_invalid",
             format!("{}:{line}:{column}: invalid TOML", path.display()),
         )
-    })?;
+    };
+    let document = toml::de::DeTable::parse(&source).map_err(syntax_error)?;
+    validate_keys(document.get_ref(), &source, &path)?;
+    let table =
+        toml::Table::deserialize(toml::de::Deserializer::from(document)).map_err(syntax_error)?;
     let problem = |p: Problem| {
         Error::new(
             "config_invalid",
             format!("{}:{}: {}", path.display(), p.position, p.reason),
         )
     };
-    for key in table.keys() {
-        if key != "corral" && key != "proxy" && !CHATS.iter().any(|chat| chat.kind() == key) {
-            return Err(problem(Problem::new("root", "unknown top-level key")));
-        }
-    }
     let corral = table
         .get("corral")
         .map(|v| string(Some(v), "corral"))
@@ -174,4 +174,82 @@ pub fn load(home: &Path) -> Result<Option<Config>> {
         proxy,
         chats,
     }))
+}
+
+fn validate_keys(table: &toml::de::DeTable<'_>, source: &str, path: &Path) -> Result<()> {
+    reject_unknown_keys(
+        table,
+        |key| key == "corral" || key == "proxy" || CHATS.iter().any(|chat| chat.kind() == key),
+        "",
+        source,
+        path,
+    )?;
+    for chat in CHATS {
+        let Some(table) = table
+            .get(chat.kind())
+            .and_then(|value| value.get_ref().as_table())
+        else {
+            continue;
+        };
+        reject_unknown_keys(
+            table,
+            |key| key == "owner" || key == "channels" || chat.config_keys().contains(&key),
+            &format!("{}.", chat.kind()),
+            source,
+            path,
+        )?;
+        if let Some(channels) = table
+            .get("channels")
+            .and_then(|value| value.get_ref().as_array())
+        {
+            for (i, channel) in channels.iter().enumerate() {
+                if let Some(table) = channel.get_ref().as_table() {
+                    reject_unknown_keys(
+                        table,
+                        |key| key == "id" || key == "repo",
+                        &format!("{}.channels[{i}].", chat.kind()),
+                        source,
+                        path,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn reject_unknown_keys(
+    table: &toml::de::DeTable<'_>,
+    allowed: impl Fn(&str) -> bool,
+    prefix: &str,
+    source: &str,
+    path: &Path,
+) -> Result<()> {
+    for key in table.keys() {
+        if allowed(key.get_ref()) {
+            continue;
+        }
+        let span = key.span();
+        let line = source.as_bytes()[..span.start]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+            + 1;
+        let raw = &source[span];
+        // Quoted keys can contain arbitrary user data; report only their line.
+        let position = if !raw.is_empty()
+            && raw
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+        {
+            format!(" {prefix}{raw}")
+        } else {
+            String::new()
+        };
+        return Err(Error::new(
+            "config_invalid",
+            format!("{}:{line}: unknown key{position}", path.display()),
+        ));
+    }
+    Ok(())
 }

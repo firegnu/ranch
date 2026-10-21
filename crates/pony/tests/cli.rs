@@ -157,7 +157,7 @@ fn config_errors_are_located_and_valid_stopped_config_is_off() {
     let chat = &status["chats"][0];
     assert_eq!(chat["kind"], "slack");
     assert_eq!(chat["connection"], "off");
-    assert!(chat["since"].is_number());
+    assert!(chat["since"].is_null());
     for key in ["reason", "message", "workspace", "bot"] {
         assert!(chat[key].is_null(), "{status}");
     }
@@ -221,7 +221,7 @@ fn unsafe_credentials_are_rejected_without_leaking_values() {
         assert!(status["chats"][0]["reason"].is_null());
         fixture.assert_private(&[run, status]);
     }
-    for case in ["home_mode", "home_link"] {
+    for case in ["home_mode", "home_link", "home_link_slash", "home_link_dot"] {
         let fixture = Fixture::configured();
         if case == "home_mode" {
             fs::set_permissions(fixture.home(), fs::Permissions::from_mode(0o755)).unwrap();
@@ -229,10 +229,29 @@ fn unsafe_credentials_are_rejected_without_leaking_values() {
             fs::rename(fixture.home(), fixture.0.path().join("elsewhere")).unwrap();
             symlink(fixture.0.path().join("elsewhere"), fixture.home()).unwrap();
         }
-        let run = fixture.call(&["run"], 1);
+        let home = match case {
+            "home_link_slash" => format!("{}/", fixture.home().display()),
+            "home_link_dot" => format!("{}/.", fixture.home().display()),
+            _ => fixture.home().display().to_string(),
+        };
+        let output = fixture
+            .command()
+            .env("PONY_HOME", &home)
+            .arg("run")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{case}: {output:?}");
+        let run = decode(&output);
         assert_eq!(run["error"], "secrets_too_open", "{case}: {run}");
         assert!(!fixture.home().join("run").exists());
-        let status = fixture.call(&["status"], 0);
+        let output = fixture
+            .command()
+            .env("PONY_HOME", &home)
+            .arg("status")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{case}: {output:?}");
+        let status = decode(&output);
         assert_eq!(status["config"], "invalid", "{case}: {status}");
         fixture.assert_private(&[run, status]);
     }
@@ -321,7 +340,9 @@ fn running_holds_one_lock_reloads_config_and_stale_status_is_off() {
     let fixture = Fixture::configured();
     let mut running = Running::start(&fixture);
     let status = running.wait_for(&fixture, |s| {
-        s["running"] == true && s["chats"][0]["connection"] == "connecting"
+        s["running"] == true
+            && s["chats"][0]["connection"] == "connecting"
+            && s["chats"][0]["since"].is_number()
     });
     assert_eq!(status["pid"], running.0.as_ref().unwrap().id());
     assert!(status["started"].as_f64().unwrap() > 0.0);
@@ -360,16 +381,105 @@ fn running_holds_one_lock_reloads_config_and_stale_status_is_off() {
     assert!(stopped["pid"].is_null());
     assert!(stopped["started"].is_null());
     assert_eq!(stopped["chats"][0]["connection"], "off");
+    assert_eq!(stopped["chats"][0]["since"], stopped["last_exit"]["at"]);
     assert_eq!(stopped["last_exit"]["code"], "stopped");
     fixture.assert_private(&[invalid, updated, stopped]);
 
     let mut restarted = Running::start(&fixture);
+    let restarted_pid = restarted.0.as_ref().unwrap().id();
     restarted.wait_for(&fixture, |s| {
-        s["running"] == true && s["chats"][0]["connection"] == "connecting"
+        s["running"] == true
+            && s["chats"][0]["connection"] == "connecting"
+            && fs::read(fixture.home().join("run/status.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|snapshot| snapshot["pid"] == restarted_pid)
     });
     restarted.stop(libc::SIGKILL);
     let crashed = fixture.call(&["status"], 0);
     assert_eq!(crashed["running"], false);
     assert_eq!(crashed["chats"][0]["connection"], "off");
+    assert!(crashed["chats"][0]["since"].is_null());
     assert!(crashed["last_exit"].is_null());
+}
+
+#[test]
+fn home_defaults_and_missing_environment_do_not_use_the_working_directory() {
+    let fixture = Fixture::new();
+    fs::write(fixture.0.path().join("config.toml"), "invalid TOML").unwrap();
+    for pony_home in [None, Some("")] {
+        let mut command = fixture.command();
+        command.env_remove("PONY_HOME");
+        if let Some(home) = pony_home {
+            command.env("PONY_HOME", home);
+        }
+        let output = command.arg("status").output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let status = decode(&output);
+        assert_eq!(status["config"], "missing");
+        assert!(
+            status["config_message"]
+                .as_str()
+                .unwrap()
+                .contains("/.pony/config.toml")
+        );
+    }
+    for action in ["status", "run"] {
+        let output = fixture
+            .command()
+            .env("PONY_HOME", "")
+            .env_remove("HOME")
+            .arg(action)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let error = decode(&output);
+        assert_eq!(error["error"], "invalid_data");
+        assert_eq!(error["message"], "HOME is not set");
+    }
+    assert!(!fixture.0.path().join(".pony").exists());
+    assert!(!fixture.home().exists());
+}
+
+#[test]
+fn unknown_keys_report_safe_names_or_source_locations_without_values() {
+    let fixture = Fixture::configured();
+    for (source, position) in [
+        ("unknown = 'xoxb-test'\n".to_owned(), "unknown"),
+        (
+            format!("{CONFIG}bot_token = 'xoxb-test'\n"),
+            "slack.bot_token",
+        ),
+        (
+            CONFIG.replace("repo = 'ranch'", "repo = 'ranch', rpo = 'xoxb-test'"),
+            "slack.channels[0].rpo",
+        ),
+        (
+            "# comment\n'xoxb-test' = 'xapp-test'\n".to_owned(),
+            "config.toml:2:",
+        ),
+        (
+            format!("{CONFIG}'xoxb-test' = 'xapp-test'\n"),
+            "config.toml:4:",
+        ),
+        (
+            CONFIG.replace(
+                "repo = 'ranch'",
+                "repo = 'ranch', 'xoxb-test' = 'xapp-test'",
+            ),
+            "config.toml:3:",
+        ),
+        (
+            "# comment\n'escaped\\key' = 'xapp-test'\n".to_owned(),
+            "config.toml:2:",
+        ),
+    ] {
+        fs::write(fixture.home().join("config.toml"), source).unwrap();
+        let status = fixture.call(&["status"], 0);
+        assert_eq!(status["config"], "invalid", "{status}");
+        let message = status["config_message"].as_str().unwrap();
+        assert!(message.contains(position), "{message}");
+        assert!(message.contains("unknown key"), "{message}");
+        fixture.assert_private(&[status]);
+    }
 }

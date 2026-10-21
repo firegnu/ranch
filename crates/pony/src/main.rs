@@ -4,10 +4,19 @@ mod core;
 use serde_json::{Value, json};
 use std::{env, path::PathBuf};
 
-fn home() -> PathBuf {
-    env::var_os("PONY_HOME")
+fn home() -> core::Result<PathBuf> {
+    let path = env::var_os("PONY_HOME")
+        .filter(|p| !p.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".pony"))
+        .or_else(|| {
+            env::var_os("HOME")
+                .filter(|p| !p.is_empty())
+                .map(|p| PathBuf::from(p).join(".pony"))
+        })
+        .ok_or_else(|| core::Error::new("invalid_data", "HOME is not set"))?;
+    // Remove trailing separators and '.' without following directory symlinks.
+    let path: PathBuf = path.components().collect();
+    std::path::absolute(path).map_err(|e| core::Error::new("invalid_data", e.to_string()))
 }
 
 fn dispatch(args: &[String]) -> (Value, i32) {
@@ -21,9 +30,14 @@ fn dispatch(args: &[String]) -> (Value, i32) {
             json!({"ok": true, "version": env!("CARGO_PKG_VERSION"), "contract": "1"}),
             0,
         ),
-        ["status"] => (core::status::read(&home()), 0),
-        ["run"] => match core::runtime::run(&home()) {
-            Ok(()) => (json!({"ok": true}), 0),
+        [action @ ("status" | "run")] => match home().and_then(|home| {
+            if *action == "status" {
+                Ok(core::status::read(&home))
+            } else {
+                core::runtime::run(&home).map(|()| json!({"ok": true}))
+            }
+        }) {
+            Ok(value) => (value, 0),
             Err(error) => (
                 json!({"ok": false, "error": error.code, "message": error.message}),
                 1,

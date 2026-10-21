@@ -25,7 +25,7 @@ pub struct ChannelStatus {
 pub struct ChatStatus {
     pub kind: String,
     pub connection: String,
-    pub since: f64,
+    pub since: Option<f64>,
     reason: Option<String>,
     message: Option<String>,
     workspace: Option<String>,
@@ -50,7 +50,7 @@ pub struct Snapshot {
     pub chats: Vec<ChatStatus>,
 }
 
-pub fn chats(config: &Config, connection: &str, since: f64) -> Vec<ChatStatus> {
+pub fn chats(config: &Config, connection: &str, since: Option<f64>) -> Vec<ChatStatus> {
     config
         .chats
         .iter()
@@ -98,7 +98,7 @@ impl Snapshot {
         });
         for chat in &mut self.chats {
             chat.connection = "off".into();
-            chat.since = at;
+            chat.since = Some(at);
         }
     }
 
@@ -155,7 +155,7 @@ pub fn read(home: &Path) -> Value {
                 snapshot
                     .as_ref()
                     .and_then(|s| s.last_exit.as_ref())
-                    .map_or(0.0, |e| e.at),
+                    .map(|e| e.at),
             ),
         ),
     };
@@ -166,6 +166,7 @@ pub fn read(home: &Path) -> Value {
         for chat in &mut chats {
             if chat.connection == "off" {
                 chat.connection = "connecting".into();
+                chat.since = None;
             }
         }
     }

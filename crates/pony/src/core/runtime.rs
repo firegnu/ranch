@@ -43,9 +43,10 @@ pub fn run(home: &Path) -> Result<()> {
     files::directory(home, true)?;
     files::directory(&home.join("run"), true)?;
     let mut snapshot = Snapshot::new();
+    signals()?;
     let _lock = Lock::acquire(home, snapshot.started)?;
     let log = Log::new(home)?;
-    let result = signals().and_then(|()| serve(home, &log, &mut snapshot));
+    let result = serve(home, &log, &mut snapshot);
     if let Err(error) = &result {
         snapshot.exit(&error.code, &error.message);
         snapshot.config_error = Some(error.clone());
@@ -76,9 +77,10 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
     let Some(mut active) = config::load(home)? else {
         return missing(log, snapshot);
     };
-    snapshot.chats = status::chats(&active, "off", snapshot.started);
+    snapshot.chats = status::chats(&active, "off", None);
+    snapshot.save(home)?;
     validate_credentials(home, &active)?;
-    snapshot.chats = status::chats(&active, "connecting", now());
+    snapshot.chats = status::chats(&active, "connecting", Some(now()));
     snapshot.save(home)?;
     log.event("run_started")?;
     while STOP.load(Ordering::Relaxed) == 0 {
@@ -94,7 +96,7 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
         };
         match next {
             Ok(next) => {
-                let mut chats = status::chats(&next, "connecting", now());
+                let mut chats = status::chats(&next, "connecting", Some(now()));
                 if next.proxy == active.proxy {
                     for chat in &mut chats {
                         let previous = active.chats.iter().find(|c| c.kind == chat.kind);
