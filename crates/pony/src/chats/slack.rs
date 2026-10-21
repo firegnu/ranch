@@ -769,13 +769,7 @@ fn receive(
             if !connected {
                 return Err(error("network"));
             }
-            let event = if value["type"] == "events_api" {
-                translate(&value["payload"]["event"], &session.user, &session.bot_id)
-                    .unwrap_or(Event::Ignored)
-            } else {
-                Event::Ignored
-            };
-            options.events.emit(event)?;
+            emit_received(&value, options, &session)?;
             socket
                 .send(Frame::Text(
                     json!({"envelope_id":envelope}).to_string().into(),
@@ -784,6 +778,26 @@ fn receive(
         }
     }
     Ok(())
+}
+fn emit_received(value: &Value, options: &Connect, session: &Session) -> CoreResult<()> {
+    if value["type"] != "events_api" {
+        return Ok(());
+    }
+    let Some(event) = translate(&value["payload"]["event"], &session.user, &session.bot_id) else {
+        // Unsupported events need no durable record; the caller still ACKs them.
+        return Ok(());
+    };
+    if let Event::Message(message) = &event
+        && message.sender != options.config.owner
+        && !options
+            .config
+            .channels
+            .iter()
+            .any(|channel| channel.id == message.channel)
+    {
+        return Ok(());
+    }
+    options.events.emit(event)
 }
 fn required(value: &Value, field: &str) -> CoreResult<String> {
     value[field]

@@ -545,6 +545,63 @@ fn socket_receives_and_acks_while_send_waits_for_rate_limit() {
 }
 
 #[test]
+fn only_other_human_messages_in_bound_channels_are_logged_as_ignored() {
+    use crate::core::{config::Channel, engine::Engine};
+    use crate::corral;
+
+    struct NoCorral;
+    impl corral::Corral for NoCorral {
+        fn list(&mut self) -> corral::Result<Vec<corral::Agent>> {
+            panic!("ignored events must not call corral")
+        }
+        fn status(&mut self, _: &str) -> corral::Result<corral::Status> {
+            panic!("ignored events must not call corral")
+        }
+        fn reply(&mut self, _: &str) -> corral::Result<corral::Reply> {
+            panic!("ignored events must not call corral")
+        }
+        fn send(&mut self, _: &str, _: &str) -> corral::Result<corral::Sent> {
+            panic!("ignored events must not call corral")
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let mut options = options(store.events("slack", "UOWNER"));
+    options.config.channels.push(Channel {
+        id: "C1".into(),
+        repo: "test".into(),
+    });
+    let mut engine = Engine::new(store, vec![options.config.clone()], BTreeMap::new());
+    let session = Session {
+        user: "UBOT".into(),
+        bot_id: "BBOT".into(),
+        ..Session::default()
+    };
+    let mut logged = Vec::new();
+    for event in [
+        json!({"type":"message","channel":"C1","user":"UBOT","bot_id":"BBOT","ts":"1.001","text":"echo"}),
+        json!({"type":"message","channel":"C1","user":"UBOT","ts":"2.001","text":"echo"}),
+        json!({"type":"message","channel":"C1","user":"UOTHERBOT","bot_id":"BOTHER","ts":"3.001","text":"bot"}),
+        json!({"type":"message","channel":"C1","user":"UOTHER","subtype":"message_changed","ts":"4.001"}),
+        json!({"type":"message","channel":"C1","user":"UOTHER","subtype":"channel_join","ts":"5.001"}),
+        json!({"type":"message","channel":"C2","user":"UOTHER","ts":"6.001","text":"unbound"}),
+        json!({"type":"message","channel":"C1","user":"UOTHER","ts":"7.001","text":"private text"}),
+    ] {
+        emit_received(
+            &json!({"type":"events_api","payload":{"event":event}}),
+            &options,
+            &session,
+        )
+        .unwrap();
+        engine.step(&mut NoCorral, 10.).unwrap();
+        logged.push(engine.log.iter().any(|line| line == "忽略了一条别人的消息"));
+        engine.log.clear();
+    }
+    assert_eq!(logged, [false, false, false, false, false, false, true]);
+}
+
+#[test]
 fn filters_events_and_does_not_ack_when_emit_fails() {
     let (listener, url) = socket();
     let http = Http::new(move |r| {
@@ -607,14 +664,7 @@ fn filters_events_and_does_not_ack_when_emit_fails() {
         panic!("root")
     };
     assert!(root.thread.is_none());
-    assert!(matches!(
-        rx.recv_timeout(Duration::from_secs(3)).unwrap(),
-        Event::Ignored
-    ));
-    assert!(matches!(
-        rx.recv_timeout(Duration::from_secs(3)).unwrap(),
-        Event::Ignored
-    ));
+    // Bot messages and edits are ACKed above but emit no event to the core.
     assert!(
         matches!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), Event::Deleted { channel, id } if channel == "C1" && id == "1.001")
     );
