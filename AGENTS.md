@@ -1,6 +1,6 @@
 # ranch
 
-ranch 是 corral 等“每台机器、每个用户只能有一份”的运行时所在的仓库。现在有 corral；以后还有遥测的存储与命令、插件协议和 dispatch。两个前端 Saddle（TUI，保底版，用户已基本不用）和 paddock（GPUI 桌面应用）都只通过 ranch 装好的命令使用它。
+ranch 是 corral 等“每台机器、每个用户只能有一份”的运行时所在的仓库。现在有 corral，还有正在做的 pony（聊天软件机器人，R38，见 `docs/DESIGN.md` §10）；以后还有遥测的存储与命令、插件协议和 dispatch。两个前端 Saddle（TUI，保底版，用户已基本不用）和 paddock（GPUI 桌面应用）都只通过 ranch 装好的命令使用它。
 
 设计和当前决定以 `docs/DESIGN.md` 为准。实现中要改设计，先改那份文档，并在提交说明里写清楚。
 

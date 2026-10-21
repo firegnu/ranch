@@ -53,3 +53,13 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：`docs/DESIGN.md` 照设计稿第 7 节改完——§1 表格加 pony 一行，§2 加 `~/.pony/`、`~/.local/bin/pony`、`~/Library/LaunchAgents/local.ranch.pony.plist` 和前端只经命令使用，§3 加 `bin/pony`、多切一个链接、常驻服务的装和换是用户在场的部署操作、没有配置文件的机器什么都不连，§5 记范围扩到聊天软件机器人，新增 §10 写范围、结构、插件式、用户定的 8 条、第一期规矩、常驻和文件、`pony status`、对 paddock 的影响、实现拆分。`docs/CONTRACT.md` 新增「`pony status`（R38）」一节，照设计稿第 4 节写命令、找法、退出码、JSON、逐字段取值、paddock 显示对应和兼容说明。`AGENTS.md` 开头一句加上 pony（R38，正在做）。
+- 验证了什么：`git diff --check` 通过；用脚本把 CONTRACT 一节的字段名和设计稿第 4 节逐个对照，除 `chats[].kind` 的正确写法外没有缺项（`kind` 本身在设计稿和 CONTRACT 都在）；`git status` 只有 `AGENTS.md`、`docs/DESIGN.md`、`docs/CONTRACT.md` 和本任务文件改动。
+- 拿主意的地方：新节放在 `CONTRACT.md` 文末，不改开头标题和已有各节；字段表补了设计稿第 4 节没单列的 `ok`、`contract`、`version`、`pid`、`started`（都在设计稿的 JSON 示例里），`last_exit` 在跑时按示例写 `null`；`config_message` 只写了 `invalid` 和 `ok` 两处，`missing` 时没猜；频道 `name`、`private` 拆成两行，便于逐个对照。
+- 没做的事：不写代码、不建 `crates/pony`、不改 `Cargo.toml`、不改 corral 和 fence、不改 paddock、不部署、不动 `~/.pony` 和用户现有的 agent，也不合并、不推送。
+- 踩过的坑：设计稿里内联写三个反引号的代码块说明会破坏 Markdown 行内代码解析，DESIGN §10 改成文字「三个反引号或三个波浪号」。
+- 对 paddock：只是兼容新增；合并后 paddock 可照 CONTRACT 的「`pony status`（R38）」开 P5-147，R38c 部署之前 PATH 上还没有 `pony`，按「未安装」显示。
+- 要主控决定的事：无。

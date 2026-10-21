@@ -319,3 +319,60 @@ R20 兼容新增 `unix_sockets`：具体绝对路径的字符串数组，支持�
 这些强制保护路径以及数据层所有 `deny_write` 同时保护原路径、解析途中每一个符号链接节点和最终真实目标，包含中间目录组件及多跳链接，防止通过替换中间链接更换规则。末级路径尚不存在时，解析已有父目录后保留不存在的后缀；链接自身的目标必须存在，断链、循环或其他解析错误返回 `invalid_data`，拒绝启动。
 
 新 CLI 读旧 metadata 得到 sandbox:null；旧 CLI 忽略新增字段，但不能使用 `--sandbox`。新旧 pen 升级快照原样携带 metadata，runner 不随 pen 升级切换版本；仍有 runner 使用的旧版本目录不能清理。
+
+## `pony status`（R38）
+
+`pony status` 是 ranch 的另一条命令（聊天软件机器人 pony，见 `docs/DESIGN.md` §10），不是 corral 的子命令，也不要求 corral 在跑。它只读本机文件（配置、`run/status.json`、锁），不联网、不调 corral、不碰 agent，几毫秒返回，可以每几秒调一次。输出一行 JSON，不输出 token、用户 ID 和消息内容。
+
+找命令：先 PATH 上的 `pony`，找不到试 `~/.local/bin/pony`（launchd、桌面程序常没有 `~/.local/bin` 在 PATH 里），和找 corral 一样。找到后用 `pony --version` 确认，输出 `{"ok":true,"version":"0.1.0","contract":"1"}`；`contract` 不是 `"1"` 的不按这一节解析。两处都没有就是「未安装」。
+
+成功退出 0，`ok:true`。没配置、没在跑、连不上都是 `ok:true` 里的数据，不是错误；只有参数错报 `usage`、退出 2。
+
+```json
+{"ok":true,"contract":"1","version":"0.1.0",
+ "config":"ok","config_message":null,
+ "service":"installed",
+ "running":true,"pid":41234,"started":1792550000.5,"last_exit":null,
+ "chats":[
+  {"kind":"slack","connection":"connected","since":1792550003.1,"reason":null,"message":null,
+   "workspace":"firegnu","bot":"pony","other_connections":0,
+   "channels":[
+    {"id":"C0AAAAAAAAA","name":"paddock","private":true,"repo":"paddock","problem":null},
+    {"id":"C0BBBBBBBBB","name":null,"private":null,"repo":"ranch","problem":"not_member"}]}]}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `ok` | 成功时为 `true`；参数错时为 `false`，报 `usage`、退出 2。 |
+| `contract` | 这一节的格式版本，现在是 `"1"`。 |
+| `version` | pony 的版本，只用来显示。 |
+| `config` | `ok`、`missing`（没有配置文件：这台机器没开）、`invalid`。 |
+| `config_message` | `config` 不是 `ok` 时的说明。`invalid` 时写文件、位置和原因；凭证文件的错不带原文。在跑的 pony 遇到改坏的配置会继续用旧的，这里照样报 `invalid`。`ok` 时为 `null`。 |
+| `service` | `installed`、`not_installed`、`unsupported`（非 macOS）。 |
+| `running` | 有 `pony run` 拿着锁。 |
+| `pid` | 拿着锁的 `pony run` 的进程号；`running` 为真时才有。 |
+| `started` | 那次运行开始的时间，Unix 秒（可带小数）；`running` 为真时才有。 |
+| `last_exit` | 没在跑时上一次为什么退出：`{"at":…,"code":"secrets_too_open","message":"…"}`；不知道时为 `null`；在跑时为 `null`。`at` 是 Unix 秒。 |
+| `chats` | 配置里每家一项，按 pony 的登记顺序。没配置时是空数组。 |
+| `chats[].kind` | 适配器，现在只有 `slack`。前端照列表画，不写死。 |
+| `connection` | `connected`、`connecting`（第一次连或正在重连）、`failed`（连不上，等着重试）、`off`（pony 没在跑）。 |
+| `since` | 进入当前 `connection` 的时间，Unix 秒（可带小数）。 |
+| `reason`、`message` | `failed` 时的原因代码和说明；其他情况为 `null`。代码有：`secrets_missing`、`secrets_too_open`、`secrets_invalid`、`auth_failed`、`socket_mode_off`、`network`、`rate_limited`、`slack_error`；以后可能加，不认识的照 `message` 显示。 |
+| `workspace`、`bot` | 连上后由 `auth.test` 得到的工作区名、机器人名；没连上过时为 `null`。 |
+| `other_connections` | Slack 报的除自己以外的连接数，大于 0 说明可能有另一台机器也开着。 |
+| `channels` | 配置里绑的频道，按配置顺序。 |
+| `channels[].id` | 配置里写的 Slack 频道 ID，总有。 |
+| `channels[].repo` | 这个频道绑的仓库，总有。 |
+| `channels[].name` | 频道名；连上并查过之后才有，否则为 `null`。 |
+| `channels[].private` | 是否私有；连上并查过之后才有，否则为 `null`。 |
+| `channels[].problem` | `null` 或 `not_member`（机器人没被邀请进去）、`not_found`、`archived`；以后可能加。 |
+
+paddock 怎么显示（P5-147 定样子，这里只说数据怎么对应）：
+
+- `config: missing`：「未配置（只在要用的那台机器上配）」。
+- 没在跑：显示 `last_exit.message`；`service: not_installed` 时提示怎么装。
+- 连没连上：`connection` 加 `reason`、`message`；`other_connections > 0` 时显示警告。
+- 绑了哪些频道：`channels` 每项 `#name`（没有就显示 `id`）→ `repo`，有 `problem` 的标出来。
+- 遇到没写的字段要忽略，不认识的取值要能显示，和本文开头的规矩一样。
+
+对 paddock：只是兼容新增，不改 corral 的命令、JSON、`~/.corral`，paddock 现有功能不用动。R38b 合并后就可以照这一节开 P5-147（用户 10-21 定）；R38c 部署之前 PATH 上还没有 `pony`，按「未安装」显示。设置页照 `chats` 列表画，不写死 `slack`。

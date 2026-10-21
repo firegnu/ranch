@@ -10,18 +10,21 @@
 | dispatch（路由命令 `ranch dispatch route`、`corral-dispatch` 技能，不带遥测） | Saddle `plugins/dispatch` | 第 2 步 |
 | 遥测、Drover、插件系统 | Saddle | 不迁；用户 10-05 定砍掉，Saddle 删除代码，数据留在磁盘上 |
 | fence（sandbox，命令 `fence`，`corral start --sandbox` 调它，接 srt） | 新做 | 设计中，见 §8 |
+| pony（聊天软件机器人，命令 `pony`，每台机器一份、后台常驻） | 新做（R38） | 第一期，见 §10 |
 
 ## 2. 与前端的关系
 
 - 前端只调用 ranch 装好的命令，读 JSON 输出，不在 Cargo 里引用 ranch 的包，不读内部状态目录。各自的依赖、锁文件、工具链互不进入。
 - 全局位置归 ranch：`~/.corral`、`~/.local/bin/corral`、corral 技能（`~/.claude/skills/corral`、`~/.agents/skills/corral`，R8 起还有 `~/.gemini/config/skills/corral`），以后还有 `~/.local/bin/ranch` 和 `corral-dispatch` 技能目录。Saddle、paddock 不再打包、安装这些。
+- pony（R38）的位置也归 ranch：`~/.pony/`（配置、凭证、状态、日志，见 §10）、`~/.local/bin/pony`、`~/Library/LaunchAgents/local.ranch.pony.plist`（launchd 用户服务）。前端同样只通过命令用它：paddock 读 `pony status` 的 JSON（`docs/CONTRACT.md`），不读 `~/.pony`。
 - Saddle 是保底版（用户 10-05）：不再加新功能。用户 10-07 基本不用 Saddle 了，定“保底规矩放松吧，Saddle 不用再写影响了”：改 ranch 时只按 AGENTS.md 的规矩写明对 paddock 的影响，不再写对 Saddle 的影响，也不再问 Saddle 跟不跟。
 - 单独分发 paddock 时，打包带上 ranch 的某个版本（paddock DESIGN §7）。
 
 ## 3. 安装
 
 - 打包工具（Rust）生成不可变版本目录 `~/.local/share/ranch/versions/<ranch 提交>/`：`bin/corral`、`bin/ranch`、`share/corral/`（随程序的资源和设计文档）、`BUILD.txt`（提交、目标平台、工作区是否干净、校验和）。目录已存在就拒绝；只生成目录，不切链接、不装技能。
-- R17b 起版本目录还有 `bin/fence`、`share/fence/`（`runner.mjs`、记着打包时 node 路径和版本的 `runtime.toml`）、`lib/srt/`（固定版本的 srt）；打包机器要有 node ≥ 22.12 和 npm，没有就打包失败。corral 用同一版本目录里的 fence，前端调 PATH 上的 `fence`，所以部署时 `~/.local/bin/fence` 和另外两个链接一起切。
+- R17b 起版本目录还有 `bin/fence`、`share/fence/`（`runner.mjs`、记着打包时 node 路径和版本的 `runtime.toml`）、`lib/srt/`（固定版本的 srt）；打包机器要有 node ≥ 22.12 和 npm，没有就打包失败。corral 用同一版本目录里的 fence，前端调 PATH 上的 `fence`，所以部署时 `~/.local/bin/fence` 和别的链接一起切。
+- R38 起版本目录还有 `bin/pony`。部署时 `~/.local/bin/corral`、`~/.local/bin/ranch`、`~/.local/bin/pony` 一起切；装、换 pony 的常驻服务（`pony service install`，部署后用 `launchctl kickstart -k` 换到新程序）同样是用户在场时的部署操作。没有 `~/.pony/config.toml` 的机器上 pony 什么都不连（别的机器默认关着，见 §10）。
 - 切换 `~/.local/bin/corral`、`~/.local/bin/ranch` 和安装技能（`corral install-skills`、`ranch dispatch install-skills`）是单独的部署操作，用户在场时做。已在运行的 agent 由启动它的那份 corral 管理；要换过来用 `corral upgrade`（用户 10-05 定：第 1 步切换时不做）。
 
 ### 在另一台机器（Linux）上装和升级（R10，10-16）
@@ -44,6 +47,7 @@
 
 - （已定，用户 10-05）只再拆 dispatch（不带遥测），之后转回 paddock 开发；遥测、Drover、整个插件系统砍掉（Saddle 删代码），两个前端只靠 ranch 的 corral 和 dispatch。
 - （已定，用户 10-15）~~插件协议的共享方式~~：不再需要，由 §7 的适配器结构取代（用户 10-14 定各家 agent 按代码级别的插件类型接入，编进 corral，不做运行时加载的插件协议）。
+- （已定，用户 10-20、10-21）范围从「只再拆 dispatch」扩到聊天软件机器人 pony（R38）：放进 ranch，和 corral 一样每台机器一份、后台常驻，不开 paddock 也能用；照 §7 的思路按代码级插件式设计，分两期；见 §10。
 
 ## 6. corral 暂停（冻结）（用户 10-07）
 
@@ -185,3 +189,82 @@ R31 先把分工搬进数据表；R34（2026-10-21）改为按档位和类别选
 - 写入先按读表的同一套逻辑校验整个候选表；用保留格式的 TOML 编辑只动目标格，其他内容、顺序和注释保留。同目录临时文件写完后原子替换，不留下半份目标文件。目录和文件缺失时新建。失败不改原文件。
 - 格式保留边界（主控 R35 实现中定）：继续用 `toml_edit`，不自写源码替换器。修改前先将原文解析再输出，必须逐字节相同，否则报 `format_not_preserved`、原文件不动。例如交错的点号键会被解析器重排，需用户手改或改成普通 `[cells.NAME]` 写法；命令新建格子用普通表写法。读表仍可读这些合法 TOML。
 - 对 paddock：旧调用不用改；新设置页用 `table` 取得说明、关系、下拉选项和版本，用 `edit` / `reset` 保存，成功回复整张新表，冲突后重新读取。须部署支持 R35 的 ranch；不改技能、不改 route，不需重装技能。旧版读表器不认识新增数据字段，使用本机说明或选项覆盖前应让读写方都换到新版。
+
+## 10. 聊天软件机器人 pony（R38，2026-10-21）
+
+用户 10-19 提：「再加一个draft task，可以接入slack等社交软件，通过社交软件AT的方式进行交互开发」；10-20 定放进 ranch（「接受你的建议，甲」），和 corral 一样每台机器一份、后台常驻，不开 paddock 也能用；按 ranch 接 agent 的插件式设计（「我觉得应该像ranch接不同agent那样的设计，类似插件的形式」），分两期（「同意，分两期」）；底线「不要动ranch中corral的核心代码」。10-21 定名字 pony（Pony Express，送信的马）。设计稿 `docs/调研/R38a-Slack机器人设计.md`，用户 10-21 定稿；这一节写定论和理由，Slack 的接法、权限、实测项和其余细节以设计稿为准。需求和验收 1–7 见 `docs/任务/R38-从Slack等聊天软件at着agent开发.md`；第 7 条是 paddock 的 Settings，数据照 `docs/CONTRACT.md` 的 `pony status`。
+
+### 范围
+
+- 第一期（R38c–R38f）：在绑了仓库的频道里 @ 机器人说话，送给已经在跑的 agent，这一轮结束把回复贴回同一线程，在线程里接着回就是接着聊；主控（`<仓库>/main`）每一轮的新回复、绑了频道的仓库里任何 agent 的 Needs you（`blocked`）在对应频道提醒，在提醒的线程里回就是送给它；`@pony ?` 看绑了频道的仓库里哪些 agent 在干活、在等、暂停、空闲；长回复分段贴；给 paddock 的只读命令 `pony status`。
+- 第二期另开任务：在聊天里开、停 agent。
+- 第一期不做：私聊、斜杠命令、按钮、附件内容、内容过滤、多用户、多机器、改了消息跟着改、在 Slack 里答对话框（用户 10-21 定）、判断用户在不在电脑前（用户 10-21 定）。
+
+### 结构：单独一块，和 corral 只走命令
+
+- 单独的包 `crates/pony`、命令 `pony`，打进版本目录的 `bin/pony`，部署时切 `~/.local/bin/pony`。
+- 和 corral 只通过公开命令来往：`corral ls`、`status`、`reply`、`send`，读它们的 JSON。Cargo 里不依赖 `corral-core`、`ranch-dispatch`、`fence`，不读 `~/.corral`。不改 corral 的代码（用户底线）：第一期用到的都是现有公开命令，曾考虑过的 corral 改动都不需要。
+- 找 corral：配置里的 `corral`（绝对路径），没有就先 PATH，再 `~/.local/bin/corral`（launchd 起的程序 PATH 只有系统目录，会落到后一个）；起来时看 `corral --version` 的 `contract` 是不是 `"1"`。
+- 照 §8 fence 的剥离办法：以后整块拆出去时把 `crates/pony` 挪到自己的仓库，自己打包、部署；corral 一侧本来就没有关于它的代码，不用改。
+
+### 插件式
+
+- `crates/pony/src/`：`main.rs`、`corral.rs`（调 corral 命令、解析 JSON）、`core/`（共用核心）、`chats/`（每家聊天软件一个文件）。`chats/mod.rs` 是 `Chat` 接口和登记表 `CHATS`，现在只有 `slack`。
+- 接口管：`kind`（配置里的段名、凭证文件名、`pony status` 里的值）、凭证的键、读这家的配置、连接和重连、把收到的消息翻成共用格式（频道、消息 id、所在线程、发话人、有没有 @、去掉 @ 和转义后的正文、附件、删除）、上限（一条多少字、有没有线程）、发消息、频道信息。没有线程的平台退成「每句都要 @、写明 agent，回复以 `<全名>:` 开头直接发在频道里」；第一期用不到，只在接口里留着。
+- 共用核心管配置、凭证、权限、路由、线程表、送话和排队、盯 agent、提醒和去重、分段、状态、日志、`pony status`。核心源码不写任何一家的名字。
+- 接第二家（比如飞书）只加 `chats/<名字>.rs` 和 `CHATS` 一行，核心不改。核心测试用只登记在测试里的内存假适配器；另有一条测试断言核心源码里不出现已登记适配器的 `kind`。
+
+### 用户 10-21 定的
+
+1. 主控新回复和提醒每一轮都发到 Slack；提醒和每一轮回复的第一段 @ 用户，pony 不判断用户在不在电脑前，手机吵不吵靠 Slack 自己的通知设置。用户原话：「先这么定，如果以后嫌吵，咱们再改。」R38f 上线实测时核对 Slack 有没有「电脑上不活跃时才推到手机」这类设置。
+2. 后台常驻用 launchd 用户服务：`pony service install` 写 `~/Library/LaunchAgents/local.ranch.pony.plist` 并加载，登录就起、崩了 10 秒后重起、没配置时正常退出不再重起；只动自己这一个文件，用户在场、先 `--dry-run` 看、确认才写，能卸干净。不用 pony 自己转后台（`pony start`/`stop`）：那样重启、注销后不会自己起来，崩了也没人重起。第一期只在这台 Mac 上开，Linux 以后另做 systemd 用户服务。
+3. Needs you 第一期只发提醒；在提醒线程里回的话先排着，对话框在电脑上处理完、agent 空下来再送。理由：agent `blocked` 时 `corral send` 一律退回 `not_idle`；第一期不用 `read`、`keys`，不远程按键（误按会批准危险命令）。
+4. Slack 客户端自己接，用 ureq（HTTP，ranch 已在用）+ tungstenite（WebSocket，同步），不用 slack-morphism：pony 只用 4 个 Web API 加 Socket Mode，不值得为它引入一百多个包和一个异步运行时；本机可能要走代理，slack-morphism 的 Socket Mode 不支持。代价是多写约 450 行（另有测试）。
+5. agent 正在干活时又来了话，排队：线程里回 `→ X（正在干活，这句排在第 n 个，这一轮结束就送）`，真送出去时说「已送给 X（排了 12 分钟）」；删掉还在排队的那条 Slack 消息就是撤回。排队的话存在 `state.json`，重启后还在。比「不送」好在手机上不用等着回头再发；过时的话可以撤回。
+6. 名字 pony：包 `crates/pony`、命令 `pony`、目录 `~/.pony`。
+7. paddock 的 P5-147 在 R38b 把 `pony status` 写进 CONTRACT 之后开工：数据先定下来，没配置的机器显示「未配置」，以后只做兼容新增。
+8. 离线时的消息补收：Mac 睡着或 pony 没在跑时用户发的话，重连后从 Slack 历史补收并照常送，用已有的 `channels:history`、`groups:history`，不加权限；送给 agent 时开头加一句说明（「这是你 09:12 在 Slack 发的，pony 当时离线，现在才送到」）；发出超过 12 小时的不自动送，在它的线程里回「这句是 12 小时以前发的，没送；要送请重发」；第一次起来（没有记下的 `ts`）不补收，免得把频道里的旧话都送进去。
+
+### 第一期的规矩
+
+- **配置**：`~/.pony/config.toml`，用户手写，不含凭证。顶层只认 `corral`、`proxy` 和已登记适配器的段；每段必须有 `owner`、`channels`；`repo` 按 corral 名字一段的写法（ASCII 字母或数字开头，只含字母、数字和 `._-`）；同一家里一个频道只绑一个仓库、一个仓库也只绑一个频道，提醒发到哪才唯一。用频道 ID 不用频道名：改名不影响，也不用为了按名字查频道多要权限；名字由 pony 连上后查出来给 status。没有这个文件就什么都不连。
+- **随改随生效**：运行中每轮检查文件有没有变，变了就重读；新内容有错就继续用旧的，status 报 `config: "invalid"` 和原因；改了 `proxy` 或这一家的段就重连。代理要写在配置里：launchd 起的程序不继承 shell 的环境变量，ureq、tungstenite 也不读 macOS 系统设置里的代理；部署时先试直连，连不上再填 `proxy`。
+- **只认 owner**：只处理配置里的 `owner` 在绑了仓库的频道里发的消息；别人的消息不回、不送、不记内容（日志只记「忽略了一条别人的消息」）。没绑仓库的频道里 @ 机器人只回「这个频道没绑仓库」，不提任何仓库；没绑仓库的 agent 连 `status` 都不调，一个字都不发到 Slack。
+- **路由**：频道顶层 @ 机器人开一段新对话；在这条消息的线程里回，送给线程对应的 agent（整句只有 `?` 的除外）。线程里回复带不带 @ 都行；不认识的线程里 @ 就当新对话。取 @ 之后第一个词：只有 `?` 或 `？` 看状态；带斜杠的全名只送给绑了频道的仓库，没有这个 agent 就回「没有 ranch/foo 这个 agent，没送」，不转给主控；同仓库的短名送给对应 agent；其余整句送给 `<仓库>/main`，主控没在跑就回「paddock/main 没在跑，没送」。送之前先在线程里回一行 `→ <全名>`；送的就是用户打的字（`corral send <全名> -- <正文>`，不加前缀、不加工、不加 `--force`），空的回一段用法。
+- **送不进去时**：先 `corral status`。`idle` 立刻送；`working`、`starting`、`blocked`、暂停中排队，不替人 resume；`unknown` 照送（等不到回复）；不在了不送。`corral send` 的结果：`not_idle` 放回队首；`human_active` 30 秒后再试（不加 `--force`）；`paused` 排着；`not_delivered` 不重送，回「送了但 X 没收到（可能停在菜单或对话框上），没重送」；其他回 corral 的 `error` 和 `message`。排队的话按顺序送，一轮一句。agent 退出了，排着的都不送，在各自线程里说。
+- **一轮结束贴回**：一个循环每 2 秒 `ls`、`status`，相邻两轮都是 `idle`、`[state, last_event, last_event_at]` 不变、`turn_started` 和上次处理过的不同，就算这一轮结束，调 `corral reply`。是 pony 送的话开的，就照分段贴回原线程（`no_reply` 带 `interrupted` 说被打断，退出了说没等到回复）；不是 pony 开的，按提醒的规则判断。不用 `wait`：一个循环同时管贴回和提醒，用 `wait` 每段对话要一直开着一个进程。
+- **提醒**：主控新回复（这一轮不是 pony 开的、`reply.at` 比记下的新）发在频道顶层，第一段在那儿，其余在它的线程里；这条线程对应这个主控。Needs you（相邻两轮都 `blocked`）在所有绑了频道的仓库的 agent 里判断，发在频道顶层，模板见设计稿 §3.8。去重记号（实例、处理过的 `turn_started`、发过的 `reply.at`、提醒过的 `(实例, state_started)`）存在 `state.json`；离开 `blocked` 再进来算新的一次；agent 重开从头记；pony 停着时结束的轮，重启后每个 agent 最多补发最近一条，开头写「（pony 不在线时）」。
+- **分段**：不截、不删、不改字，上限由适配器给（Slack 10,000 字）。按行走，认围栏代码块（三个反引号或三个波浪号）；断点先用代码块外的空行、行尾，其次代码块里的行尾（本段末补上收尾的反引号，下一段用同样语言重开），一行超长就硬断；表格尽量整块放。多于一段每段末尾加 `(i/N)`；其余发在同一个线程里。发送失败对半再切（最小 1,000 字），还不行就报出来，不悄悄丢。
+- **看状态**：`@pony ?` 只列绑了频道的仓库，这个频道的仓库排在最前；`working` 带这一轮多久了，`idle`、`blocked`、暂停、`starting`、`unknown` 各有说法，排着话的加「排着 n 句」。
+- **重启后**：`~/.pony/state.json`（0600）由拿着锁的那一份写。线程和 agent 的对应（按 30 天没用删掉；再回就说「这个线程太久没用，对应关系已清掉，请在频道里重新 @ 我」，不猜）、在等回复的对话、排队的话、去重记号、最近处理过的消息 `ts` 都还在；重连时按 `ts` 补收离线期间的话（用户定的第 8 条）。
+- **Slack 接法**：Socket Mode，pony 往外连 wss，本机不要公网地址。app 级 token 换临时地址；每个事件先把这条消息记进状态文件再按 `envelope_id` 回执（Slack 要求 3 秒内，最多重发 3 次），按 `ts` 去重；`hello` 里的 `num_connections` 大于 1 说明还有别的连接（另一台机器或没退干净的 pony），status 报 `other_connections`；每几小时一次的 `disconnect` 就重新取地址再连，网络错按 1、2、4…60 秒退避，30 秒 ping、90 秒没消息算断；每次重连重读凭证。只订 `message.channels`、`message.groups`，不订 `app_mention`（同一句 @ 会来两次）。权限只有 `chat:write`、`channels:history`、`groups:history`、`channels:read`、`groups:read`。建议用私有频道：仓库的代码、路径会发进去；机器人要邀请进频道才收得到。
+- **发消息**：`chat.postMessage` 带 `thread_ts`，正文用 markdown 块，另给一行 `text` 当通知里那句；关掉链接预览（免得 Slack 的服务器去抓回复里私有仓库的链接）；要提醒的按用户定的第 1 条 @ 用户。每频道约每秒 1 条，429 照 `Retry-After` 等。
+
+### 常驻、状态、凭证、日志
+
+- `pony run` 前台跑，launchd 用它，调试时也能在终端直接跑。同一个 `PONY_HOME`（默认 `~/.pony`，测试用隔离的）只能有一份：`~/.pony/run/lock` 拿不到就退出 1，launchd 10 秒后再试，等前一份退了自然接上。没有配置文件就记一行日志、退出 0。`pony status` 只查锁、不拿锁。
+- 服务：`pony service install|uninstall [--dry-run] [--yes]`，非 macOS 报 `unsupported`。plist 的 `ProgramArguments` 指向 `~/.local/bin/pony run`，`RunAtLoad`，`KeepAlive.SuccessfulExit` 为 false（退出码非 0 才重起）；标准输出、错误写 `~/.pony/logs/launchd.log`，只接 panic。写法照 corral integration：原子写，那里已有不是 pony 写的东西就报 `foreign`、不动。
+- `~/.pony/`：`config.toml`、`secrets/<kind>.toml`、`state.json`、`run/`、`logs/`。目录 0700、凭证文件 0600、属于当前用户、是普通文件；不是就不连，报 `secrets_too_open`，拒绝符号链接，每次连之前都查。凭证只放本机，不进仓库、不进 `pony status`、不进日志。不选钥匙串：macOS 按程序授权，pony 每次部署换新程序，人不在电脑前时会卡在弹框；文件加权限检查，和 fence 存 key 一样。
+- 日志 `~/.pony/logs/pony.log`，满 1 MiB 轮转留 3 份。记连接变化、路由到哪个 agent、频道 ID、消息 `ts`、corral 和 Slack 的错误码；不记消息和回复正文、任何 token、`Authorization` 头、wss 地址（地址里带一次性的 ticket）。
+
+### 给 paddock 的 `pony status`
+
+- 只读本机文件（配置、`run/status.json`、锁），不联网、不调 corral、不碰 agent，几毫秒，可以每几秒调一次。成功退出 0、一行 JSON；没配置、没在跑、连不上都是 `ok:true` 里的数据，不是错误；只有参数错是 `usage`、退出 2。不输出 token、用户 ID、消息内容。
+- 字段：`config`、`config_message`、`service`、`running`、`pid`、`started`、`last_exit`、`chats[]`（`connection`、`since`、`reason`、`message`、`workspace`、`bot`、`other_connections`、`channels[]` 的 `id`、`name`、`private`、`repo`、`problem`）。格式、取值和显示办法见 `docs/CONTRACT.md` 的「`pony status`（R38）」。
+- 前端找命令：PATH 上找不到 `pony`、`~/.local/bin/pony` 也没有，就是「未安装」，和找 corral 的办法一样。
+
+### 对 paddock 的影响
+
+- 只是兼容新增：新命令 `pony status`。corral 的命令、JSON、`~/.corral` 都不变，paddock 现有功能不用动。
+- R38b 合并后 paddock 就可以照 CONTRACT 开 P5-147（用户 10-21 定）；R38c 部署之前 PATH 上还没有 `pony`，Settings 显示「未安装」。
+- pony 送进去的话在 corral 里是 `last_input_source: "send"`，和 paddock 自己送的一样；两边都遵守 `not_idle`、`human_active`，不会硬送。主控的回复会同时出现在 paddock 收件箱和 Slack 里。
+
+### 实现怎么拆
+
+- R38c 包和外壳：`--version`、`status`、`run` 外壳，配置和凭证的读取、校验、权限检查，单实例锁、状态文件、日志轮转，打包工具把 `bin/pony` 放进版本目录；在隔离的 `PONY_HOME` 里测 status 的各种情况（没配置、配置错、凭证太宽、在跑、没在跑）。部署后 `pony status` 是真命令，没配置时报 `missing`。
+- R38d 共用核心：路由、线程表、送话和排队、盯 agent 和提醒、去重、分段、`?`、重启恢复；用内存假适配器和假 corral 测验收 1–5 的逻辑，另加核心源码不出现适配器名的测试。
+- R38e Slack 适配器：Socket Mode（代理、回执、重连、`hello` 里的连接数）、4 个 Web API、事件翻译、markdown 块、限频；和 R38d 可以同时做。
+- R38f 常驻和上线：`pony service install|uninstall`、部署说明；用户在场时建 Slack 应用、写 `~/.pony`、装服务，实测验收 1–6（含 markdown 块里 `<!channel>` 和长回复的样子、要不要代理、Slack 的通知设置）。
+- 每件跑 `cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`。测试不连 Slack、不碰真实 agent：corral 那层用内存假实现，或用工作区编出的 corral 和 `/bin/cat` 这类合成程序，HOME、`CORRAL_HOME`、`PONY_HOME` 都隔离。设计稿 §8 有逐件的依赖和对 paddock 的影响。
+
+来历：`docs/任务/R38-从Slack等聊天软件at着agent开发.md`、`docs/调研/R38a-Slack机器人设计.md`。
