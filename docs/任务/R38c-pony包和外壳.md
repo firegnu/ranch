@@ -84,3 +84,13 @@
 - 改了什么：不稳定测试在重启后等 `run/status.json` 的 pid 等于新进程，再发 SIGKILL；首次启动也等有效的连接时间，避免拿尚未初始化完的快照做比较。PONY_HOME 去掉尾部斜杠和点并转绝对路径，空值回退 HOME，HOME 未设时报错。配置校验顶层、适配器段和频道项的未知键；适配器可声明专有键；裸键错误带键位置，带引号的键只报解析器记录的行号，不回显键和值。信号处理提前到拿锁前，读完配置就在校验凭证前写本轮快照。`since` 未知时改为 null，README 同步；增加按 CHATS 登记逐项检查核心源码和 main.rs 不出现适配器名字的测试。没有新增依赖，没有修改 CONTRACT，按主控 main 提交 7252a38 的约定实现；审查第 6–12 条没有改。
 - 验证了什么：`cargo test -p pony` 一次通过（1 个核心边界测试、8 个命令测试），其中增加了尾部 `/`、`/.` 的符号链接、空 PONY_HOME／缺失 HOME、未知键定位与不泄露、未知 `since: null` 的检查。不稳定那条另单独连续跑 5 次，全部通过。`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次通过；没有重跑工作区全套测试。所有命令前台运行完成，使用指定独立编译目录，Cargo 离线；测试进程只操作隔离目录并按 PID 回收。
 - 要主控决定的事：没有。本轮只修改 pony 和本任务记录，未部署、合并或推送。
+
+## 主控审查
+
+- 看了 diff：只动了 `crates/pony/`、根 `Cargo.toml`、`Cargo.lock`、`tools/package/` 和本文件；没改 corral、dispatch、fence、ranch、CONTRACT、DESIGN，没加新依赖。凭证从目录描述符一路 `openat(O_NOFOLLOW)` 往下开、查权限和所有者；报错只带文件、行号；日志只写事件码。
+- 第一次交回后主控重跑：clippy、fmt 通过；全套有一条 pony 测试不稳定（重启后还没写状态就 SIGKILL，读到上一轮的 `last_exit`），单独复跑通过。交叉审查（Claude opus[1m] xhigh，`R38c-审查.md`）确认，必须改只此一条，另提建议改 5 条。
+- 返工 1 次：修测试；采纳建议改 1（`PONY_HOME` 末尾 `/` 绕过链接检查）、2（未知键报错）、4（启动先写快照）、5（核心不出现适配器名字的测试）；建议改 3 由主控给 CONTRACT 补「`since` 不知道时为 `null`」（7252a38）。复核：可以合并，可以不改 3 条（像 token 的裸键名会进报错、`HOME` 没设时 status 退出 1、启动几毫秒内 `since` 为 `null`），这轮不改。
+- 合并前全套 206 通过、0 失败、11 忽略；clippy、fmt 通过。
+- 留给后面的：运行中凭证变坏要到连接时才发现、`lock::holder` 不能在 run 进程里调、`repo` 没排除 corral 保留名（R38e）；删掉配置退出 0 后 launchd 不会再起（R38f）。
+
+结果：返工 1 次
