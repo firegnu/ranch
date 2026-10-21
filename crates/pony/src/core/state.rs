@@ -86,6 +86,14 @@ pub struct Backfill {
     pub after: HistoryAfter,
     pub started: f64,
     pub error: String,
+    #[serde(default)]
+    pub retry_at: f64,
+    #[serde(default = "initial_backfill_delay")]
+    pub delay: f64,
+}
+
+fn initial_backfill_delay() -> f64 {
+    2.
 }
 
 #[derive(Clone, Serialize, Deserialize)]

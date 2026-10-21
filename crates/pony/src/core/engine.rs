@@ -666,7 +666,7 @@ impl Engine {
                         for pending in &mut self.state.pending {
                             if pending.address.kind == input.kind && pending.phase == Phase::Queued
                             {
-                                pending.verification.get_or_insert(Verification {
+                                pending.verification = Some(Verification {
                                     started: at,
                                     retry_at: at,
                                     delay: 2.,
@@ -1167,6 +1167,8 @@ impl Engine {
                         after,
                         started: at,
                         error: "backfill_pending".into(),
+                        retry_at: at,
+                        delay: 2.,
                     };
                     self.state.backfills.push(job.clone());
                     self.save()?;
@@ -1174,22 +1176,7 @@ impl Engine {
                 }
             }
             if let Some(job) = &pending {
-                if at - job.started > 12. * 3600. {
-                    self.state.backfills.retain(|b| b.address != address);
-                    self.advance_cursor(address.clone(), HistoryAfter { id: None, at });
-                    self.save()?;
-                    self.log.push(format!("backfill_expired {}", job.error));
-                    if let Err(error) = self.post(
-                        &address,
-                        &format!(
-                            "重连后没读到离线期间的消息（{}），那段时间发的话请重发",
-                            job.error
-                        ),
-                        false,
-                        true,
-                    ) {
-                        self.record_error("delivery_failed", error)?;
-                    }
+                if !reconnect && at < job.retry_at {
                     continue;
                 }
             } else if !reconnect {
@@ -1198,7 +1185,7 @@ impl Engine {
             let info = match self.connections.get_mut(kind).unwrap().channel(&channel.id) {
                 Ok(info) => info,
                 Err(error) => {
-                    self.backfill_failed(&address, error)?;
+                    self.backfill_failed(&address, error, at)?;
                     continue;
                 }
             };
@@ -1215,7 +1202,7 @@ impl Engine {
             {
                 Ok(found) => found,
                 Err(error) => {
-                    self.backfill_failed(&address, error)?;
+                    self.backfill_failed(&address, error, at)?;
                     continue;
                 }
             };
@@ -1249,7 +1236,8 @@ impl Engine {
         }
         self.save()
     }
-    fn backfill_failed(&mut self, address: &Address, error: Error) -> Result<()> {
+    fn backfill_failed(&mut self, address: &Address, error: Error, at: f64) -> Result<()> {
+        self.record_adapter_error("backfill_failed", &error);
         if let Some(job) = self
             .state
             .backfills
@@ -1257,8 +1245,24 @@ impl Engine {
             .find(|b| b.address == *address)
         {
             job.error = safe_code(&error.code);
+            job.retry_at = at + job.delay;
+            job.delay = (job.delay * 2.).min(300.);
+            if at - job.started > 12. * 3600. {
+                let code = job.error.clone();
+                self.state.backfills.retain(|b| b.address != *address);
+                self.advance_cursor(address.clone(), HistoryAfter { id: None, at });
+                self.save()?;
+                self.log.push(format!("backfill_expired {code}"));
+                if let Err(error) = self.post(
+                    address,
+                    &format!("重连后没读到离线期间的消息（{code}），那段时间发的话请重发"),
+                    false,
+                    true,
+                ) {
+                    self.record_error("delivery_failed", error)?;
+                }
+            }
         }
-        self.record_adapter_error("backfill_failed", &error);
         self.save()
     }
     fn verify_queue(&mut self, at: f64) -> Result<()> {

@@ -104,9 +104,13 @@ pub trait Connection {
     /// The adapter chooses how to find threads with new replies, without scanning each one.
     /// Look back 30 days for parent messages, matching the core's thread retention.
     /// Translate identically to live messages; edits and bot messages are excluded.
+    /// The core backs off failures (2, 4, 8... seconds, capped at 5 minutes), durably.
+    /// Reconnect forces a read; the 12-hour job deadline is checked only after failure.
     fn history(&mut self, channel: &str, after: &HistoryAfter) -> Result<Vec<Message>>;
     /// Return false only for a confirmed deletion, not inaccessible history/network errors.
     /// thread is None for a channel root; otherwise it identifies the parent message.
+    /// Each connection resets the core's backoff and 10-minute verification deadline,
+    /// with an immediate check before queued messages can be sent.
     fn exists(&mut self, channel: &str, thread: Option<&str>, id: &str) -> Result<bool>;
     /// Stop and join owned network workers when dropped, including on configuration reload.
     fn close(&mut self) {}

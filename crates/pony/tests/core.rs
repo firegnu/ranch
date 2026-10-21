@@ -1531,14 +1531,119 @@ fn failed_backfill_keeps_its_lower_bound_across_live_messages_and_restarts() {
 }
 
 #[test]
-fn failed_backfill_retries_each_tick_then_reports_and_clears_after_twelve_hours() {
+fn backfill_retry_backs_off_across_restart_and_reconnect_retries_immediately() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.memory.borrow_mut().history_errors.insert("C2".into());
+    f.connected();
+    let reads = |f: &Fixture| {
+        f.memory
+            .borrow()
+            .history_reads
+            .iter()
+            .filter(|(channel, _)| channel == "C2")
+            .count()
+    };
+    let mut attempts = Vec::new();
+    for at in (100..=160).step_by(2) {
+        let before = reads(&f);
+        f.step(at as f64);
+        if reads(&f) > before {
+            attempts.push(at);
+        }
+    }
+    assert_eq!(attempts, [100, 102, 106, 114, 130]);
+    f.restart();
+    f.step(161.);
+    assert_eq!(reads(&f), 6);
+    let mut count = reads(&f);
+    for at in [225., 353., 609., 909.] {
+        f.step(at - 1.);
+        assert_eq!(reads(&f), count);
+        f.step(at);
+        count += 1;
+        assert_eq!(reads(&f), count);
+        f.step(at + 1.);
+        assert_eq!(reads(&f), count);
+        f.step(at + 63.);
+        assert_eq!(reads(&f), count);
+    }
+    f.connected();
+    f.step(973.);
+    assert_eq!(reads(&f), count + 1);
+}
+
+#[test]
+fn backfill_retry_after_thirteen_hours_offline_recovers_recent_message() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.corral.agents.get_mut("ranch/main").unwrap().state = "working".into();
+    f.memory.borrow_mut().history_errors.insert("C2".into());
+    f.connected();
+    f.step(100.);
+    f.engine.disconnect("memory");
+    let wake = 100. + 13. * 3600.;
+    f.step(wake - 1.);
+    f.memory.borrow_mut().history_errors.clear();
+    f.memory.borrow_mut().history.push(incoming(
+        "C2",
+        "recent",
+        None,
+        "醒来前两小时那句",
+        wake - 2. * 3600.,
+    ));
+    f.connected();
+    f.step(wake);
+    assert!(
+        f.engine
+            .store
+            .state()
+            .pending
+            .iter()
+            .any(|p| p.message == "recent" && p.text.contains("醒来前两小时那句"))
+    );
+    assert!(!f.texts().contains("请重发"));
+    assert!(f.engine.store.state().backfills.is_empty());
+}
+
+#[test]
+fn queue_retry_after_one_hour_offline_checks_before_sending() {
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.message("queued", None, "dev 核对我", true);
+    f.step(10.);
+    f.memory.borrow_mut().exists_errors.insert("queued".into());
+    f.connected();
+    f.step(20.);
+    assert_eq!(f.memory.borrow().exists_reads, ["queued"]);
+    f.engine.disconnect("memory");
+    f.step(3619.);
+    f.memory.borrow_mut().exists_errors.clear();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.connected();
+    f.step(3620.);
+    assert_eq!(f.memory.borrow().exists_reads, ["queued", "queued"]);
+    assert!(f.corral.sent.is_empty());
+    assert!(f.engine.store.state().pending.iter().any(|p| {
+        p.message == "queued"
+            && p.phase == pony::core::state::Phase::Queued
+            && p.verification.is_none()
+    }));
+    // Queued messages still require two consecutive idle observations after reconnect.
+    f.step(3622.);
+    assert_eq!(f.corral.sent, [("paddock/dev".into(), "核对我".into())]);
+    assert!(!f.texts().contains("请重发"));
+}
+
+#[test]
+fn failed_backfill_retries_then_reports_and_clears_after_twelve_hours() {
     let mut f = Fixture::new();
     f.step(2.);
     f.memory.borrow_mut().history_errors.insert("C2".into());
     f.restart();
     f.step(100.);
     f.step(102.);
-    f.step(104.);
+    f.step(106.);
     assert_eq!(
         f.memory
             .borrow()
@@ -1552,8 +1657,15 @@ fn failed_backfill_retries_each_tick_then_reports_and_clears_after_twelve_hours(
     let deadline = 100. + 12. * 3600.;
     f.step(deadline);
     assert!(!f.texts().contains("那段时间发的话请重发"));
-    f.step(deadline + 2.);
+    // The fourth failure schedules a 16-second retry; reconnect preserves the backoff.
+    f.step(deadline + 14.);
+    assert!(!f.texts().contains("那段时间发的话请重发"));
+    f.step(deadline + 16.);
     let data = f.memory.borrow();
+    assert_eq!(
+        data.history_reads.iter().filter(|(c, _)| c == "C2").count(),
+        5
+    );
     let notice = data
         .posted
         .iter()
@@ -1565,7 +1677,7 @@ fn failed_backfill_retries_each_tick_then_reports_and_clears_after_twelve_hours(
     assert!(f.engine.store.state().backfills.is_empty());
     f.memory.borrow_mut().history_errors.clear();
     f.restart();
-    f.step(deadline + 4.);
+    f.step(deadline + 18.);
     assert_eq!(f.texts().matches("那段时间发的话请重发").count(), 1);
     assert_eq!(
         f.memory
@@ -1577,7 +1689,7 @@ fn failed_backfill_retries_each_tick_then_reports_and_clears_after_twelve_hours(
             .unwrap()
             .1
             .at,
-        deadline + 2.
+        deadline + 16.
     );
 }
 
@@ -1598,7 +1710,7 @@ fn status_summary_keeps_other_agents_when_one_status_is_unreadable() {
 }
 
 #[test]
-fn unverifiable_queue_backs_off_across_restart_and_expires_once_after_ten_minutes() {
+fn unverifiable_queue_backs_off_and_reconnect_restarts_ten_minute_deadline() {
     let mut f = Fixture::new();
     f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
     f.message("uncertain", None, "dev 核对我", true);
@@ -1609,24 +1721,22 @@ fn unverifiable_queue_backs_off_across_restart_and_expires_once_after_ten_minute
         .exists_errors
         .insert("uncertain".into());
     f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
-    f.restart();
     let mut attempts = 0;
-    for at in [20., 22., 26., 34., 50., 82., 146., 274., 530.] {
-        f.step(at);
-        attempts += 1;
-        f.step(at + 1.);
-        assert_eq!(
-            f.memory
-                .borrow()
-                .exists_reads
-                .iter()
-                .filter(|id| *id == "uncertain")
-                .count(),
-            attempts
-        );
-        if at == 34. {
-            f.restart();
-            f.step(36.);
+    for connected_at in [20., 600.] {
+        f.restart();
+        for elapsed in [0., 2., 6., 14., 30., 62., 126., 254., 510.] {
+            f.step(connected_at + elapsed);
+            attempts += 1;
+            f.step(connected_at + elapsed + 1.);
+            assert_eq!(
+                f.memory
+                    .borrow()
+                    .exists_reads
+                    .iter()
+                    .filter(|id| *id == "uncertain")
+                    .count(),
+                attempts
+            );
         }
     }
     assert!(f.corral.sent.is_empty());
@@ -1640,12 +1750,13 @@ fn unverifiable_queue_backs_off_across_restart_and_expires_once_after_ten_minute
         .verification
         .as_ref()
         .unwrap();
-    assert_eq!(check.retry_at, 830.);
+    assert_eq!(check.started, 600.);
+    assert_eq!(check.retry_at, 1410.);
     assert_eq!(check.delay, 300.);
-    f.step(620.);
+    f.step(1200.);
     assert!(!f.texts().contains("没法核对这句还在不在"));
-    f.step(622.);
-    f.step(624.);
+    f.step(1202.);
+    f.step(1204.);
     assert_eq!(
         f.texts()
             .matches("没法核对这句还在不在，先不送；要送请重发")
@@ -1668,7 +1779,7 @@ fn unverifiable_queue_backs_off_across_restart_and_expires_once_after_ten_minute
             .iter()
             .filter(|id| *id == "uncertain")
             .count(),
-        9
+        18
     );
 }
 
