@@ -49,6 +49,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 - 对方这一轮结束（或卡在对话框、退出、等满 `--timeout`）时，这句话会像人打字一样送进你的输入框；你正在干活、人刚在你的窗口里操作过时，它会等一会儿再送。
 - 已识别为被打断的这一轮不触发提醒，原提醒继续等下一轮正常结束；等满 `--timeout` 仍照旧送，所以收到提醒不代表做完。
 - 收到提醒（或被后台 wait 叫醒）后先 `corral status <名字>`：`interrupted: true` 表示被打断，告诉人，不当成做完；否则再看 `corral reply <名字>`。reply 报 `no_reply` 且带 `interrupted: true` 时也按打断处理。回复最后一行是 DONE，取结果告诉人，不要 stop；对方又在干活，是被叫早了，再挂一次 `send --after`（Claude Code 连后台 wait 一起，见 corral 技能「长任务」一节）；空闲或 blocked 但回复最后一行不是 DONE（如等人操作、问问题），告诉人去 attach 看，同时再挂一次提醒（Claude Code 连后台 wait 一起），结束这一轮。人在对方窗口里直接聊，或通过你转话，都要继续盯；下次被叫醒仍按同样规则判断，直到看到 DONE。对方已经退出或不在了但没有 DONE，告诉人，不再挂提醒或后台 wait。
+- 按 corral-dispatch 派出的 agent 在回复里提问时，照派活技能由主控回答。
 - 对方停了但回复最后一行不是 DONE（包括 `no_reply`），且 `corral status` 的 `sandbox` 不是 `null`：先看 `fence denials --agent <名字>` 的网络拦截记录（`type: "network"`），用 `corral read <名字>` 看屏幕末尾的报错，把被拦的域名和报错告诉用户；已退出读不到屏幕时说明这一点，并查看 denials 的 `exit.message`。之后仍按上面的规则告诉用户、重挂提醒或不再挂。
 - corral 只知道「这一轮结束」，不知道「做完」，所以一定要靠 DONE 判断。
 - 让已经开着的对方接着做长活：用 `send` 把新任务交过去（末尾同样带 DONE 约定），再挂 `send --after`，不要重新 start。
