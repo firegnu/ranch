@@ -6,6 +6,7 @@
 
 - 范围：第 1 步 corral、第 2 步 dispatch 都已完成，范围到此为止（用户 10-05：遥测、Drover、插件系统砍掉，不迁）。之后的活 R1–R16 都已收尾（R11 并入 R12 做完；R16 是改走派活后的第一件，Codex 做、一次过）；R17（sandbox，fence 接 srt，DESIGN §8）进行中：R17a 本机小试验、R17b fence 本体和 `corral start --sandbox` 都已收尾，R17b 已部署（10-19），R17c（5090 上验 Linux）暂缓，任务文件、审查和完成记录在 `docs/任务/`，设计在 `docs/DESIGN.md`（R10 远端安装 §3；R1 暂停 §6；R3 适配器、R6 amp、R7 读屏、R8 agy、R13 agy 派活修整都在 §7），公开格式在 `docs/CONTRACT.md`。
 - 安装：
+  - 待部署 `versions/cc5a972`（10-21 主控打包，`working-tree: modified` 是因为主仓库有两个未跟踪的 R17 草稿，代码和 cc5a972 一致；R36：只改技能文字，程序和 c8d57bb 一样。部署：三个链接切到 `versions/cc5a972/bin/`，再跑 `ranch dispatch install-skills` 和 `corral install-skills`；打包后 dry-run 两份技能都只有 `SKILL.md` 是 overwrite，其余 same；不改 pen，helper 不用切）。退回：链接切回 `versions/c8d57bb/bin/`，重装两份技能。
   - 现装 `versions/c8d57bb`（10-20 用户部署；R35：`ranch dispatch edit/reset`、格子说明、可选项、`table.local.version` 和 `--if-version` 防冲突，给 paddock 设置页连线面板用；分工不变，两份技能 dry-run 都是 same，不用重装；不改 pen。三个链接已切，主控核对 `ranch dispatch table` 带说明、可选项和版本）。退回：切回 `versions/7d2ac96/bin/`。
   - 上一版 `versions/7d2ac96`（10-20 用户部署；R31：分工表改成数据表，主控派活调 `ranch dispatch cell <格子>` 读表，本机 `~/.ranch/dispatch.toml` 可只改某格，分工不变。corral-dispatch 技能已重装，corral 技能 same；不改 pen，helper 不用切。部署后在临时仓库开测试主控派三件小活：照方案实现读 `implementation`（astra medium）、碰要害读 `core-code`（astra high，审查 astra xhigh）、杂活读 `chores`（pi），命令和旧规则一致）。退回：三个链接切回 `versions/2f52652/bin/`，重装 corral-dispatch 技能。
   - 上一版 `versions/2f52652`（10-20 用户部署；R30：MCP 服务器做成数据，默认 Exa，可换服务商、支持 API key；只改 fence，技能 dry-run 都是 same，不用重装；不改 pen，helper 不用切。三个链接已切；部署后主控用 corral 套 dev 墙依次开四家，免 key 的 Exa 搜索和读网页都成功）。退回：切回 `versions/276107d/bin/`。
@@ -50,7 +51,8 @@
 11. R29（套墙的 agent 查不了资料）已合并、10-20 部署到 `versions/276107d`。Exa 免 key 有限频，几个 agent 同时搜会被限；要用 key 照 R30 的办法配。Codex 首次可能找不到 Exa 工具（客户端工具发现的限制），派 Codex 查资料时可能要提示它从工具目录里找；Codex 的 Exa 工具名每次运行不同。
 12. R30（套墙的 agent 接哪个 MCP 服务器做成数据）已合并、10-20 部署到 `versions/2f52652`，部署后四家依次实测免 key 的 Exa 搜索、读网页都成功：默认仍是 Exa；换服务商只在 `~/.fence/mcp/` 加一份数据、`local.toml` 改 `mcp`；要 key 的放 `~/.fence/keys/<名字>`（只发给那一家，key 进墙后 agent 看得到，不支持含 `$` 的 key）。只改 fence，技能 dry-run 都是 same。用户 10-20 暂时用免费 Exa。带真实 key 的服务商没实测过。
 13. R31 已部署（见上）；R34（在数据表上改分工：按档位分家、不用 medium、换家审、每档返工一次就升档）任务书已写，用户 10-20 说先不动。
-14. R35 已合并、10-20 部署到 `versions/c8d57bb`；paddock 的设置页连线面板（需求 `docs/需求/paddock-设置里用连线图看和改派活分工.md`）照 R35 的 CONTRACT 接。R35 留了一条建议改：一格可以被清成没有可选家，R34 时一并定。R36（被委派的 agent 有问题直接问主控）是草稿。
+14. R35 已合并、10-20 部署到 `versions/c8d57bb`；paddock 的设置页连线面板（需求 `docs/需求/paddock-设置里用连线图看和改派活分工.md`）照 R35 的 CONTRACT 接。R35 留了一条建议改：一格可以被清成没有可选家，R34 时一并定。
+15. R36（被委派的 agent 有问题在回复里问，主控照技能第 8 节自己定、事后告诉用户；隐私、花钱、改批准过的设计、删除、推送、关 agent 或主控拿不准才问用户）已合并、打包 `versions/cc5a972` 待用户部署；部署后下一次派活看 agent 提问时主控接不接得住。
 
 ## 悬着
 
