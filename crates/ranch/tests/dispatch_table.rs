@@ -31,60 +31,60 @@ fn default_cells_preserve_commands_labels_and_review_assignments() {
     assert_eq!(table["cells"].as_object().unwrap().len(), 12);
     let cases = [
         (
-            "core-design",
+            "middle-design",
             "claude",
             "opus[1m]",
             "high",
             "claude --dangerously-skip-permissions --model 'opus[1m]' --effort high",
         ),
         (
-            "core-code",
+            "middle-other",
             "codex",
             "gpt-6-astra",
             "high",
             "codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"high\"'",
         ),
         (
-            "design",
+            "high-design",
             "claude",
             "opus[1m]",
-            "high",
-            "claude --dangerously-skip-permissions --model 'opus[1m]' --effort high",
+            "xhigh",
+            "claude --dangerously-skip-permissions --model 'opus[1m]' --effort xhigh",
         ),
         (
-            "ui-trial",
-            "claude",
-            "sonnet",
-            "high",
-            "claude --dangerously-skip-permissions --model sonnet --effort high",
-        ),
-        (
-            "implementation",
-            "codex",
-            "gpt-6-astra",
-            "medium",
-            "codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"medium\"'",
-        ),
-        (
-            "implementation-hard",
-            "codex",
-            "gpt-6-astra",
-            "high",
-            "codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"high\"'",
-        ),
-        (
-            "review",
+            "high-other",
             "codex",
             "gpt-6-astra",
             "xhigh",
             "codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"xhigh\"'",
         ),
         (
-            "claude-medium",
+            "critical-design",
             "claude",
             "opus[1m]",
-            "medium",
-            "claude --dangerously-skip-permissions --model 'opus[1m]' --effort medium",
+            "xhigh",
+            "claude --dangerously-skip-permissions --model 'opus[1m]' --effort xhigh",
+        ),
+        (
+            "critical-other",
+            "codex",
+            "gpt-6-astra",
+            "xhigh",
+            "codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"xhigh\"'",
+        ),
+        (
+            "review-codex",
+            "codex",
+            "gpt-6-astra",
+            "xhigh",
+            "codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"xhigh\"'",
+        ),
+        (
+            "review-claude",
+            "claude",
+            "opus[1m]",
+            "xhigh",
+            "claude --dangerously-skip-permissions --model 'opus[1m]' --effort xhigh",
         ),
     ];
     for (name, agent, model, effort, command) in cases {
@@ -121,19 +121,29 @@ fn default_cells_preserve_commands_labels_and_review_assignments() {
             ])
         };
         assert_eq!(cell["choices"][0]["argv"], argv);
-        assert!(cell["rework"].is_null());
-        if name.starts_with("core-") {
-            assert_eq!(cell["cross_review"], "review");
-            assert_eq!(
-                cell["review"]["choices"],
-                table["cells"]["review"]["choices"]
-            );
+        let rework = match name {
+            "middle-design" => json!("high-design"),
+            "middle-other" => json!("high-other"),
+            _ => Value::Null,
+        };
+        assert_eq!(cell["rework"], rework);
+        if name.starts_with("critical-") {
+            let review = if agent == "claude" {
+                "review-codex"
+            } else {
+                "review-claude"
+            };
+            assert_eq!(cell["cross_review"], review);
+            assert_eq!(cell["review"]["name"], review);
+            assert_eq!(cell["review"]["model"], table["cells"][review]["model"]);
+            assert_eq!(cell["review"]["effort"], "xhigh");
+            assert_eq!(cell["review"]["choices"], table["cells"][review]["choices"]);
         } else {
             assert!(cell["cross_review"].is_null());
             assert!(cell["review"].is_null());
         }
     }
-    for name in ["chores", "ui-clear", "amp", "agy"] {
+    for name in ["low-other", "low-design", "amp", "agy"] {
         let cell = run(&home, &["cell", name], 0)["cell"].clone();
         assert_eq!(cell, table["cells"][name]);
         let expected = match name {
@@ -164,7 +174,13 @@ fn default_cells_preserve_commands_labels_and_review_assignments() {
         assert!(cell["model"].is_null());
         assert!(cell["effort"].is_null());
         assert!(cell["cross_review"].is_null());
-        assert!(cell["rework"].is_null());
+        assert!(cell["review"].is_null());
+        let rework = match name {
+            "low-design" => json!("middle-design"),
+            "low-other" => json!("middle-other"),
+            _ => Value::Null,
+        };
+        assert_eq!(cell["rework"], rework);
     }
 }
 
@@ -172,25 +188,25 @@ fn default_cells_preserve_commands_labels_and_review_assignments() {
 fn local_cell_patch_changes_only_that_cell_and_is_reread() {
     let home = TempDir::new().unwrap();
     let before = run(&home, &["table"], 0);
-    local(&home, "[cells.implementation]\nmodel = 'local-model'\n");
+    local(&home, "[cells.middle-other]\nmodel = 'local-model'\n");
     let after = run(&home, &["table"], 0);
     for (name, cell) in before["cells"].as_object().unwrap() {
-        if name != "implementation" {
+        if name != "middle-other" {
             assert_eq!(&after["cells"][name], cell, "{name}");
         }
     }
     assert_eq!(after["agents"], before["agents"]);
-    let cell = &after["cells"]["implementation"];
+    let cell = &after["cells"]["middle-other"];
     assert_eq!(cell["source"], "user");
-    assert_eq!(cell["effort"], "medium");
+    assert_eq!(cell["effort"], "high");
     assert_eq!(cell["choices"][0]["argv"][5], "local-model");
     assert_eq!(
         cell["choices"][0]["labels"],
-        json!(["effort=medium", "model=local-model"])
+        json!(["effort=high", "model=local-model"])
     );
-    local(&home, "[cells.implementation]\nmodel = 'next-model'\n");
+    local(&home, "[cells.middle-other]\nmodel = 'next-model'\n");
     assert_eq!(
-        run(&home, &["cell", "implementation"], 0)["cell"]["model"],
+        run(&home, &["cell", "middle-other"], 0)["cell"]["model"],
         "next-model"
     );
 }
@@ -205,7 +221,7 @@ fn local_agent_patch_keeps_other_fields_and_other_agents() {
         assert_eq!(after["agents"][name], before["agents"][name]);
     }
     assert_eq!(after["agents"]["omp"]["source"], "user");
-    for name in ["chores", "ui-clear"] {
+    for name in ["low-other", "low-design"] {
         let cell = &after["cells"][name];
         assert_eq!(cell["source"], "builtin");
         assert_eq!(cell["choices"][1]["source"], "user");
@@ -227,9 +243,9 @@ labels = ["model=${model}"]
 [cells."light.docs"]
 agents = ["custom"]
 model = "local"
-cross_review = "review"
-rework = "implementation-hard"
-[cells.core-code]
+cross_review = "review-codex"
+rework = "high-other"
+[cells.critical-other]
 cross_review = ""
 "#,
     );
@@ -237,13 +253,13 @@ cross_review = ""
     assert_eq!(cell["source"], "user");
     assert_eq!(cell["choices"][0]["command"], "custom --model local");
     assert_eq!(cell["choices"][0]["labels"], json!(["model=local"]));
-    assert_eq!(cell["review"]["name"], "review");
+    assert_eq!(cell["review"]["name"], "review-codex");
     assert_eq!(
         cell["review"]["choices"][0]["labels"],
         json!(["effort=xhigh", "model=gpt-6-astra"])
     );
-    assert_eq!(cell["rework"], "implementation-hard");
-    assert!(run(&home, &["cell", "core-code"], 0)["cell"]["review"].is_null());
+    assert_eq!(cell["rework"], "high-other");
+    assert!(run(&home, &["cell", "critical-other"], 0)["cell"]["review"].is_null());
     assert_eq!(run(&home, &["table"], 0)["cells"]["light.docs"], cell);
 }
 
@@ -253,35 +269,38 @@ fn invalid_local_tables_fail_with_location_instead_of_falling_back() {
     let cases = [
         ("[cells", "line"),
         ("typo = true", "typo"),
-        ("[cells.chores]\ntyop = 1", "cells.chores"),
+        ("[cells.low-other]\ntyop = 1", "cells.low-other"),
         ("[agents.pi]\ntyop = 1", "agents.pi"),
         (
-            "[cells.chores]\nagents = ['missing']",
-            "cells.chores.agents",
+            "[cells.low-other]\nagents = ['missing']",
+            "cells.low-other.agents",
         ),
         (
-            "[cells.chores]\ncross_review = 'missing'",
-            "cells.chores.cross_review",
+            "[cells.low-other]\ncross_review = 'missing'",
+            "cells.low-other.cross_review",
         ),
-        ("[cells.chores]\nrework = 'missing'", "cells.chores.rework"),
-        ("[cells.chores]\nrework = 'chores'", "cycle"),
         (
-            "[cells.chores]\nrework = 'ui-clear'\n[cells.ui-clear]\nrework = 'chores'",
+            "[cells.low-other]\nrework = 'missing'",
+            "cells.low-other.rework",
+        ),
+        ("[cells.low-other]\nrework = 'low-other'", "cycle"),
+        (
+            "[cells.low-other]\nrework = 'low-design'\n[cells.low-design]\nrework = 'low-other'",
             "cycle",
         ),
         (
-            "[cells.chores]\ncross_review = 'ui-clear'\n[cells.ui-clear]\ncross_review = 'chores'",
+            "[cells.low-other]\ncross_review = 'low-design'\n[cells.low-design]\ncross_review = 'low-other'",
             "cycle",
         ),
         (
-            "[cells.chores]\ncross_review = 'ui-clear'\n[cells.ui-clear]\nrework = 'chores'",
+            "[cells.low-other]\ncross_review = 'low-design'\n[cells.low-design]\nrework = 'low-other'",
             "cycle",
         ),
     ];
     for (data, location) in cases {
         local(&home, data);
         // Even reading an unrelated cell must reject a broken table.
-        for args in [&["cell", "implementation"][..], &["table"][..]] {
+        for args in [&["cell", "middle-other"][..], &["table"][..]] {
             let error = run(&home, args, 1);
             assert_eq!(error["ok"], false);
             assert_eq!(error["error"], "invalid_data");
@@ -300,10 +319,7 @@ fn descriptions_and_agent_options_are_data_in_read_output() {
         assert!(!cell["description"].as_str().unwrap_or("").is_empty());
     }
     for name in ["claude", "codex"] {
-        assert_eq!(
-            table["agents"][name]["efforts"],
-            json!(["medium", "high", "xhigh"])
-        );
+        assert_eq!(table["agents"][name]["efforts"], json!(["high", "xhigh"]));
     }
     assert_eq!(
         table["agents"]["claude"]["models"],
@@ -316,16 +332,16 @@ fn descriptions_and_agent_options_are_data_in_read_output() {
     }
     local(
         &home,
-        "[cells.implementation]\ndescription = '本机说明'\n\
-         [agents.codex]\nefforts = ['medium', 'high', 'xhigh', 'custom']\nmodels = ['suggested']\n",
+        "[cells.middle-other]\ndescription = '本机说明'\n\
+         [agents.codex]\nefforts = ['high', 'xhigh', 'custom']\nmodels = ['suggested']\n",
     );
     let table = run(&home, &["table"], 0);
-    assert_eq!(table["cells"]["implementation"]["description"], "本机说明");
+    assert_eq!(table["cells"]["middle-other"]["description"], "本机说明");
     assert_eq!(
-        run(&home, &["cell", "implementation"], 0)["cell"]["description"],
+        run(&home, &["cell", "middle-other"], 0)["cell"]["description"],
         "本机说明"
     );
-    assert_eq!(table["agents"]["codex"]["efforts"][3], "custom");
+    assert_eq!(table["agents"]["codex"]["efforts"][2], "custom");
     assert_eq!(table["agents"]["codex"]["models"], json!(["suggested"]));
 }
 
@@ -333,16 +349,16 @@ fn descriptions_and_agent_options_are_data_in_read_output() {
 fn edit_preserves_other_cells_templates_order_and_comments() {
     let home = TempDir::new().unwrap();
     let original = "# user header\n[agents.pi] # keep template\nargv = ['pi', '--local']\n\n\
-                    [cells.implementation] # target\nmodel = 'old' # model note\n\
+                    [cells.middle-other] # target\nmodel = 'old' # model note\n\
                     # keep description note\ndescription = 'old description'\n\n\
-                    # keep next cell\n[cells.chores]\nagents = [ 'omp', 'pi' ] # order\n";
+                    # keep next cell\n[cells.low-other]\nagents = [ 'omp', 'pi' ] # order\n";
     local(&home, original);
     let before = run(&home, &["table"], 0);
     let after = run(
         &home,
         &[
             "edit",
-            "implementation",
+            "middle-other",
             "--agents",
             r#"["claude","codex"]"#,
             "--model",
@@ -350,37 +366,37 @@ fn edit_preserves_other_cells_templates_order_and_comments() {
             "--effort",
             "high",
             "--cross-review",
-            "review",
+            "review-codex",
             "--rework",
-            "implementation-hard",
+            "high-other",
             "--description",
             "新的说明",
         ],
         0,
     );
     let saved = fs::read_to_string(home.path().join(".ranch/dispatch.toml")).unwrap();
-    assert!(saved.starts_with(original.split("[cells.implementation]").next().unwrap()));
+    assert!(saved.starts_with(original.split("[cells.middle-other]").next().unwrap()));
     assert!(
-        saved.ends_with("# keep next cell\n[cells.chores]\nagents = [ 'omp', 'pi' ] # order\n")
+        saved.ends_with("# keep next cell\n[cells.low-other]\nagents = [ 'omp', 'pi' ] # order\n")
     );
     assert!(saved.contains("# target"));
     assert!(saved.contains("# model note"));
     assert!(saved.contains("# keep description note"));
     assert_eq!(after["agents"], before["agents"]);
     for (name, cell) in before["cells"].as_object().unwrap() {
-        if name != "implementation" {
+        if name != "middle-other" {
             assert_eq!(&after["cells"][name], cell);
         }
     }
-    let cell = &after["cells"]["implementation"];
+    let cell = &after["cells"]["middle-other"];
     assert_eq!(cell["agents"], json!(["claude", "codex"]));
     assert_eq!(cell["model"], "unlisted-model");
     assert_eq!(cell["effort"], "high");
-    assert_eq!(cell["cross_review"], "review");
-    assert_eq!(cell["review"]["name"], "review");
-    assert_eq!(cell["rework"], "implementation-hard");
+    assert_eq!(cell["cross_review"], "review-codex");
+    assert_eq!(cell["review"]["name"], "review-codex");
+    assert_eq!(cell["rework"], "high-other");
     assert_eq!(cell["description"], "新的说明");
-    assert_eq!(&run(&home, &["cell", "implementation"], 0)["cell"], cell);
+    assert_eq!(&run(&home, &["cell", "middle-other"], 0)["cell"], cell);
 }
 
 #[test]
@@ -391,7 +407,7 @@ fn edit_creates_missing_file_clears_fields_and_reset_restores_defaults() {
         &home,
         &[
             "edit",
-            "core-code",
+            "critical-other",
             "--model",
             "",
             "--effort",
@@ -406,7 +422,7 @@ fn edit_creates_missing_file_clears_fields_and_reset_restores_defaults() {
         0,
     );
     assert!(home.path().join(".ranch/dispatch.toml").is_file());
-    let cell = &edited["cells"]["core-code"];
+    let cell = &edited["cells"]["critical-other"];
     for key in ["model", "effort", "cross_review", "rework", "review"] {
         assert!(cell[key].is_null(), "{key}");
     }
@@ -417,44 +433,44 @@ fn edit_creates_missing_file_clears_fields_and_reset_restores_defaults() {
     );
     assert_eq!(cell["choices"][0]["labels"], json!([]));
     assert_eq!(edited["agents"], before["agents"]);
-    let empty = run(&home, &["edit", "core-code", "--agents", "[]"], 0);
-    assert_eq!(empty["cells"]["core-code"]["agents"], json!([]));
-    assert_eq!(empty["cells"]["core-code"]["choices"], json!([]));
-    let restored = run(&home, &["reset", "core-code"], 0);
+    let empty = run(&home, &["edit", "critical-other", "--agents", "[]"], 0);
+    assert_eq!(empty["cells"]["critical-other"]["agents"], json!([]));
+    assert_eq!(empty["cells"]["critical-other"]["choices"], json!([]));
+    let restored = run(&home, &["reset", "critical-other"], 0);
     assert_eq!(restored["cells"], before["cells"]);
     assert_eq!(restored["agents"], before["agents"]);
     assert_eq!(
-        run(&home, &["cell", "core-code"], 0)["cell"],
-        before["cells"]["core-code"]
+        run(&home, &["cell", "critical-other"], 0)["cell"],
+        before["cells"]["critical-other"]
     );
     assert!(
         !fs::read_to_string(home.path().join(".ranch/dispatch.toml"))
             .unwrap()
-            .contains("core-code")
+            .contains("critical-other")
     );
 }
 
 #[test]
 fn invalid_edits_report_field_and_leave_file_unchanged() {
     let home = TempDir::new().unwrap();
-    let original = "# preserve exactly\n[cells.implementation]\nmodel = 'custom'\n\
-                    [cells.ui-clear]\nrework = 'implementation'\n";
+    let original = "# preserve exactly\n[cells.middle-other]\nmodel = 'custom'\n\
+                    [cells.low-design]\nrework = 'middle-other'\n";
     local(&home, original);
     for (args, location) in [
         (
             vec!["--agents", r#"["missing"]"#],
-            "cells.implementation.agents",
+            "cells.middle-other.agents",
         ),
-        (vec!["--effort", "unknown"], "cells.implementation.effort"),
+        (vec!["--effort", "unknown"], "cells.middle-other.effort"),
         (vec!["--agents", r#"["pi"]"#, "--effort", "high"], "pi"),
         (
             vec!["--cross-review", "missing"],
-            "cells.implementation.cross_review",
+            "cells.middle-other.cross_review",
         ),
-        (vec!["--rework", "missing"], "cells.implementation.rework"),
-        (vec!["--rework", "ui-clear"], "cycle"),
+        (vec!["--rework", "missing"], "cells.middle-other.rework"),
+        (vec!["--rework", "low-design"], "cycle"),
     ] {
-        let mut command = vec!["edit", "implementation"];
+        let mut command = vec!["edit", "middle-other"];
         command.extend(args);
         let error = run(&home, &command, 1);
         assert_eq!(error["error"], "invalid_data");
@@ -468,18 +484,18 @@ fn invalid_edits_report_field_and_leave_file_unchanged() {
         );
     }
     // The same table validation also applies when reading a hand-edited file.
-    local(&home, "[cells.implementation]\neffort = 'unknown'\n");
+    local(&home, "[cells.middle-other]\neffort = 'unknown'\n");
     assert_eq!(run(&home, &["table"], 1)["error"], "invalid_data");
     // Options overridden in data, including non-suggested models, are honored by writes.
     local(
         &home,
-        "[agents.codex]\nefforts = ['medium', 'high', 'xhigh', 'custom']\n",
+        "[agents.codex]\nefforts = ['high', 'xhigh', 'custom']\n",
     );
     let after = run(
         &home,
         &[
             "edit",
-            "implementation",
+            "middle-other",
             "--effort",
             "custom",
             "--model",
@@ -487,8 +503,8 @@ fn invalid_edits_report_field_and_leave_file_unchanged() {
         ],
         0,
     );
-    assert_eq!(after["cells"]["implementation"]["effort"], "custom");
-    assert_eq!(after["cells"]["implementation"]["model"], "free-form");
+    assert_eq!(after["cells"]["middle-other"]["effort"], "custom");
+    assert_eq!(after["cells"]["middle-other"]["model"], "free-form");
 }
 
 #[test]
@@ -502,7 +518,7 @@ fn version_checks_detect_external_changes_without_writing() {
         &home,
         &[
             "edit",
-            "implementation",
+            "middle-other",
             "--model",
             "first",
             "--if-version",
@@ -520,13 +536,13 @@ fn version_checks_detect_external_changes_without_writing() {
     for args in [
         vec![
             "edit",
-            "implementation",
+            "middle-other",
             "--model",
             "stale",
             "--if-version",
             version,
         ],
-        vec!["reset", "implementation", "--if-version", version],
+        vec!["reset", "middle-other", "--if-version", version],
     ] {
         let error = run(&home, &args, 3);
         assert_eq!(error["error"], "conflict");
@@ -539,7 +555,7 @@ fn version_checks_detect_external_changes_without_writing() {
     assert_eq!(
         run(
             &home,
-            &["reset", "implementation", "--if-version", version],
+            &["reset", "middle-other", "--if-version", version],
             3
         )["error"],
         "conflict"
@@ -551,20 +567,20 @@ fn version_checks_detect_external_changes_without_writing() {
         &home,
         &[
             "reset",
-            "implementation",
+            "middle-other",
             "--if-version",
             current["local"]["version"].as_str().unwrap(),
         ],
         0,
     );
-    assert_eq!(reset["cells"]["implementation"]["model"], "gpt-6-astra");
+    assert_eq!(reset["cells"]["middle-other"]["model"], "gpt-6-astra");
     fs::remove_file(&path).unwrap();
     assert_eq!(
         run(
             &home,
             &[
                 "edit",
-                "implementation",
+                "middle-other",
                 "--model",
                 "stale",
                 "--if-version",
@@ -581,14 +597,14 @@ fn version_checks_detect_external_changes_without_writing() {
 fn edits_refuse_dotted_keys_that_cannot_preserve_original_order() {
     let home = TempDir::new().unwrap();
     let original = "# interleaved dotted keys\n\
-                    cells.implementation.model = 'first' # first\n\
-                    cells.chores.agents = ['pi'] # middle\n\
-                    cells.implementation.effort = 'high' # last\n";
+                    cells.middle-other.model = 'first' # first\n\
+                    cells.low-other.agents = ['pi'] # middle\n\
+                    cells.middle-other.effort = 'high' # last\n";
     local(&home, original);
     run(&home, &["table"], 0);
     for args in [
-        vec!["edit", "implementation", "--model", "second"],
-        vec!["reset", "implementation"],
+        vec!["edit", "middle-other", "--model", "second"],
+        vec!["reset", "middle-other"],
     ] {
         let error = run(&home, &args, 1);
         assert_eq!(error["error"], "format_not_preserved");
