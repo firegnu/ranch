@@ -12,11 +12,67 @@ use std::{
     time::{Duration, Instant},
 };
 
-struct Fixture(tempfile::TempDir);
+struct Fixture(tempfile::TempDir, RejectingProxy);
+
+// Production endpoints stay fixed. A local CONNECT proxy rejects every request,
+// so CLI tests cannot send even fake credentials to Slack or any external server.
+struct RejectingProxy {
+    address: std::net::SocketAddr,
+    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+impl RejectingProxy {
+    fn new() -> Self {
+        use std::io::{Read, Write};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = stopped.clone();
+        let worker = thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut header = Vec::new();
+                while !header.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    if stream.read_exact(&mut byte).is_err() {
+                        break;
+                    }
+                    header.push(byte[0]);
+                }
+                let _ = stream.write_all(
+                    b"HTTP/1.1 502 Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        Self {
+            address,
+            stopped,
+            worker: Some(worker),
+        }
+    }
+}
+impl Drop for RejectingProxy {
+    fn drop(&mut self) {
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = std::net::TcpStream::connect(self.address);
+        self.worker.take().unwrap().join().unwrap();
+    }
+}
 
 impl Fixture {
     fn new() -> Self {
-        Self(tempfile::tempdir().unwrap())
+        Self(tempfile::tempdir().unwrap(), RejectingProxy::new())
     }
 
     fn home(&self) -> PathBuf {
@@ -67,7 +123,8 @@ impl Fixture {
         fs::write(
             self.home().join("config.toml"),
             format!(
-                "corral = '{}'\n{text}",
+                "proxy = 'http://{}'\ncorral = '{}'\n{text}",
+                self.1.address,
                 self.0.path().join("corral-test").display()
             ),
         )
@@ -354,14 +411,16 @@ fn running_holds_one_lock_reloads_config_and_stale_status_is_off() {
     let mut running = Running::start(&fixture);
     let status = running.wait_for(&fixture, |s| {
         s["running"] == true
-            && s["chats"][0]["connection"] == "connecting"
+            && s["chats"][0]["connection"] == "failed"
             && s["chats"][0]["since"].is_number()
     });
     assert_eq!(status["pid"], running.0.as_ref().unwrap().id());
     assert!(status["started"].as_f64().unwrap() > 0.0);
     assert_eq!(status["config"], "ok");
     assert!(status["last_exit"].is_null());
-    for key in ["reason", "message", "workspace", "bot"] {
+    assert_eq!(status["chats"][0]["reason"], "network");
+    assert_eq!(status["chats"][0]["message"], "Slack: network");
+    for key in ["workspace", "bot"] {
         assert!(status["chats"][0][key].is_null());
     }
     let snapshot = fs::read(fixture.home().join("run/status.json")).unwrap();
@@ -374,9 +433,11 @@ fn running_holds_one_lock_reloads_config_and_stale_status_is_off() {
 
     fs::write(fixture.home().join("config.toml"), "[slack\nprivate-owner").unwrap();
     thread::sleep(Duration::from_millis(2300));
-    let invalid = running.wait_for(&fixture, |s| s["config"] == "invalid");
+    let invalid = running.wait_for(&fixture, |s| {
+        s["config"] == "invalid" && s["chats"][0]["connection"] == "failed"
+    });
     assert_eq!(invalid["chats"][0]["channels"][0]["repo"], "ranch");
-    assert_eq!(invalid["chats"][0]["connection"], "connecting");
+    assert_eq!(invalid["chats"][0]["connection"], "failed");
     fixture.write_config(&CONFIG.replace("'ranch'", "'other'"));
     let updated = running.wait_for(&fixture, |s| {
         s["config"] == "ok" && s["chats"][0]["channels"][0]["repo"] == "other"
@@ -398,7 +459,7 @@ fn running_holds_one_lock_reloads_config_and_stale_status_is_off() {
     let restarted_pid = restarted.0.as_ref().unwrap().id();
     restarted.wait_for(&fixture, |s| {
         s["running"] == true
-            && s["chats"][0]["connection"] == "connecting"
+            && s["chats"][0]["connection"] == "failed"
             && fs::read(fixture.home().join("run/status.json"))
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
