@@ -56,3 +56,11 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：Slack 连接时从 `auth.test` 读取并保存 `bot_id`，与已有的 `user_id` 一起用于正文开头的 @ 匹配；在线接收、频道历史和线程补收共用此逻辑，只去掉开头匹配的一个 @。README 已补充说明。代码没有写死 ID，测试只使用 `UBOT`、`BBOT` 等虚构 ID。对 paddock 无影响，`pony status` 不变。
+- 验证了什么：只新增 `bot_id_mention_is_recognized_and_removed` 一条测试。修复前运行 `cargo test -p pony bot_id_mention_is_recognized_and_removed`，在 `assert!(message.mentioned)` 失败，确认复现目标问题；修复后只运行一次 `cargo test --all-targets`，285 通过、0 失败、11 条原有测试默认忽略，新增测试通过。命令均在前台等到退出，使用任务指定的独立编译目录，HOME、PONY_HOME、CORRAL_HOME 均指向临时目录，Cargo 离线运行。
+- 拿主意的地方：没有新增设计取舍；沿用适配器原有的必填认证字段读取方式、前导空白处理和事件过滤，只扩充匹配用的 ID。无需主控决定。
+- 没做的事：没有修改共用核心、`chats/mod.rs`、`crates/corral/` 或其他行为；没有连接真实 Slack、读取真实 pony/corral 状态、调用真实 launchctl、操作用户 agent、部署、合并或推送。按任务限定，没有增加其他测试或运行 clippy、fmt 检查。默认忽略的测试需要外部旧版 corral 或真实 srt，本次未启用。
+- 踩过的坑：没有。

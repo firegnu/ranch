@@ -159,7 +159,7 @@ fn unquote(value: &str) -> String {
     String::from_utf8(bytes).unwrap()
 }
 fn auth() -> Value {
-    json!({"ok":true,"team":"Test workspace","user":"pony","user_id":"UBOT"})
+    json!({"ok":true,"team":"Test workspace","user":"pony","user_id":"UBOT","bot_id":"BBOT"})
 }
 fn socket() -> (TcpListener, String) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -254,6 +254,7 @@ fn http_connection(http: &Http) -> SlackConnection {
         session: Arc::new(Mutex::new(Session {
             token: "xoxb-test".into(),
             user: "UBOT".into(),
+            bot_id: "BBOT".into(),
             ..Session::default()
         })),
         worker: None,
@@ -956,13 +957,24 @@ fn broadcast_thread_reply_is_delivered_live_and_deduplicated_in_history() {
 }
 
 #[test]
+fn bot_id_mention_is_recognized_and_removed() {
+    let value = json!({"type":"message","channel":"C1","user":"UOWNER",
+        "ts":"123.001","text":"<@BBOT> 手机测试"});
+    let Some(Event::Message(message)) = translate(&value, "UBOT", "BBOT") else {
+        panic!("message expected");
+    };
+    assert!(message.mentioned);
+    assert_eq!(message.text, "手机测试");
+}
+
+#[test]
 fn shared_messages_are_reported_as_omitted_attachments() {
     for link in ["from_url", "original_url"] {
         let mut attachment = json!({"is_share":true,"text":"forwarded content"});
         attachment[link] = "https://test.invalid/message".into();
         let mut value = json!({"type":"message","channel":"C1","user":"UOWNER",
             "ts":"123.001","text":"<@UBOT> look at this","attachments":[attachment]});
-        let Some(Event::Message(message)) = translate(&value, "UBOT") else {
+        let Some(Event::Message(message)) = translate(&value, "UBOT", "BBOT") else {
             panic!("shared message must be delivered");
         };
         assert!(
@@ -973,7 +985,7 @@ fn shared_messages_are_reported_as_omitted_attachments() {
         assert!(message.mentioned);
 
         value["attachments"][0]["is_share"] = false.into();
-        let Some(Event::Message(preview)) = translate(&value, "UBOT") else {
+        let Some(Event::Message(preview)) = translate(&value, "UBOT", "BBOT") else {
             panic!("link message must be delivered");
         };
         assert!(!preview.attachments, "pasted links still have previews");
