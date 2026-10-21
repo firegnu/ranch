@@ -1531,6 +1531,78 @@ fn failed_backfill_keeps_its_lower_bound_across_live_messages_and_restarts() {
 }
 
 #[test]
+fn backfill_after_a_day_does_not_claim_completed_live_message_was_unsent() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.memory.borrow_mut().history_errors.insert("C1".into());
+    f.connected();
+    f.step(100.);
+    let live = incoming("C1", "200", None, "继续", 200.);
+    f.memory.borrow_mut().history.push(live.clone());
+    f.events.emit(Event::Message(live)).unwrap();
+    f.step(200.);
+    assert_eq!(f.corral.sent, [("paddock/main".into(), "继续".into())]);
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.turn_started = Some(201.);
+    s.last_event_at = Some(202.);
+    f.corral.replies.insert(
+        "paddock/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "做完了".into(),
+            at: 202.,
+        }),
+    );
+    f.step(202.);
+    f.step(204.);
+    assert!(f.engine.state.pending.is_empty());
+    assert!(f.texts().contains("做完了"));
+    f.engine.disconnect("memory");
+    f.step(300.);
+    f.memory.borrow_mut().history_errors.clear();
+    f.connected();
+    f.step(300. + 25. * 3600.);
+    assert!(!f.texts().contains("12 小时以前发的"));
+    assert_eq!(f.corral.sent.len(), 1);
+    assert!(f.engine.state.backfills.is_empty());
+}
+
+#[test]
+fn sleep_without_disconnect_preserves_retry_deadlines() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.message("queued", None, "dev 核对我", true);
+    f.step(10.);
+    f.memory.borrow_mut().exists_errors.insert("queued".into());
+    f.memory.borrow_mut().history_errors.insert("C2".into());
+    f.connected();
+    f.step(20.);
+    // No disconnect/connected event: the core wakes before the socket worker.
+    for hour in 1..=13 {
+        f.step(20. + f64::from(hour) * 3600.);
+        assert!(f.engine.state.pending.iter().any(|p| p.message == "queued"));
+        assert!(
+            f.engine
+                .state
+                .backfills
+                .iter()
+                .any(|b| b.address.channel == "C2")
+        );
+        assert!(!f.texts().contains("请重发"));
+    }
+    assert_eq!(f.memory.borrow().exists_reads.len(), 14);
+    f.memory.borrow_mut().exists_errors.clear();
+    f.memory.borrow_mut().history_errors.clear();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.connected();
+    f.step(46822.);
+    f.step(46824.);
+    assert_eq!(f.corral.sent, [("paddock/dev".into(), "核对我".into())]);
+    assert!(f.engine.state.backfills.is_empty());
+}
+
+#[test]
 fn backfill_retry_backs_off_across_restart_and_reconnect_retries_immediately() {
     let mut f = Fixture::new();
     f.step(2.);
@@ -1724,10 +1796,17 @@ fn unverifiable_queue_backs_off_and_reconnect_restarts_ten_minute_deadline() {
     let mut attempts = 0;
     for connected_at in [20., 600.] {
         f.restart();
+        let mut previous = connected_at;
         for elapsed in [0., 2., 6., 14., 30., 62., 126., 254., 510.] {
+            // Advance awake polling too; a gap over 60 seconds now means suspension.
+            while previous + 2. < connected_at + elapsed {
+                previous += 2.;
+                f.step(previous);
+            }
             f.step(connected_at + elapsed);
             attempts += 1;
             f.step(connected_at + elapsed + 1.);
+            previous = connected_at + elapsed + 1.;
             assert_eq!(
                 f.memory
                     .borrow()
@@ -1753,6 +1832,9 @@ fn unverifiable_queue_backs_off_and_reconnect_restarts_ten_minute_deadline() {
     assert_eq!(check.started, 600.);
     assert_eq!(check.retry_at, 1410.);
     assert_eq!(check.delay, 300.);
+    for tick in (1112..1200).step_by(2) {
+        f.step(f64::from(tick));
+    }
     f.step(1200.);
     assert!(!f.texts().contains("没法核对这句还在不在"));
     f.step(1202.);

@@ -23,6 +23,7 @@ pub struct Engine {
     previous: BTreeMap<String, Status>,
     recovering: BTreeSet<String>,
     connected: BTreeSet<String>,
+    last_step: Option<f64>,
 }
 impl Engine {
     pub fn new(
@@ -48,6 +49,7 @@ impl Engine {
             previous: BTreeMap::new(),
             recovering,
             connected: BTreeSet::new(),
+            last_step: None,
         }
     }
     fn save(&self) -> Result<()> {
@@ -571,6 +573,20 @@ impl Engine {
         Ok(lines.join("\n"))
     }
     pub fn step(&mut self, corral: &mut dyn Corral, at: f64) -> Result<()> {
+        if let Some(previous) = self.last_step.replace(at)
+            && at - previous > 60.
+        {
+            // A suspended process cannot retry. Exclude the gap from retry deadlines,
+            // but leave retry_at due so the first awake tick can try immediately.
+            for job in &mut self.state.backfills {
+                job.started += at - previous;
+            }
+            for pending in &mut self.state.pending {
+                if let Some(check) = &mut pending.verification {
+                    check.started += at - previous;
+                }
+            }
+        }
         self.state.threads.retain(|t| {
             if at - t.used > 30. * 86400. {
                 self.state.expired.push(Expired {
@@ -582,8 +598,13 @@ impl Engine {
                 true
             }
         });
-        // Keep one day of IDs: the 12-hour backfill window plus 12 hours of overlap.
-        self.state.seen.retain(|s| at - s.at <= 86400.);
+        // Keep one day of IDs, plus all IDs a still-pending backfill can return.
+        self.state.seen.retain(|s| {
+            at - s.at <= 86400.
+                || self.state.backfills.iter().any(|b| {
+                    b.address.kind == s.kind && b.address.channel == s.channel && s.at > b.after.at
+                })
+        });
         self.state.expired.retain(|e| at - e.at <= 90. * 86400.);
         self.state.cursors.retain(|c| {
             if c.address.thread.is_empty() {
