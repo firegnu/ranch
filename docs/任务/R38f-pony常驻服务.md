@@ -66,3 +66,36 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-21，ranch/dev-r38f，分支 `r38f-pony-service`。
+
+### 做了什么
+
+- 加 `service.rs` 和命令入口：`pony service install|uninstall [--dry-run] [--yes]`。默认只列计划，dry-run 优先；原子写自有 plist、加载、重复装卸、foreign 保护、非 macOS unsupported 和一行 JSON 输出均已接入。程序、日志路径按任务固定为 HOME 下的默认位置，正式程序只执行 `/bin/launchctl`，没有可替换程序的环境变量或配置。
+- `pony status` 的 `service` 按自有 plist 是否存在取值；核心仅改这一处。对 paddock：JSON 格式不变，`service` 开始报真实值，paddock 不用动；运行状态仍看 `running`，不拿文件存在冒充进程已启动。
+- 修分享消息：attachment 带 `is_share: true` 时，即使带 `from_url`／`original_url` 也计为附件，沿用核心的「附件没送」提示；只贴链接产生的预览仍不计附件。
+- README 写清命令与 JSON 字段、安装和卸载、kickstart 换版、退回、删配置后的恢复、日志及代理；整理 R38e 两段上线说明和复核第 13 条为实测清单。
+- 自查 diff：只动 `crates/pony/` 和本文件末尾；没有新依赖，`Cargo.lock`、`crates/corral/`、`chats/mod.rs`、CONTRACT、DESIGN、设计稿都未改。
+
+### 验证了什么
+
+- 分享消息测试先跑，确认因「share 被当成 preview」断言失败；只改附件判断后通过。同一测试保留粘贴链接不算附件的断言，现有核心附件提示测试也在全量验证中通过。
+- 服务 CLI 测试先确认旧程序因不认识命令返回 usage 失败；装卸测试先确认 apply 尚未实现失败，然后实现到通过。5 条服务单元测试覆盖：只读预览、重复装卸和命令顺序、日志保留与权限、原子更新、外来文件／目录／链接、并发变化复查、launchctl 报错保留文件及已卸载状态。CLI 测试覆盖默认预览、dry-run 与 yes 同给、参数错误、自有／外来／链接／缺失 plist 对 status 的影响。macOS 的 plutil 实际解析生成的 XML，核对包括特殊字符路径在内的字段。
+- 指定的最终检查各实际运行一次：`cargo test --all-targets --offline`（279 通过、0 失败、11 个原有忽略）、`cargo clippy --all-targets --offline -- -D warnings`、`cargo fmt --check`，全部通过。全量测试的 HOME、PONY_HOME、CORRAL_HOME 指向临时目录；其他命令子进程也沿用已有隔离 fixture，服务单元测试直接传入临时 HOME 和 launchctl 替身，不读取真实用户状态。
+- 所有命令在前台结束，使用本分支独立 CARGO_TARGET_DIR；没有调用真实 launchctl、连接真实 Slack 或读取真实凭证。非 macOS 分支有条件测试，但本轮运行平台是 macOS，未另做 Linux 验证。
+
+### 拿主意的地方
+
+- 沿用 corral 的归属标记思路：自有 plist 以独立一行 `PONY_SERVICE = 1` XML 注释识别；服务路径下的链接视为 foreign，HOME 本身允许是链接。新文件只硬链接到空位，自有文件更新用 rename；操作前和 bootout 后复查，变了不覆盖、不删除。
+- 重装同内容不重写文件。bootstrap 失败后，仅 exact service target 的 print 成功才视为已加载；其余报错并保留 plist，供排查和重试。bootout 只把成功或 ESRCH 当成可删文件，其他错误保留文件。卸载不删用户配置、凭证、状态、日志或共享目录。
+- 服务使用任务指定的默认 HOME 路径，不把调用者的 PONY_HOME、代理、凭证复制到 plist；加载前创建或核对私有日志目录／日志，防止 launchd 因日志路径不存在而启动失败。命令输出不透传 launchctl 文本。没有需要主控另作决定的事。
+
+### 没做的事
+
+没有部署、打包、切链接、安装真实服务、建 Slack 应用、发外网请求、读取真实凭证或操作用户 agent；没有改 R38e 留着不改的 8、10、11、12，也没有扩适配器接口。未合并、推送，交叉审查与真实上线由主控安排；README 的实测清单尚未实测。
+
+### 踩过的坑
+
+第一次准备全量测试的命令带 `rm -rf` 清理临时目录的 trap，被工具的自动审批检查拒绝，命令和测试都未启动。改成只用 `rmdir` 删除本次创建的空目录后，前台完整跑完并清理成功；没有因此重复运行全量测试。其余没有非预期的试错失败。

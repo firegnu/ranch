@@ -956,6 +956,31 @@ fn broadcast_thread_reply_is_delivered_live_and_deduplicated_in_history() {
 }
 
 #[test]
+fn shared_messages_are_reported_as_omitted_attachments() {
+    for link in ["from_url", "original_url"] {
+        let mut attachment = json!({"is_share":true,"text":"forwarded content"});
+        attachment[link] = "https://test.invalid/message".into();
+        let mut value = json!({"type":"message","channel":"C1","user":"UOWNER",
+            "ts":"123.001","text":"<@UBOT> look at this","attachments":[attachment]});
+        let Some(Event::Message(message)) = translate(&value, "UBOT") else {
+            panic!("shared message must be delivered");
+        };
+        assert!(
+            message.attachments,
+            "a share must not be treated as a preview"
+        );
+        assert_eq!(message.text, "look at this");
+        assert!(message.mentioned);
+
+        value["attachments"][0]["is_share"] = false.into();
+        let Some(Event::Message(preview)) = translate(&value, "UBOT") else {
+            panic!("link message must be delivered");
+        };
+        assert!(!preview.attachments, "pasted links still have previews");
+    }
+}
+
+#[test]
 fn link_previews_in_history_are_not_reported_as_omitted_attachments() {
     let at = now() - 10.;
     let http = Http::new(move |_| {

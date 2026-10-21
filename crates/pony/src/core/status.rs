@@ -228,7 +228,7 @@ pub fn read(home: &Path) -> Value {
     json!({
         "ok": true, "contract": "1", "version": env!("CARGO_PKG_VERSION"),
         "config": config, "config_message": config_message,
-        "service": if cfg!(target_os = "macos") { "not_installed" } else { "unsupported" },
+        "service": crate::service::status(),
         "running": owner.is_some(), "pid": owner.as_ref().map(|o| o.pid), "started": owner.as_ref().map(|o| o.started),
         "last_exit": if owner.is_some() { None } else { snapshot.as_ref().and_then(|s| s.last_exit.as_ref()) }, "chats": chats,
     })

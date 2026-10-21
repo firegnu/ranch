@@ -42,8 +42,25 @@ fn dispatch(args: &[String]) -> (Value, i32) {
                 1,
             ),
         },
+        ["service", action @ ("install" | "uninstall"), flags @ ..]
+            if flags
+                .iter()
+                .all(|flag| matches!(*flag, "--dry-run" | "--yes")) =>
+        {
+            match pony::service::run(
+                *action == "uninstall",
+                flags.contains(&"--dry-run"),
+                flags.contains(&"--yes"),
+            ) {
+                Ok(value) => (value, 0),
+                Err(error) => (
+                    json!({"ok": false, "error": error.code, "message": error.message}),
+                    1,
+                ),
+            }
+        }
         _ => (
-            json!({"ok": false, "error": "usage", "message": "expected --version, status or run"}),
+            json!({"ok": false, "error": "usage", "message": "expected --version, status, run or service install|uninstall [--dry-run] [--yes]"}),
             2,
         ),
     }
