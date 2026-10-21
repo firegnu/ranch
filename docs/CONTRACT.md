@@ -356,7 +356,7 @@ R20 兼容新增 `unix_sockets`：具体绝对路径的字符串数组，支持�
 | `chats` | 配置里每家一项，按 pony 的登记顺序。没配置时是空数组。 |
 | `chats[].kind` | 适配器，现在只有 `slack`。前端照列表画，不写死。 |
 | `connection` | `connected`、`connecting`（第一次连或正在重连）、`failed`（连不上，等着重试）、`off`（pony 没在跑）。 |
-| `since` | 进入当前 `connection` 的时间，Unix 秒（可带小数）。 |
+| `since` | 进入当前 `connection` 的时间，Unix 秒（可带小数）；不知道时（没跑过、或上次没留下退出记录）为 `null`。 |
 | `reason`、`message` | `failed` 时的原因代码和说明；其他情况为 `null`。代码有：`secrets_missing`、`secrets_too_open`、`secrets_invalid`、`auth_failed`、`socket_mode_off`、`network`、`rate_limited`、`slack_error`；以后可能加，不认识的照 `message` 显示。 |
 | `workspace`、`bot` | 连上后由 `auth.test` 得到的工作区名、机器人名；没连上过时为 `null`。 |
 | `other_connections` | Slack 报的除自己以外的连接数，大于 0 说明可能有另一台机器也开着。 |
