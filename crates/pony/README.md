@@ -153,22 +153,33 @@ PONY_HOME、CORRAL_HOME 全部隔离，不依赖用户状态和真实 agent。
 `pony service install|uninstall [--dry-run] [--yes]` 只支持 macOS 用户级 launchd。
 不带 `--yes` 或带 `--dry-run` 都只输出计划，不创建目录、不写文件、不调用
 launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为准。
+实际执行前拒绝 root，并用 `getpwuid_r(geteuid())` 核对 HOME 是当前用户的
+账户主目录（按目录身份比较，允许指向同一目录的链接）；不符合时报
+`unsafe_context`，不写文件、不调用 launchctl。预览仍允许临时 HOME。
 
 - install 原子写 `~/Library/LaunchAgents/local.ranch.pony.plist`，执行
   `/bin/launchctl bootstrap gui/<uid> <plist>`。plist 的程序是
-  `~/.local/bin/pony run` 的绝对路径，登录时启动，非零退出后重起，重起间隔
-  至少 10 秒。路径中的 XML 特殊字符会转义。
+  `~/.local/bin/pony run` 的绝对路径，登录时启动，非零退出后重起。
+  `ThrottleInterval` 限制两次启动至少相隔 10 秒：运行很久才崩时可以马上重起，
+  一起来就退出（如锁冲突）才需要等到这个间隔届满。路径中的 XML 特殊字符会转义。
 - 只认带独立一行 `<!-- PONY_SERVICE = 1 -->` 标记的普通文件。
   已有外来文件、plist 是链接，或 `Library`／`LaunchAgents` 是链接时，报
   `foreign`，不调用 launchctl，也不写删它；HOME 本身可以是链接。
   新文件用同目录临时文件同步后硬链接，不覆盖期间出现的文件；更新自有文件
   用同步后 rename。写删前重查内容，bootout 后再查一次。
-- 重装相同内容不改写 plist；bootstrap 报错时，只有
-  `/bin/launchctl print gui/<uid>/local.ranch.pony` 成功才按「已加载」处理。
-  重装不会主动重启已加载的进程。真正的加载失败报 `launchctl_failed`，
-  保留 plist，排除原因后可以重试 install。
+- 重装相同内容（`same`）不改写 plist、不主动重启；只有这个状态下，bootstrap
+  报错而 `/bin/launchctl print gui/<uid>/local.ranch.pony` 成功才按「已加载」处理。
+  内容不同（`replace`）先 bootout，确认卸下后再原子写入、bootstrap，让新定义
+  真正生效；预览也会列出这一步。卸载失败时旧文件不变，可以重试。
+- 新建（`create`）时 bootstrap 失败而 print 成功，报 `already_loaded`：已有
+  别处加载的同名定义，不自动卸它；复查后回收本次新建的 plist，避免重试时
+  错当作 `same`。先手动 bootout 或注销再装。其他加载失败报 `launchctl_failed`，
+  保留 plist；若此前已卸下旧服务，错误说明会明确指出，并提示排除原因后重试。
 - uninstall 先 `/bin/launchctl bootout gui/<uid>/local.ranch.pony`，成功后
-  删自有 plist；已卸载（ESRCH）也可删。其他 bootout 错误保留文件并报错。
+  删自有 plist；已卸载（ESRCH）也可删。返回 36（EINPROGRESS）时，按一秒间隔
+  查 print，直到返回 113（找不到服务），最多等 30 秒；超时报 `stop_pending`，
+  留着原文件、提示稍后重跑。`replace` 共用这个等待过程。其他 bootout 错误
+  保留文件并报错；卸下后若删写文件失败，说明服务已卸下以及需要重试的命令。
   plist 已不存在时直接成功。卸载保留 `~/.pony` 的配置、凭证、状态和日志，
   也不删共享的 Library／LaunchAgents 目录。
 - 服务固定使用上述 HOME 下的默认路径，不把调用者的 `PONY_HOME`、代理或
@@ -183,7 +194,9 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 `{"ok":false,"error":"foreign","message":"…"}` 这类固定错误码和说明；
 参数错误为 `usage`、退出 2。其他错误码为 `unsupported`（非 macOS）、
 `invalid_data`（HOME 或路径不可用）、`changed`（文件中途变化）、
-`unsafe_path`（日志目录或文件权限不合要求）、`io`、`launchctl_failed`。
+`unsafe_context`（root、HOME 不符或无法核对账户主目录）、
+`unsafe_path`（日志目录或文件权限不合要求）、`already_loaded`（新建时同名服务已加载）、
+`stop_pending`（仍在停止）、`io`、`launchctl_failed`。launchctl 退出码按数字显示。
 不透传 launchctl 的输出，也不读取配置或凭证。
 
 成功 JSON 的字段（预览和实际操作相同）：
@@ -199,7 +212,7 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 | `content` | install 将写入的完整 plist 字符串；uninstall 为 `null`。 |
 | `directories` | install 需要的目录：`path`、`mode`、`operation: "create_if_missing"`；已有目录不改权限，新建权限还受 umask 限制。uninstall 为空数组。 |
 | `log` | 日志的 `path`、`mode`、`operation: "create_if_missing"`；uninstall 为 `null`。 |
-| `commands` | 可能执行的命令：`argv` 是参数数组（含程序绝对路径），`when` 为 `apply` 或 `bootstrap_failed`；缺失 plist 的卸载为空数组。 |
+| `commands` | 按顺序列出可能执行的命令：`argv` 是参数数组（含程序绝对路径），`when` 为 `apply`、`bootstrap_failed` 或 `bootout_in_progress`；后者有 `interval_seconds: 1`、`timeout_seconds: 30`。缺失 plist 的卸载为空数组。 |
 
 ## 部署与退回
 
@@ -229,7 +242,9 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 
    macOS 可能通知「已添加后台项目」。`installed` 但 `running: false` 时，
    看配置、`last_exit` 和日志；只安装文件不能保证配置正确或 Slack 已连上。
-5. 后续部署切链接以后，重启服务让它使用新程序：
+5. 后续部署切链接以后，先 `pony service install --dry-run` 看 plist 定义是否有变；
+   若为 `replace`，用 `pony service install --yes` 卸下旧定义、写入并加载新定义。
+   定义相同、只换程序时，重启服务让它使用新程序：
 
    ```sh
    launchctl kickstart -k "gui/$(id -u)/local.ranch.pony"
@@ -238,8 +253,12 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 
    没配置时 pony 退出 0，launchd 不再重起。运行中删掉配置也一样；放回配置后
    要执行上述 kickstart 或重新登录，单独放回文件不会触发启动。
-6. 退回时，用户在场按 ranch 部署记录把链接切回保留的上一版本，再 kickstart，
-   核对 status 和日志。不要覆盖、删除仍被进程或 hook 引用的不可变版本目录。
+   这里的「删配置」只指 `config.toml`。要删除整个 `~/.pony`、`logs/` 或
+   `~/.local/bin/pony` 链接，先 uninstall；否则 launchd 打不开日志路径或程序，
+   pony 没机会正常退出，会因启动失败反复重试。
+6. 退回时，用户在场按 ranch 部署记录把链接切回保留的上一版本，再按第 5 步
+   处理 plist 定义变化或 kickstart，核对 status 和日志。
+   不要覆盖、删除仍被进程或 hook 引用的不可变版本目录。
    若退回的 pony 版本还不支持 service 命令，先用当前版本卸服务再切链接。
    只想停止常驻时，使用：
 
@@ -264,8 +283,9 @@ token、Authorization 头、带 ticket 的 wss 地址写到日志或故障报告
   owner 每轮收到通知。核对手机是否响，以及「电脑不活跃时才推到手机」的设置。
   当前 notify 仅在 section 块 @ owner，fallback text 没 mention；不响再另改。
 - [ ] 普通附件及「分享消息」均明确提示「附件没送」，只贴链接的预览不提示；
-  分享消息实际带 `is_share`。线程回复勾「同时发到频道」仍送同一个 agent，
-  断线补收同一句只送一次。
+  确认 `is_share` 在第一次收到的 message 事件里，而非后补的 `message_changed`
+  （pony 忽略后者）；若只在后者出现，当前修复在线消息的行为仍需另改。
+  线程回复勾「同时发到频道」仍送同一个 agent，断线补收同一句只送一次。
 - [ ] 合盖／断线再连后按原线程补收；删掉排队原消息能撤回。私有频道的
   `conversations.replies` 权限与分页可用；让线程回复排队、断线再连，核对
   带 `oldest`、`latest` 的 exists 查询没有把仍存在的回复误判为撤回。
@@ -280,3 +300,6 @@ token、Authorization 头、带 ticket 的 wss 地址写到日志或故障报告
   落盘、ACK 和心跳独立继续；量大时再决定是否另做异步投递。
 - [ ] 需要代理时填写配置后可重连；重登可起服务，切新版链接加 kickstart 可换版，
   删除配置正常退出后不会循环重起，恢复配置加 kickstart 可恢复。
+- [ ] 服务正在运行时，`pony service uninstall --yes` 一次成功，不留下待卸的 plist。
+- [ ] 在系统设置「登录项」中关掉 pony 后，install 的报错能看懂。
+- [ ] `replace` 后用 `launchctl print` 核对 path 和 arguments，确认加载的是新定义。

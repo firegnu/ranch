@@ -236,22 +236,19 @@ fn service_preview_is_read_only_and_status_recognizes_only_owned_plists() {
     symlink(&owned, &plist).unwrap();
     assert_eq!(fixture.call(&["status"], 0)["service"], "not_installed");
     assert_eq!(
-        fixture.call(&["service", "uninstall", "--yes"], 1)["error"],
+        fixture.call(&["service", "uninstall"], 1)["error"],
         "foreign"
     );
     fs::remove_file(&plist).unwrap();
     fs::write(&plist, "someone else's plist").unwrap();
     assert_eq!(fixture.call(&["status"], 0)["service"], "not_installed");
     for action in ["install", "uninstall"] {
-        assert_eq!(
-            fixture.call(&["service", action, "--yes"], 1)["error"],
-            "foreign"
-        );
+        assert_eq!(fixture.call(&["service", action], 1)["error"], "foreign");
         assert_eq!(fs::read_to_string(&plist).unwrap(), "someone else's plist");
     }
     fs::remove_file(&plist).unwrap();
     assert_eq!(fixture.call(&["status"], 0)["service"], "not_installed");
-    assert!(!fixture.home().exists());
+    assert!(!fixture.0.path().join(".pony").exists());
 }
 
 #[test]

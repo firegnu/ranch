@@ -2,11 +2,16 @@ use crate::core::{Error, Result};
 use serde_json::{Value, json};
 use std::{
     env,
+    ffi::{CStr, OsStr},
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
+    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 const LABEL: &str = "local.ranch.pony";
@@ -126,7 +131,73 @@ pub fn run(remove: bool, dry: bool, yes: bool) -> Result<Value> {
     if !cfg!(target_os = "macos") {
         return Err(Error::new("unsupported", "pony service requires macOS"));
     }
-    manage(&user_home()?, remove, dry || !yes, &mut launchctl)
+    let home = user_home()?;
+    let dry = dry || !yes;
+    if !dry {
+        check_context(&home, unsafe { libc::geteuid() }, account_home)?;
+    }
+    manage(&home, remove, dry, &mut launchctl)
+}
+
+fn check_context(
+    home: &Path,
+    uid: libc::uid_t,
+    lookup: impl FnOnce(libc::uid_t) -> Result<PathBuf>,
+) -> Result<()> {
+    if uid == 0 {
+        return Err(Error::new(
+            "unsafe_context",
+            "service changes require a non-root user; do not use sudo",
+        ));
+    }
+    let account = lookup(uid)?;
+    let same = fs::metadata(home)
+        .ok()
+        .zip(fs::metadata(account).ok())
+        .is_some_and(|(a, b)| a.is_dir() && b.is_dir() && a.dev() == b.dev() && a.ino() == b.ino());
+    if !same {
+        return Err(Error::new(
+            "unsafe_context",
+            "HOME must name the current user's account home directory; preview is still available",
+        ));
+    }
+    Ok(())
+}
+
+fn account_home(uid: libc::uid_t) -> Result<PathBuf> {
+    let mut size = usize::try_from(unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) })
+        .unwrap_or(16384)
+        .max(1024);
+    loop {
+        let mut buffer = vec![0u8; size];
+        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut found = std::ptr::null_mut();
+        let code = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &mut entry,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut found,
+            )
+        };
+        if code == libc::ERANGE {
+            size = size.checked_mul(2).ok_or_else(|| {
+                Error::new("unsafe_context", "account lookup buffer is too large")
+            })?;
+            continue;
+        }
+        if code != 0 || found.is_null() || entry.pw_dir.is_null() {
+            return Err(Error::new(
+                "unsafe_context",
+                "could not determine the current user's account home directory",
+            ));
+        }
+        // getpwuid_r keeps the path in buffer; copy it before the buffer is dropped.
+        return Ok(PathBuf::from(OsStr::from_bytes(
+            unsafe { CStr::from_ptr(entry.pw_dir) }.to_bytes(),
+        )));
+    }
 }
 
 fn launchctl(args: &[String]) -> Result<Option<i32>> {
@@ -158,18 +229,17 @@ fn manage(
     };
     let domain = format!("gui/{}", unsafe { libc::geteuid() });
     let target = format!("{domain}/{LABEL}");
-    let commands = if remove {
-        if previous.is_some() {
-            json!([{ "argv": [LAUNCHCTL, "bootout", target], "when": "apply" }])
-        } else {
-            json!([])
-        }
-    } else {
-        json!([
-            { "argv": [LAUNCHCTL, "bootstrap", domain, path], "when": "apply" },
-            { "argv": [LAUNCHCTL, "print", target], "when": "bootstrap_failed" }
-        ])
-    };
+    let mut commands = Vec::new();
+    if (remove && previous.is_some()) || state == "replace" {
+        commands.push(json!({ "argv": [LAUNCHCTL, "bootout", target], "when": "apply" }));
+        commands.push(json!({ "argv": [LAUNCHCTL, "print", target], "when": "bootout_in_progress", "interval_seconds": 1, "timeout_seconds": 30 }));
+    }
+    if !remove {
+        commands.extend([
+            json!({ "argv": [LAUNCHCTL, "bootstrap", domain, path], "when": "apply" }),
+            json!({ "argv": [LAUNCHCTL, "print", target], "when": "bootstrap_failed" }),
+        ]);
+    }
     let mut result = json!({
         "ok": true, "action": if remove { "uninstall" } else { "install" },
         "dry_run": dry, "applied": false, "path": path, "status": state,
@@ -186,43 +256,113 @@ fn manage(
     if dry {
         return Ok(result);
     }
-    if remove {
-        if previous.is_some() {
-            unchanged(home, &previous)?;
-            let code = launch(&["bootout".into(), target])?;
-            // ESRCH means the owned plist was already unloaded (e.g. a failed bootstrap).
-            if code != Some(0) && code != Some(libc::ESRCH) {
-                return Err(launch_error("bootout", code));
+    unchanged(home, &previous)?;
+    let unloaded = (remove && previous.is_some()) || state == "replace";
+    if unloaded {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        bootout(&target, launch, &mut || {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
             }
-            unchanged(home, &previous)?;
-            fs::remove_file(&path).map_err(|e| io_error(&path, e))?;
-        }
-    } else {
-        unchanged(home, &previous)?;
-        prepare_log(home)?;
-        if state != "same" {
-            write_plist(home, &body, &previous)?;
-        }
-        let code = launch(&[
-            "bootstrap".into(),
-            domain,
-            path.to_string_lossy().into_owned(),
-        ])?;
-        // bootstrap reports an error for an already loaded job; only a successful
-        // print of this exact service turns that error into an idempotent success.
-        if code != Some(0) && launch(&["print".into(), target])? != Some(0) {
-            return Err(launch_error("bootstrap", code));
-        }
+            std::thread::sleep(remaining.min(Duration::from_secs(1)));
+            true
+        })?;
     }
+    let applied = (|| {
+        if remove {
+            if previous.is_some() {
+                unchanged(home, &previous)?;
+                fs::remove_file(&path).map_err(|e| io_error(&path, e))?;
+            }
+        } else {
+            unchanged(home, &previous)?;
+            prepare_log(home)?;
+            if state != "same" {
+                write_plist(home, &body, &previous)?;
+            }
+            let code = launch(&[
+                "bootstrap".into(),
+                domain,
+                path.to_string_lossy().into_owned(),
+            ])?;
+            if code != Some(0) {
+                let loaded = launch(&["print".into(), target])? == Some(0);
+                if loaded && state == "create" {
+                    // Restore the absent-file state so a retry cannot mistake our new
+                    // file plus somebody else's loaded definition for a same install.
+                    unchanged(home, &Some(body.as_bytes().to_vec()))?;
+                    fs::remove_file(&path).map_err(|e| io_error(&path, e))?;
+                    return Err(Error::new(
+                        "already_loaded",
+                        "the service name is already loaded from elsewhere; new plist removed; use launchctl bootout or log out before installing again",
+                    ));
+                }
+                if !loaded || state != "same" {
+                    return Err(launch_error("bootstrap", code));
+                }
+            }
+        }
+        Ok(())
+    })();
+    applied.map_err(|mut error: Error| {
+        if unloaded {
+            error.message.push_str(if remove {
+                "; service was unloaded; plist was not removed; resolve the error and rerun pony service uninstall --yes"
+            } else {
+                "; previous service was unloaded; new service was not confirmed loaded; plist left in place; resolve the error and rerun pony service install --yes"
+            });
+        }
+        error
+    })?;
     result["applied"] = true.into();
     Ok(result)
 }
 
 fn launch_error(action: &str, code: Option<i32>) -> Error {
+    let exit = code.map_or_else(
+        || "terminated by signal".into(),
+        |code| format!("exit {code}"),
+    );
     Error::new(
         "launchctl_failed",
-        format!("launchctl {action} failed (exit {code:?}); plist left in place"),
+        format!("launchctl {action} failed ({exit}); plist left in place"),
     )
+}
+
+fn bootout(
+    target: &str,
+    launch: &mut impl FnMut(&[String]) -> Result<Option<i32>>,
+    wait: &mut impl FnMut() -> bool,
+) -> Result<()> {
+    match launch(&["bootout".into(), target.into()])? {
+        Some(0) | Some(libc::ESRCH) => return Ok(()),
+        Some(libc::EINPROGRESS) => {}
+        code => return Err(launch_error("bootout", code)),
+    }
+    loop {
+        let code = launch(&["print".into(), target.into()]).map_err(|mut error| {
+            error.message.push_str("; stop requested but completion is unknown; plist left unchanged; retry this command shortly");
+            error
+        })?;
+        match code {
+            Some(113) => return Ok(()), // launchctl: service not found.
+            Some(0) => {}
+            code => {
+                let mut error = launch_error("print", code);
+                error.message.push_str(
+                    "; stop requested but completion is unknown; retry this command shortly",
+                );
+                return Err(error);
+            }
+        }
+        if !wait() {
+            return Err(Error::new(
+                "stop_pending",
+                "service is still stopping after 30 seconds; plist left unchanged; retry this command shortly",
+            ));
+        }
+    }
 }
 
 fn unchanged(home: &Path, previous: &Option<Vec<u8>>) -> Result<()> {
