@@ -191,7 +191,7 @@ ranch dispatch table
 model = "用户选定的模型"
 ```
 
-- 用户或项目指定了家，碰要害的活照样要交叉审查，验证预算照样按影响面定。
+- 用户或项目指定了家，碰要害的活照样要交叉审查，验证预算照样按影响面定。点名 pi、omp、amp、agy 做碰要害的活时，交叉审查读 `review-codex`；Claude Code、Codex 仍按上面的新表互审。
 - 只指定了家、没定模型或强度时，Claude Code 读同档「界面和设计」格，Codex 读同档「其余」格；低档点名这两家时用对应中档格补齐，强度只用 high、xhigh。pi、omp 从同类别低档格选对应一家，amp、agy 读同名格子。明确指定的模型或强度按 `table` 返回的该家模板代入，同时更新命令和标签；只补没指定的部分，禁止的配置照下文处理。
 - pi、omp 两家同类，任选，一家手上有活就开另一家，各自用默认模型，不另选模型。amp、agy 的分工还没定，只在用户或任务文件点名时派。
 - 交叉审查读该格的 `review`，按实际开发者换家，见第 6 节。
@@ -283,7 +283,7 @@ model = "用户选定的模型"
 
 只给影响面是「碰要害」的活（第 3 节）：路由的交叉审查结论是「要」，或者你判定它碰了数据模型、并发和事务、安全和隐私、核心规则。看得见、改行为的活不做；本轮不改代码的调研、设计也不做。
 
-- 另开一个 agent 只读审查，重新读原任务所选格子，使用其 `review.choices` 的完整命令和标签。交叉审查换一家：Claude Code 写的交 Codex，Codex 写的交 Claude Code。用户、项目指定或本机覆盖改变了开发者，或原格没配审查时，按实际开发者读对应的审查格：Claude Code 写的读 `review-codex`，Codex 写的读 `review-claude`。默认分别为 `gpt-6-astra` xhigh、`opus[1m]` xhigh，实际参数照读表；所需 `choices` 为空就停下告诉用户、不派。只给新审查者任务文件和 diff，不用原开发 agent。审查任务也写成文件（放主仓库工作区，派的时候给绝对路径，并写明它不在审查 worktree 里、只写这一个文件），依次写：
+- 另开一个 agent 只读审查，重新读原任务所选格子，使用其 `review.choices` 的完整命令和标签。交叉审查换一家：Claude Code 写的交 Codex，Codex 写的交 Claude Code。用户、项目指定或本机覆盖改变了开发者，或原格没配审查时，按实际开发者读对应的审查格：Claude Code、pi、omp、amp、agy 写的读 `review-codex`，Codex 写的读 `review-claude`。默认分别为 `gpt-6-astra` xhigh、`opus[1m]` xhigh，实际参数照读表；所需 `choices` 为空就停下告诉用户、不派。只给新审查者任务文件和 diff，不用原开发 agent。审查任务也写成文件（放主仓库工作区，派的时候给绝对路径，并写明它不在审查 worktree 里、只写这一个文件），依次写：
   - 背景：谁在哪个分支做了什么，主控已经审过什么；
   - 先读；
   - 要审查的代码：**它自己的 worktree**（`git worktree add --detach <审查 worktree> <分支>`；同一个分支不能在两个 worktree 里同时 checkout，git 会拒绝，所以只能 detached，顺带防它手滑提交；也不要和 dev 共用一个，它掉个文件就会挡住清理）、`git diff main...<分支>`，**只读，不改、不提交、不切分支**；写明可以跑哪些测试、不能碰什么；验证照「碰要害」那档的预算，不录屏、不做覆盖矩阵；

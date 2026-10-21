@@ -1,6 +1,6 @@
 [agents.claude]
 efforts = ["high", "xhigh"]
-models = ["opus[1m]"]
+models = ["opus[1m]", "sonnet"]
 argv = ["claude", "--dangerously-skip-permissions", "--model", "${model}", "--effort", "${effort}"]
 labels = ["effort=${effort}", "model=${model}"]
 

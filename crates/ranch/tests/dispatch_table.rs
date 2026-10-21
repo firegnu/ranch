@@ -321,7 +321,10 @@ fn descriptions_and_agent_options_are_data_in_read_output() {
     for name in ["claude", "codex"] {
         assert_eq!(table["agents"][name]["efforts"], json!(["high", "xhigh"]));
     }
-    assert_eq!(table["agents"]["claude"]["models"], json!(["opus[1m]"]));
+    assert_eq!(
+        table["agents"]["claude"]["models"],
+        json!(["opus[1m]", "sonnet"])
+    );
     assert_eq!(table["agents"]["codex"]["models"], json!(["gpt-6-astra"]));
     for name in ["pi", "omp", "amp", "agy"] {
         assert_eq!(table["agents"][name]["efforts"], json!([]));

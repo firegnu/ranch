@@ -11,13 +11,13 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 `ranch dispatch cell <名字>`：
 
 ```json
-{"ok":true,"cell":{"name":"implementation","source":"builtin","agents":["codex"],"model":"gpt-6-astra","effort":"medium","cross_review":null,"rework":null,"choices":[{"agent":"codex","source":"builtin","argv":["codex","--yolo","--disable","memories","-m","gpt-6-astra","-c","model_reasoning_effort=\"medium\""],"command":"codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"medium\"'","labels":["effort=medium","model=gpt-6-astra"]}],"review":null}}
+{"ok":true,"cell":{"name":"middle-other","source":"builtin","agents":["codex"],"model":"gpt-6-astra","effort":"high","cross_review":null,"rework":"high-other","choices":[{"agent":"codex","source":"builtin","argv":["codex","--yolo","--disable","memories","-m","gpt-6-astra","-c","model_reasoning_effort=\"high\""],"command":"codex --yolo --disable memories -m gpt-6-astra -c 'model_reasoning_effort=\"high\"'","labels":["effort=high","model=gpt-6-astra"]}],"review":null}}
 ```
 
 - `agents` 是可任选的家，按数据顺序返回；不自动挑选。`model`、`effort` 为字符串或 `null`（各家默认）。
 - `choices` 每家一项，`argv` 是完整 agent 启动参数数组，`command` 是等价、已作 POSIX shell 引用的命令字符串（引用写法不是固定协议）；不含 corral 外层的名字、cwd、首句或环境参数。标签是 `key=value` 字符串数组，每项各传一次 corral 的 `--label`，空数组不传。
 - `cross_review` 是审查格子名或 `null`。非空时 `review` 为 `{name,source,model,effort,choices}`，提供该格的完整启动信息，只展开一层；没有则 `review:null`。要继续读该格的其他关系，用其名字再调 `cell`。
-- `rework` 是返工格子名或 `null`，只提供信息，不自动启动或升档；现有默认全部为空，技能仍要求返工两次不达标后问用户。
+- `rework` 是返工格子名或 `null`，只提供信息，不自动启动或升档；现有默认低档指向同类别中档、中档指向同类别高档，高和碰要害为空。技能要求每档返工一次再不过就按表升档，没有升档格子的返工一次再不过就停下问用户。
 - `source` 为 `builtin` / `user`，表示该格定义是否被本机文件提及（含局部覆盖）；`choices[].source` 表示所引用家模板的来源。默认格子引用了本机修改的家时，前者仍为 `builtin`，后者为 `user`。
 
 `ranch dispatch table`：`{ok:true, local:{path,exists}, agents:{<家名>:{source,argv,labels}}, cells:{<格子名>:<与 cell 命令相同的对象>}}`。`agents` 返回未展开的模板，`cells` 返回生效值与启动信息；名字不枚举成固定协议。
@@ -26,7 +26,7 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 ```toml
 # 只改一格的模型；其他字段继承默认。
-[cells.implementation]
+[cells.middle-other]
 model = "用户选定的模型"
 
 # 只改一家的命令；未写 labels 则继承该家的默认标签。
@@ -36,8 +36,8 @@ argv = ["omp", "--approval-mode", "yolo"]
 # 也可增加新格子，引用任何已有的家、格子。
 [cells."自定义.文档"]
 agents = ["pi", "omp"]
-cross_review = "review"
-rework = "implementation-hard"
+cross_review = "review-codex"
+rework = "high-other"
 ```
 
 顶层只允许 `agents`、`cells` 两张表。每个家允许 `argv`（非空字符串数组，首项为程序）、`labels`（字符串数组，新增家省略时为空），R35 新增 `efforts`、`models`（字符串数组，新增家省略时为空）；每格允许 `agents`（字符串数组，R35 起可为空）、`model`、`effort`、`cross_review`、`rework`（可选字符串），R35 新增 `description`（字符串，新增格省略时为空）。家、格子的名字非空且数量不限。按同名条目的字段覆盖，数组整项替换；可选字符串设为 `""` 表示清除。不能删除内置条目。
@@ -55,7 +55,7 @@ ranch dispatch reset <名字> [--if-version <版本>]
 
 - `edit` 至少带一个修改字段，未传字段保持原样；每个参数只能出现一次。`--agents '["pi","omp"]'` 按给定顺序替换可选家，`--agents '[]'` 清空；其余字段传 `""` 清空，模型和强度使用各家默认，审查和返工为 `null`。说明清空后是 `""`。名字必须在当前生效表中存在。
 - `reset` 删除整格本机覆盖（含说明），内置格回到默认；纯本机格会消失，若其他格仍引用它则拒绝。无覆盖时成功且不写文件。家模板的 `argv` / `labels` 和可选项不能用此命令修改，只能在本机文件中配置。
-- `cell` / `table` 的格子对象新增 `description` 字符串。`table.agents.<家>` 新增 `efforts`、`models` 两个字符串数组，分别为允许强度、建议模型；默认 Claude Code / Codex 强度均为 `medium, high, xhigh`，模型分别为 `opus[1m], sonnet` / `gpt-6-astra`，pi、omp、amp、agy 两数组为空。非空强度必须在每个所选家的 `efforts` 中；空列表表示不接受显式强度。模型不限于建议列表。
+- `cell` / `table` 的格子对象新增 `description` 字符串。`table.agents.<家>` 新增 `efforts`、`models` 两个字符串数组，分别为允许强度、建议模型；默认 Claude Code / Codex 强度均为 `high, xhigh`，模型分别为 `opus[1m], sonnet` / `gpt-6-astra`，pi、omp、amp、agy 两数组为空。非空强度必须在每个所选家的 `efforts` 中；空列表表示不接受显式强度。模型不限于建议列表。
 - `table.local` 新增 `version` 字符串：不存在为 `missing`，存在为 `sha256:<原始文件字节的摘要>`，空文件与不存在不同，注释变化也改变版本。前端将其作为不透明标识保存，不自行生成。内容改后又完全还原视为同版本。
 - 两个写命令成功均退出 0，stdout 一行 JSON，与 `table` 的整张表格式一致，包含写后 `local.version`。写前按读表逻辑校验全表；错误文件不能靠此命令修复。保留其他格、家模板的内容、顺序、注释；同目录临时文件写完并同步后原子替换，保留已有文件权限。缺目录或文件时新建。
 - 格式限制：修改前先检查 `toml_edit` 解析再输出的原文是否逐字节一致，不一致则退出 **1**、`error:"format_not_preserved"`、`ok:false`、文件不动。`message` 提示可能的点号键重排等格式问题，请用户手改或改成普通 `[cells.NAME]` 表写法；前端应显示此错误，不自动重新格式化文件。命令新建格子用普通表写法。`cell` / `table` 仍能读取这些合法 TOML。
