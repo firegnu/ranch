@@ -65,3 +65,42 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+ranch/dev-r38a，2026-10-21。
+
+- **做了什么**：写了设计稿 `docs/调研/R38a-Slack机器人设计.md`。
+  - 机器人暂名 pony，是单独的包 `crates/pony` 和命令 `pony`，只调 PATH 上 corral 的 `ls`、`status`、`reply`、`send`，Cargo 不依赖 corral，不改 corral 的代码。
+  - 插件式：适配器接口各项、登记表 `CHATS`、共用核心各管什么，接第二家只加一个文件和一行。
+  - 回答了交给 ranch 定的各项：命令、配置、Slack 的接法和权限、常驻、路由、忙时、分段、提醒和去重、重启后。
+  - 给 paddock 的 `pony status` 和它的 JSON 字段；Slack 库对比；凭证；DESIGN 改动建议；拆成 R38b–R38f。
+  - 开头列了要用户定的五个问题，单独列了一处和已定的对不上的地方：Needs you 时 agent 在等对话框，`corral send` 送不进去。
+- **验证了什么**：
+  - `git diff --check` 通过。
+  - 引用的 Slack 能力和 Rust 库信息都在文末写了出处链接，都是 2026-10-21 查的。
+  - 库的发版、下载量用 crates.io 接口取，维护情况用 GitHub 接口取。
+  - 依赖个数：在草稿目录各建一个空工程，用 `cargo tree` 和 ranch 现有的依赖比，没碰仓库的 `Cargo.toml`。cargo 因此把 slack-morphism 等包下进了 `~/.cargo/registry` 缓存。
+  - slack-morphism 的 Socket Mode 直连、错误日志带 wss 地址，是读它 2.31.0 的源码看到的。
+  - 对照设计只读过 `corral ls`、`corral status`（自己和 ranch/main），没碰别的 agent。
+- **拿主意的地方**：
+  - 名字 pony。
+  - 不用 `wait`，一个每 2 秒的循环同时管贴回线程和提醒。
+  - 只订 `message.channels`、`message.groups`，不订 `app_mention`。
+  - 主控按名字 `<仓库>/main` 认。
+  - 看状态用 `@pony ?`。
+  - Needs you 一律发在频道顶层。
+  - 要提醒的消息开头 @ owner：Slack 默认只推 @ 和私信。
+  - 分段上限 10,000 字。
+  - 凭证放 0600 文件，不用钥匙串。
+  - 配置随改随生效。
+  - 不补收 pony 不在线时发的话。
+  - 推荐自己接 Slack，不用 slack-morphism。它够格，但要新增 101 个包；本机系统设置开着 HTTP 代理，它的 Socket Mode 不走代理。这一条放进了要用户定的问题 2。
+- **没做的事**：
+  - 没改 DESIGN、CONTRACT，没写代码，没连 Slack。所以没试这台 Mac 不经代理能不能连上 Slack。
+  - 两处文档没写清的留到实现时实测：markdown 块里 `<!channel>`、`<@U…>` 会不会真 @ 到人；`conversations.info` 带不带 `is_member`。
+  - 飞书只核对了「长连接接收事件」一项，用来检验接口，其余没细查。
+- **踩过的坑**：
+  - docs.rs 上 `tungstenite/client/fn.client_tls_with_config.html` 是 404，这个函数在库的根下；改读本地 crate 源码 `src/tls.rs` 核对了签名。
+  - crates.io 的网页对命令行请求返回 404，改用它的 JSON 接口。
+  - Slack 的 Socket Mode 页没写回执时限和重发次数，改引 Events API 页的 3 秒、最多 3 次。
