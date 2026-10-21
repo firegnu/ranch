@@ -196,7 +196,7 @@ channels = [
 | `channels:history`、`groups:history` | 收公开、私有频道的 `message.channels`、`message.groups` 事件。线程里不 @ 的回复只能这样收到 |
 | `channels:read`、`groups:read` | `conversations.info`：频道名、是否私有、是否已归档，给 status。机器人在不在频道里看返回的 `is_member`（文档的例子里没有这个字段，实现时核对；没有就以发消息时报的 `not_in_channel` 为准） |
 
-- 只订 `message.channels`、`message.groups`，不订 `app_mention`：线程里的回复反正要靠 message 事件收，再订 `app_mention` 同一句 @ 会来两次。@ 机器人由适配器在正文里认 `<@机器人的用户 ID>`，这个 ID 起来时用 `auth.test` 取（它不要权限）。
+- 只订 `message.channels`、`message.groups`，不订 `app_mention`：线程里的回复反正要靠 message 事件收，再订 `app_mention` 同一句 @ 会来两次。@ 机器人由适配器在正文里认 `<@机器人的用户 ID>`（U 开头）或 `<@机器人的 bot ID>`（B 开头；手机 Slack 插的是后者，用户 10-21 实测），两个 ID 都在连上时用 `auth.test` 取（它不要权限、两个都返回），不写死。
 - 不要：`app_mentions:read`、`chat:write.public`（只在被邀请的频道里说话）、`files:*`、`reactions:*`、`users:read`、`im:*`。
 - **建议用私有频道**：仓库里的代码、路径会发进去，私有频道只有邀请的人看得到（已定：工作区管理员仍可能看到）。机器人要 `/invite @pony` 进频道才收得到消息。
 - 发消息：
