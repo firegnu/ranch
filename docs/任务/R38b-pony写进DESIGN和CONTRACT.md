@@ -69,3 +69,11 @@
 - 照主控指出的两处改 `docs/DESIGN.md`：§10「第一期的规矩」路由条在「送的就是用户打的字」后补上设计稿 §3.5 的例外——离线补收的话开头加一句说明（见用户定的第 8 条）；§3 新增的部署条把一起切的链接改为 `~/.local/bin/corral`、`~/.local/bin/ranch`、`~/.local/bin/fence`、`~/.local/bin/pony` 四个。别的不动。
 - 验证：只跑了 `git diff --check`，通过。
 - 要主控决定的事：无。
+
+## 主控审查
+
+- 看了 diff：只动 DESIGN、CONTRACT、AGENTS.md 和本文件；DESIGN §1、2、3、5 和新 §10 与设计稿定稿一致，用户定的 8 条都在；CONTRACT「`pony status`（R38）」的字段和设计稿第 4 节逐个对上，补列了示例里有的 `ok`、`contract`、`version`、`pid`、`started`，同意；没改 CONTRACT 已有各节，没改 corral。
+- 返工一次：§10 路由条漏了离线补收加说明的例外（和第 8 条打架）；§3 部署那句漏了 fence。omp 改好，`git diff --check` 通过。
+- 第一件按新分工表交给低档（omp）的活，返工一次后达标，没升档。
+
+结果：返工 1 次
