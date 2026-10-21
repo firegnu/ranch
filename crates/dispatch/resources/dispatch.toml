@@ -1,11 +1,11 @@
 [agents.claude]
-efforts = ["medium", "high", "xhigh"]
-models = ["opus[1m]", "sonnet"]
+efforts = ["high", "xhigh"]
+models = ["opus[1m]"]
 argv = ["claude", "--dangerously-skip-permissions", "--model", "${model}", "--effort", "${effort}"]
 labels = ["effort=${effort}", "model=${model}"]
 
 [agents.codex]
-efforts = ["medium", "high", "xhigh"]
+efforts = ["high", "xhigh"]
 models = ["gpt-6-astra"]
 argv = ["codex", "--yolo", "--disable", "memories", "-m", "${model}", "-c", 'model_reasoning_effort="${effort}"']
 labels = ["effort=${effort}", "model=${model}"]
@@ -34,63 +34,67 @@ models = []
 argv = ["agy", "--dangerously-skip-permissions"]
 labels = []
 
-[cells.core-design]
-description = "本轮改代码且碰要害的设计和界面活"
+[cells.low-design]
+description = "低档：界面和设计"
+agents = ["pi", "omp"]
+rework = "middle-design"
+
+[cells.low-other]
+description = "低档：其余"
+agents = ["pi", "omp"]
+rework = "middle-other"
+
+[cells.middle-design]
+description = "中档：界面和设计"
 agents = ["claude"]
 model = "opus[1m]"
 effort = "high"
-cross_review = "review"
+rework = "high-design"
 
-[cells.core-code]
-description = "本轮改代码且碰要害的其余活"
+[cells.middle-other]
+description = "中档：其余"
 agents = ["codex"]
 model = "gpt-6-astra"
 effort = "high"
-cross_review = "review"
+rework = "high-other"
 
-[cells.chores]
-description = "项目代码之外的杂活：本机清理、一次性脚本、核对数据、跑命令汇报"
-agents = ["pi", "omp"]
-
-[cells.design]
-description = "出方案或做取舍：架构、模块边界、数据库设计、新界面、新交互、跨模块的活，以及涉及界面或产品取舍的调研"
+[cells.high-design]
+description = "高档：界面和设计"
 agents = ["claude"]
 model = "opus[1m]"
-effort = "high"
+effort = "xhigh"
 
-[cells.ui-clear]
-description = "界面活，并且通过了「说得清」检查"
-agents = ["pi", "omp"]
-
-[cells.ui-trial]
-description = "其余界面活：单个组件，可以有小的行为改动，不新做交互（试用）"
-agents = ["claude"]
-model = "sonnet"
-effort = "high"
-
-[cells.implementation]
-description = "其余：照方案实现、修 bug、补测试、批量机械改动、跑很久的活、查事实或定位问题的调研、前端做完的浏览器验收"
-agents = ["codex"]
-model = "gpt-6-astra"
-effort = "medium"
-
-[cells.implementation-hard]
-description = "其余实现和调研中难的活：按分档表使用较高强度"
-agents = ["codex"]
-model = "gpt-6-astra"
-effort = "high"
-
-[cells.review]
-description = "交叉审查：检查碰要害的改动；需要审查但原格没配时也读这一格"
+[cells.high-other]
+description = "高档：其余"
 agents = ["codex"]
 model = "gpt-6-astra"
 effort = "xhigh"
 
-[cells.claude-medium]
-description = "用户或项目点名 Claude Code、未指定强度时，补齐 medium 档"
+[cells.critical-design]
+description = "碰要害：界面和设计"
 agents = ["claude"]
 model = "opus[1m]"
-effort = "medium"
+effort = "xhigh"
+cross_review = "review-codex"
+
+[cells.critical-other]
+description = "碰要害：其余"
+agents = ["codex"]
+model = "gpt-6-astra"
+effort = "xhigh"
+cross_review = "review-claude"
+
+[cells.review-codex]
+description = "交叉审查：Codex 审 Claude Code 写的碰要害改动"
+agents = ["codex"]
+model = "gpt-6-astra"
+effort = "xhigh"
+
+[cells.review-claude]
+description = "交叉审查：Claude Code 审 Codex 写的碰要害改动"
+agents = ["claude"]
+model = "opus[1m]"
+effort = "xhigh"
 
 [cells.amp]
 description = "只在用户或任务文件点名 amp 时使用"
