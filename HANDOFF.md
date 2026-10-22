@@ -8,8 +8,8 @@
 
 ## 本机安装
 
-- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/5264a9d`（10-22，R41c，第一次用 `ranch deploy` 部署；这一版只有 `ranch` 程序变了，pony 没重启）。退回：`~/.local/share/ranch/versions/5264a9d/bin/ranch deploy da45737`。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
-- 上一版 `da45737`（10-22，R40a2；pony 链接指它，另三个指程序相同的 `2513b3a`）。再往前退回用 `versions/5264a9d/bin/ranch deploy <版本>`，它会按程序内容列出要做的事。
+- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/2d63ee1`（10-22，R43；只有 `corral` 程序变了），共用 helper 也切到 `versions/2d63ee1/bin/corral`。退回：`~/.local/share/ranch/versions/2d63ee1/bin/ranch deploy 5264a9d`；helper 要退回时用 `versions/5264a9d` 的 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`（R43 钩子只多记一个字段，旧程序读得懂，一般不用退）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
+- 上一版 `5264a9d`（10-22，R41c，第一次用 `ranch deploy`）。再往前退回用 `versions/2d63ee1/bin/ranch deploy <版本>`，它会按程序内容列出要做的事。
 - 旧版本目录都保留，不删。
 - 技能：corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）装在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/`；技能内容编进程序，改技能要先打新版本再重装。
 - 全局插件：amp 在 `~/.config/amp/plugins/corral.ts`；agy 在 `~/.gemini/config/plugins/corral/`。两个 `integration status` 都是 same。
@@ -19,7 +19,7 @@
 ## 部署时要记得
 
 - 部署由用户在普通终端里跑 `~/.local/share/ranch/versions/<新版本>/bin/ranch deploy <新版本>`；主控先跑 `--dry-run` 给用户看计划，事后核对链接、`deploys.jsonl`、`pony status`。
-- 共用的 `~/.corral/.runtime/helper` 指 `versions/aef2b4a/bin/corral`，切 bin 链接不会跟着换。要换时用一个 `/bin/cat` 测试 agent 单独 `corral upgrade`，不动用户的 agent。
+- 共用的 `~/.corral/.runtime/helper` 指 `versions/2d63ee1/bin/corral`（10-22 切），`ranch deploy` 不会跟着换。改了钩子代码（`hooks.rs`）的版本要换：部署后在普通终端跑 `corral start ranch/test-helper --label role=test -- /bin/cat`、`corral upgrade ranch/test-helper`、`corral stop ranch/test-helper`，不动用户的 agent。
 - 部署前起的 pen 还是旧版，只对新开的 agent 生效；没跑过 `corral upgrade --all`。
 - pony 换程序要 `kickstart`、plist 变了要 `pony service install --yes`：`ranch deploy` 会自己判断、自己做。它在重装服务时如果被 Ctrl-C 打断，重跑不会自动把服务装回来，要手动跑目标版本的 `pony service install --yes`。
 - fence 用的 node 是 `~/.nvm/versions/node/v24.13.1/bin/node`，这个版本不能卸；srt 0.0.80。
