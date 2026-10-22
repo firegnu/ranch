@@ -209,7 +209,7 @@ R31 先把分工搬进数据表；R34（2026-10-21）改为按档位和类别选
 ### 结构：单独一块，和 corral 只走命令
 
 - 单独的包 `crates/pony`、命令 `pony`，打进版本目录的 `bin/pony`，部署时切 `~/.local/bin/pony`。
-- 和 corral 只通过公开命令来往：`corral ls`、`status`、`reply`、`send`，读它们的 JSON。Cargo 里不依赖 `corral-core`、`ranch-dispatch`、`fence`，不读 `~/.corral`。不改 corral 的代码（用户底线）：第一期用到的都是现有公开命令，曾考虑过的 corral 改动都不需要。
+- 和 corral 只通过公开命令来往：`corral ls`、`status`（含 R43 的只读 `questions`）、`reply`、`send`，读它们的 JSON；R44 加 `read`（纯文字，只拿屏幕末尾给人看）。Cargo 里不依赖 `corral-core`、`ranch-dispatch`、`fence`，不读 `~/.corral`。R44 不改 corral 的代码，只消费现有公开命令；题目采集由用户另行同意的 R43 提供。
 - 找 corral：配置里的 `corral`（绝对路径），没有就先 PATH，再 `~/.local/bin/corral`（launchd 起的程序 PATH 只有系统目录，会落到后一个）；起来时看 `corral --version` 的 `contract` 是不是 `"1"`。
 - 照 §8 fence 的剥离办法：以后整块拆出去时把 `crates/pony` 挪到自己的仓库，自己打包、部署；corral 一侧本来就没有关于它的代码，不用改。
 
@@ -224,7 +224,7 @@ R31 先把分工搬进数据表；R34（2026-10-21）改为按档位和类别选
 
 1. 主控新回复和提醒每一轮都发到 Slack；提醒和每一轮回复的第一段 @ 用户，pony 不判断用户在不在电脑前，手机吵不吵靠 Slack 自己的通知设置。用户原话：「先这么定，如果以后嫌吵，咱们再改。」R38f 上线实测时核对 Slack 有没有「电脑上不活跃时才推到手机」这类设置。
 2. 后台常驻用 launchd 用户服务：`pony service install` 写 `~/Library/LaunchAgents/local.ranch.pony.plist` 并加载，登录就起、崩了 10 秒后重起、没配置时正常退出不再重起；只动自己这一个文件，用户在场、先 `--dry-run` 看、确认才写，能卸干净。不用 pony 自己转后台（`pony start`/`stop`）：那样重启、注销后不会自己起来，崩了也没人重起。第一期只在这台 Mac 上开，Linux 以后另做 systemd 用户服务。
-3. Needs you 第一期只发提醒；在提醒线程里回的话先排着，对话框在电脑上处理完、agent 空下来再送。理由：agent `blocked` 时 `corral send` 一律退回 `not_idle`；第一期不用 `read`、`keys`，不远程按键（误按会批准危险命令）。
+3. Needs you 提醒带题目或屏幕末尾 20 行（R44）；仍不远程按键（R45 再改）。在提醒线程里回的话先排着，对话框在电脑上处理完、agent 空下来再送。原来的理由仍适用：agent `blocked` 时 `corral send` 一律退回 `not_idle`，误按会批准危险命令；R44 只加只读信息，不调 `keys`。
 4. Slack 客户端自己接，用 ureq（HTTP，ranch 已在用）+ tungstenite（WebSocket，同步），不用 slack-morphism：pony 只用 4 个 Web API 加 Socket Mode，不值得为它引入一百多个包和一个异步运行时；本机可能要走代理，slack-morphism 的 Socket Mode 不支持。代价是多写约 450 行（另有测试）。
 5. agent 正在干活时又来了话，排队：线程里回 `→ X（正在干活，这句排在第 n 个，这一轮结束就送）`，真送出去时说「已送给 X（排了 12 分钟）」；删掉还在排队的那条 Slack 消息就是撤回。排队的话存在 `state.json`，重启后还在。比「不送」好在手机上不用等着回头再发；过时的话可以撤回。
 6. 名字 pony：包 `crates/pony`、命令 `pony`、目录 `~/.pony`。
@@ -240,9 +240,9 @@ R31 先把分工搬进数据表；R34（2026-10-21）改为按档位和类别选
 - **路由**：频道顶层 @ 机器人开一段新对话；在这条消息的线程里回，送给线程对应的 agent（整句只有 `?` 的除外）。线程里回复带不带 @ 都行；不认识的线程里 @ 就当新对话。取 @ 之后第一个词：只有 `?` 或 `？` 看状态；带斜杠的全名只送给绑了频道的仓库，没有这个 agent 就回「没有 ranch/foo 这个 agent，没送」，不转给主控；同仓库的短名送给对应 agent；其余整句送给 `<仓库>/main`，主控没在跑就回「paddock/main 没在跑，没送」。送之前先在线程里回一行 `→ <全名>`；送的就是用户打的字（`corral send <全名> -- <正文>`，不加前缀、不加工、不加 `--force`），例外是离线补收的话开头加一句说明（见本节用户定的第 8 条）；空的回一段用法。
 - **送不进去时**：先 `corral status`。`idle` 立刻送；`working`、`starting`、`blocked`、暂停中排队，不替人 resume；`unknown` 照送（等不到回复）；不在了不送。`corral send` 的结果：`not_idle` 放回队首；`human_active` 30 秒后再试（不加 `--force`）；`paused` 排着；`not_delivered` 不重送，回「送了但 X 没收到（可能停在菜单或对话框上），没重送」；其他回 corral 的 `error` 和 `message`。排队的话按顺序送，一轮一句。agent 退出了，排着的都不送，在各自线程里说。
 - **一轮结束贴回**：一个循环每 2 秒 `ls`、`status`，相邻两轮都是 `idle`、`[state, last_event, last_event_at]` 不变、`turn_started` 和上次处理过的不同，就算这一轮结束，调 `corral reply`。是 pony 送的话开的，就照分段贴回原线程（`no_reply` 带 `interrupted` 说被打断，退出了说没等到回复）；不是 pony 开的，按提醒的规则判断。不用 `wait`：一个循环同时管贴回和提醒，用 `wait` 每段对话要一直开着一个进程。
-- **提醒**：主控新回复（这一轮不是 pony 开的、`reply.at` 比记下的新）发在频道顶层，第一段在那儿，其余在它的线程里；这条线程对应这个主控。Needs you（相邻两轮都 `blocked`）在所有绑了频道的仓库的 agent 里判断，发在频道顶层，模板见设计稿 §3.8。去重记号（实例、处理过的 `turn_started`、发过的 `reply.at`、提醒过的 `(实例, state_started)`）存在 `state.json`；离开 `blocked` 再进来算新的一次；agent 重开从头记；pony 停着时结束的轮，重启后每个 agent 最多补发最近一条，开头写「（pony 不在线时）」。
+- **提醒**：主控新回复（这一轮不是 pony 开的、`reply.at` 比记下的新）发在频道顶层，第一段在那儿，其余在它的线程里；这条线程对应这个主控。Needs you（相邻两轮都 `blocked`）只发在该 agent 所在仓库绑定的频道顶层。R44：Claude Code 提问框有 `status.questions` 时按顺序列出所有题目、单选或可多选、字母编号的选项及说明；`truncated:true` 提示「题目不完整，请回电脑看」。其他情况附 `corral read --bytes 4000` 的末尾 20 行，连续空行并成一行、放进代码块、不遮盖；读不到仍发原提醒。末尾仍说明回电脑处理、在这里回的话等处理完再送，模板见设计稿 §3.8。去重记号（实例、处理过的 `turn_started`、发过的 `reply.at`、提醒过的 `(实例, state_started)`）存在 `state.json`；离开 `blocked` 再进来算新的一次；agent 重开从头记；pony 停着时结束的轮，重启后每个 agent 最多补发最近一条，开头写「（pony 不在线时）」。
 - **分段**：不截、不删、不改字，上限由适配器给（Slack 10,000 字）。按行走，认围栏代码块（三个反引号或三个波浪号）；断点先用代码块外的空行、行尾，其次代码块里的行尾（本段末补上收尾的反引号，下一段用同样语言重开），一行超长就硬断；表格尽量整块放。多于一段每段末尾加 `(i/N)`；其余发在同一个线程里。发送失败对半再切（最小 1,000 字），还不行就报出来，不悄悄丢。
-- **看状态**：`@pony ?` 只列绑了频道的仓库，这个频道的仓库排在最前；`working` 带这一轮多久了，`idle`、`blocked`、暂停、`starting`、`unknown` 各有说法，排着话的加「排着 n 句」。
+- **看状态**：`@pony ?` 只列绑了频道的仓库，这个频道的仓库排在最前。R44：干活、等你、空闲、暂停都带时长，分别用 `turn_started`、`state_started`（缺失时用 pony 首次看到这次 blocked 的时间）、`reply.at`（没有回复用 `state_started`）、`paused_at`；`starting`、`unknown` 保留各自说法。本频道仓库再带标题（去首尾空白和开头转圈符号，最多 40 字，空或只是程序名不显示）、在用的工具；空闲时查 `reply`，带第一行非空文字（最多 60 字），被打断写「上一轮被打断」。别的仓库只显示状态和时长，空闲用已知回复时间、没有则用 `state_started`，不为摘要额外查回复。排着话的加「排着 n 句」。
 - **重启后**：`~/.pony/state.json`（0600）由拿着锁的那一份写。线程和 agent 的对应（按 30 天没用删掉；再回就说「这个线程太久没用，对应关系已清掉，请在频道里重新 @ 我」，不猜）、在等回复的对话、排队的话、去重记号、最近处理过的消息 `ts` 都还在；重连时按 `ts` 补收离线期间的话（用户定的第 8 条）。
 - **Slack 接法**：Socket Mode，pony 往外连 wss，本机不要公网地址。app 级 token 换临时地址；每个事件先把这条消息记进状态文件再按 `envelope_id` 回执（Slack 要求 3 秒内，最多重发 3 次），按 `ts` 去重；`hello` 里的 `num_connections` 大于 1 说明还有别的连接（另一台机器或没退干净的 pony），status 报 `other_connections`；每几小时一次的 `disconnect` 就重新取地址再连，网络错按 1、2、4…60 秒退避，30 秒 ping、90 秒没消息算断；每次重连重读凭证。只订 `message.channels`、`message.groups`，不订 `app_mention`（同一句 @ 会来两次）。权限只有 `chat:write`、`channels:history`、`groups:history`、`channels:read`、`groups:read`。建议用私有频道：仓库的代码、路径会发进去；机器人要邀请进频道才收得到。
 - **发消息**：`chat.postMessage` 带 `thread_ts`，正文用 markdown 块，另给一行 `text` 当通知里那句；关掉链接预览（免得 Slack 的服务器去抓回复里私有仓库的链接）；要提醒的按用户定的第 1 条 @ 用户。每频道约每秒 1 条，429 照 `Retry-After` 等。

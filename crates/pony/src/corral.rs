@@ -23,10 +23,33 @@ pub struct Status {
     pub last_event_at: Option<f64>,
     pub last_tool: Option<String>,
     pub title: Option<String>,
+    pub kind: Option<String>,
+    pub questions: Option<Questions>,
+    pub paused_at: Option<f64>,
     #[serde(default)]
     pub paused: bool,
     #[serde(default)]
     pub interrupted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Questions {
+    pub items: Vec<Question>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Question {
+    pub header: String,
+    pub question: String,
+    pub multi_select: bool,
+    pub options: Vec<QuestionOption>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -67,6 +90,7 @@ pub trait Corral {
     fn list(&mut self) -> Result<Vec<Agent>>;
     fn status(&mut self, name: &str) -> Result<Status>;
     fn reply(&mut self, name: &str) -> Result<Reply>;
+    fn read(&mut self, name: &str) -> Result<String>;
     fn send(&mut self, name: &str, text: &str) -> Result<Sent>;
 }
 
@@ -104,7 +128,12 @@ impl Process {
     }
 
     fn call<T: serde::de::DeserializeOwned>(&self, args: &[&str]) -> Result<T> {
-        let output = Command::new(&self.path)
+        let output = self.output(args)?;
+        decode(output.status.code(), &output.stdout)
+    }
+
+    fn output(&self, args: &[&str]) -> Result<std::process::Output> {
+        Command::new(&self.path)
             .args(args)
             .output()
             .map_err(|_| Failure {
@@ -112,8 +141,7 @@ impl Process {
                 code: "corral_unavailable".into(),
                 message: "cannot execute corral".into(),
                 interrupted: false,
-            })?;
-        decode(output.status.code(), &output.stdout)
+            })
     }
 }
 
@@ -153,6 +181,14 @@ impl Corral for Process {
     }
     fn reply(&mut self, name: &str) -> Result<Reply> {
         self.call(&["reply", name])
+    }
+    fn read(&mut self, name: &str) -> Result<String> {
+        let output = self.output(&["read", name, "--bytes", "4000"])?;
+        if output.status.success() {
+            String::from_utf8(output.stdout).map_err(|_| Failure::protocol())
+        } else {
+            decode(output.status.code(), &output.stdout)
+        }
     }
     fn send(&mut self, name: &str, text: &str) -> Result<Sent> {
         self.call(&["send", name, "--", text])
