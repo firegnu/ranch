@@ -575,7 +575,7 @@ fn binding_explains_unpreservable_format_without_claiming_a_disk_failure() {
     f.step(10.);
     assert_eq!(
         f.texts(),
-        "配置文件的格式没法原样保留，没绑；请手动加这一行"
+        "配置文件的格式没法原样保留，没绑；请手动加这一行：\n{ id = \"CNEW\", repo = \"ranch\" }"
     );
     assert!(
         f.engine
@@ -609,7 +609,7 @@ fn binding_preserves_linked_and_current_user_read_only_configs() {
         f.step(10.);
         assert_eq!(
             f.texts(),
-            "配置文件是链接或只读的，没绑；请手动加这一行",
+            "配置文件是链接或只读的，没绑；请手动加这一行：\n{ id = \"CNEW\", repo = \"ranch\" }",
             "{case}"
         );
         assert!(

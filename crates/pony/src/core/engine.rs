@@ -587,10 +587,14 @@ impl Engine {
                 let text = match error.code.as_str() {
                     "config_invalid" => "配置现在有错，没绑；请先修好配置".into(),
                     "changed" => "配置刚被改过，请再说一次".into(),
-                    "format_not_preserved" => {
-                        "配置文件的格式没法原样保留，没绑；请手动加这一行".into()
-                    }
-                    "config_not_writable" => "配置文件是链接或只读的，没绑；请手动加这一行".into(),
+                    "format_not_preserved" => format!(
+                        "配置文件的格式没法原样保留，没绑；请手动加这一行：\n{{ id = \"{}\", repo = \"{repo}\" }}",
+                        address.channel
+                    ),
+                    "config_not_writable" => format!(
+                        "配置文件是链接或只读的，没绑；请手动加这一行：\n{{ id = \"{}\", repo = \"{repo}\" }}",
+                        address.channel
+                    ),
                     _ => format!("写配置失败，没绑：{}", safe_code(&error.code)),
                 };
                 return self.refuse_binding(address, &error.code, &text);
