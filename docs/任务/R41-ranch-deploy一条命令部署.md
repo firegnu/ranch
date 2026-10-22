@@ -60,3 +60,13 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、核对了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-22，ranch/dev-r41（Claude Code，opus[1m] / xhigh）。
+
+- **做了什么**：新建 `docs/调研/R41-ranch-deploy设计.md`，8 条都有答案：先只读检查（版本目录、`BUILD.txt` 校验和、程序能跑、链接是不是链接）→ 打印「要做的、不做的、退回」→ 确认 → 切四个链接（没变的也切）→ 技能、全局插件有变才重装（问目标版本自己的程序 dry-run）→ pony 按服务状态、plist dry-run、正在跑的真实程序决定 `service install --yes`、kickstart 还是不动 → 核对 → 记 `~/.local/share/ranch/deploys.jsonl` → 打印退回命令。退回就是 `ranch deploy <旧版本>`；中途失败不自动撤回，重跑同一条命令接着做。附了 R40a2 那次的计划样子、失败时的样子和记录样例。末尾 7 条「要用户定的」，每条给了选项和推荐。没改其他文件。
+- **核对了什么**：`git diff --check` 通过。设计稿里引用的命令都在本机只读跑过：四个链接的 readlink、3 份最近的 `BUILD.txt` 和全部 37 个版本目录的 `bin/`、helper 的 readlink 和 sha256、两份 `install-skills --dry-run`、`corral integration status`（3.5 秒）和按家 `integration install --dry-run`、`pony status`、`pony service install --dry-run`（新旧两版）、正在跑的 pony 的 `ps` 和 `lsof`、各程序的 `--version`/`--help`。逐条写在设计稿第 9 节。读了打包工具、两份技能安装、integration、helper、upgrade、pony service 的代码来确认行为。
+- **拿主意的地方**：输出给人看的中文文字、不出一行 JSON（只给人用，不进 CONTRACT；要机器读的放记录里）；任何带 deploy 的 ranch 都能部署任何版本，碰到不认识的程序就拒绝、让用目标版本自己的 ranch；目标版本没有的程序链接不动、deploy 从不删链接；服务没装不替人装；pony 连没连上 Slack 不算成功条件，只等新程序起来（最多 30 秒）；每次部署开始前先记一行，防中途被 Ctrl-C；部署前链接混着时，按程序逐字节相同找出等价的版本当退回目标；全局插件（amp、agy）也纳入判断（列进「要用户定的」第 6 条）；实现拆两件、都按碰要害交叉审查（第 7 条）。
+- **没做的事**：没写代码，没改 DESIGN、AGENTS、HANDOFF，没部署、没切链接，没跑任何 `launchctl`（只读的 `print` 也没跑，查正在跑的 pony 改用 `ps`、`lsof`），没跑不带 `--dry-run` 的安装，没读 `~/.pony/secrets`，没碰用户的 agent。没实测的：kickstart 后多久起来（30 秒是按 launchd 10 秒的重起间隔推的）、plist 为 `replace` 时的路径（本机是 `same`）、Linux 上的行为（只按代码推断 `pony service` 报 `unsupported`），这些只能在实现和第一次真部署时验。
+- **踩过的坑**：本机 zsh 里 `ls` 是带颜色的别名，输出夹着控制字符，改用 `/bin/ls`；`echo ===` 和 `--include=*.rs` 被 zsh 当成展开报错，换了写法。
