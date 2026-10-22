@@ -73,6 +73,8 @@ impl Lab {
         let instance = self.json(&["status", "test/work"])["instance"].clone();
         let mut hook = Command::new(self.0.path().join("corral"))
             .args(["__hook", event])
+            .env("HOME", self.0.path())
+            .env("CORRAL_HOME", self.0.path().join("pens"))
             .env("CORRAL_EVENTS", self.0.path().join("pens/test/work/events"))
             .env("CORRAL_INSTANCE", instance.as_str().unwrap())
             .stdin(Stdio::piped())
@@ -655,4 +657,250 @@ fn claude_late_pre_tool_hook_preserves_interruption() {
 #[test]
 fn claude_late_post_tool_hook_preserves_interruption() {
     claude_late_tool_hook("PostToolUse");
+}
+
+fn claude_dialog_escape(tool: &str, approved: bool) {
+    let lab = Lab::new();
+    lab.transcript_turn();
+    lab.hook("PreToolUse", json!({"session_id":"main", "tool_name":tool}));
+    lab.hook(
+        "PermissionRequest",
+        json!({"session_id":"main", "tool_name":tool}),
+    );
+    lab.hook(
+        "Notification",
+        json!({"session_id":"main", "notification_type":"permission_prompt"}),
+    );
+    // Neither an open dialog nor a marker from the previous turn is an interruption.
+    assert_eq!(lab.json(&["status", "test/work"])["state"], "blocked");
+    for timestamp in ["2023-12-31T23:59:59.000Z", "2024-01-01T00:00:00.000Z"] {
+        lab.transcript("[Request interrupted by user for tool use]", timestamp);
+        let st = lab.json(&["status", "test/work"]);
+        assert_eq!(st["state"], "blocked");
+        assert_eq!(st["interrupted"], false);
+    }
+    // R42t: approval and the running command do not produce another corral hook.
+    lab.transcript(
+        "[Request interrupted by user for tool use]",
+        "2024-01-01T00:00:01.000Z",
+    );
+    if approved {
+        let path = lab.0.path().join("transcript.jsonl");
+        let marker = fs::read_to_string(&path).unwrap();
+        let result = json!({"type":"user", "sessionId":"main",
+            "timestamp":"2024-01-01T00:00:00.900Z",
+            "message":{"content":[{"type":"tool_result", "content":"ping stopped", "is_error":true}]},
+            "toolUseResult":"User rejected tool use"});
+        fs::write(path, format!("{result}\n{marker}")).unwrap();
+    }
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "idle");
+    assert_eq!(st["interrupted"], true);
+    std::thread::scope(|scope| {
+        let send = scope
+            .spawn(|| lab.json(&["send", "test/work", "after-dialog-escape", "--timeout", "5"]));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if String::from_utf8_lossy(&lab.out(&["read", "test/work"]).stdout)
+                .contains("after-dialog-escape")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "input did not reach cat");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        lab.hook(
+            "UserPromptSubmit",
+            json!({"session_id":"main", "prompt":"after-dialog-escape"}),
+        );
+        assert_eq!(send.join().unwrap()["confirmed"], true);
+    });
+}
+
+#[test]
+fn claude_permission_dialog_escape_recovers_idle() {
+    claude_dialog_escape("Bash", false);
+}
+
+#[test]
+fn claude_question_dialog_escape_recovers_idle() {
+    claude_dialog_escape("AskUserQuestion", false);
+}
+
+#[test]
+fn claude_plan_dialog_escape_recovers_idle() {
+    claude_dialog_escape("ExitPlanMode", false);
+}
+
+#[test]
+fn claude_approved_tool_escape_recovers_idle() {
+    claude_dialog_escape("Bash", true);
+}
+
+#[test]
+fn claude_question_dialog_exposes_single_choice() {
+    let lab = Lab::new();
+    lab.transcript_turn();
+    // https://code.claude.com/docs/en/hooks#pretooluse-input (AskUserQuestion).
+    let body = json!({"session_id":"main", "tool_name":"AskUserQuestion", "tool_input":{
+        "questions":[{"header":"颜色", "question":"本次测试选哪种颜色？",
+            "options":[{"label":"红色", "description":"暖色测试"},
+                       {"label":"蓝色", "description":"冷色测试"}], "multiSelect":false}],
+        "answers":{"本次测试选哪种颜色？":"不应记录"}
+    }});
+    lab.hook("PreToolUse", body.clone());
+    assert!(lab.json(&["status", "test/work"])["questions"].is_null());
+    lab.hook("PermissionRequest", body);
+    lab.hook(
+        "Notification",
+        json!({"session_id":"main", "notification_type":"permission_prompt"}),
+    );
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "blocked");
+    assert_eq!(
+        st["questions"],
+        json!({"items":[{
+        "header":"颜色", "question":"本次测试选哪种颜色？", "multi_select":false,
+        "options":[{"label":"红色", "description":"暖色测试"},
+                   {"label":"蓝色", "description":"冷色测试"}]
+    }], "truncated":false})
+    );
+    let events = fs::read_to_string(lab.0.path().join("pens/test/work/events")).unwrap();
+    assert!(!events.contains("不应记录"));
+    assert!(!events.contains("tool_input"));
+    lab.transcript(
+        "[Request interrupted by user for tool use]",
+        "2024-01-01T00:00:01.000Z",
+    );
+    assert!(lab.json(&["status", "test/work"])["questions"].is_null());
+}
+
+#[test]
+fn claude_questions_truncate_at_a_total_json_limit() {
+    let lab = Lab::new();
+    let long = "中文\"\n\u{0}".repeat(8192);
+    lab.hook(
+        "PermissionRequest",
+        json!({"session_id":"main", "tool_name":"AskUserQuestion",
+        "tool_input":{"questions":[{"header":"长题", "question":long,
+            "multiSelect":true, "options":[{"label":"一", "description":"说明"}]}]}}),
+    );
+    let questions = lab.json(&["status", "test/work"])["questions"].clone();
+    assert_eq!(questions["truncated"], true);
+    assert!(serde_json::to_vec(&questions).unwrap().len() <= 16 * 1024);
+    assert_eq!(questions["items"][0]["header"], "长题");
+    let text = questions["items"][0]["question"].as_str().unwrap();
+    assert!(!text.is_empty() && long.starts_with(text) && text.len() < long.len());
+    for line in fs::read_to_string(lab.0.path().join("pens/test/work/events"))
+        .unwrap()
+        .lines()
+    {
+        let event: Value = serde_json::from_str(line).unwrap();
+        if !event["questions"].is_null() {
+            assert_eq!(event["questions"], questions);
+        }
+    }
+}
+
+fn fruit_question() -> Value {
+    json!({"header":"水果", "question":"选择哪些水果？", "multiSelect":true,
+        "options":[{"label":"苹果", "description":"脆口"}, {"label":"香蕉", "description":"软口"}]})
+}
+
+#[test]
+fn claude_questions_preserve_multiple_choice() {
+    let lab = Lab::new();
+    lab.hook(
+        "PermissionRequest",
+        json!({"session_id":"main", "tool_name":"AskUserQuestion",
+        "tool_input":{"questions":[fruit_question()]}}),
+    );
+    assert_eq!(
+        lab.json(&["status", "test/work"])["questions"],
+        json!({"items":[{
+        "header":"水果", "question":"选择哪些水果？", "multi_select":true,
+        "options":[{"label":"苹果", "description":"脆口"}, {"label":"香蕉", "description":"软口"}]
+    }], "truncated":false})
+    );
+}
+
+#[test]
+fn claude_questions_preserve_all_questions_and_clear_after_the_dialog() {
+    let lab = Lab::new();
+    let second = json!({"header":"颜色", "question":"选哪种颜色？",
+        "options":[{"label":"蓝色", "description":"冷色"}, {"label":"红色", "description":"暖色"}]});
+    lab.hook(
+        "PermissionRequest",
+        json!({"session_id":"main", "tool_name":"AskUserQuestion",
+        "tool_input":{"questions":[fruit_question(), second]}}),
+    );
+    assert_eq!(
+        lab.json(&["status", "test/work"])["questions"],
+        json!({"items":[{
+        "header":"水果", "question":"选择哪些水果？", "multi_select":true,
+        "options":[{"label":"苹果", "description":"脆口"}, {"label":"香蕉", "description":"软口"}]
+    }, {
+        "header":"颜色", "question":"选哪种颜色？", "multi_select":false,
+        "options":[{"label":"蓝色", "description":"冷色"}, {"label":"红色", "description":"暖色"}]
+    }], "truncated":false})
+    );
+    lab.hook(
+        "PostToolUse",
+        json!({"session_id":"main", "tool_name":"AskUserQuestion"}),
+    );
+    assert!(lab.json(&["status", "test/work"])["questions"].is_null());
+    lab.hook(
+        "Notification",
+        json!({"session_id":"main", "notification_type":"permission_prompt"}),
+    );
+    assert!(lab.json(&["status", "test/work"])["questions"].is_null());
+}
+
+#[test]
+fn claude_questions_do_not_record_other_tool_parameters() {
+    let lab = Lab::new();
+    for tool in ["Bash", "ExitPlanMode", "Read"] {
+        lab.hook("PermissionRequest", json!({"session_id":"main", "tool_name":tool,
+            "tool_input":{"questions":[fruit_question()], "command":"not-recorded", "plan":"not-recorded"}}));
+        assert!(lab.json(&["status", "test/work"])["questions"].is_null());
+    }
+    let events = fs::read_to_string(lab.0.path().join("pens/test/work/events")).unwrap();
+    assert!(!events.contains("questions") && !events.contains("not-recorded"));
+}
+
+#[test]
+#[ignore = "set CORRAL_COMPAT_BIN to the pre-R43 corral binary"]
+fn claude_questions_new_and_old_clients_share_events() {
+    let lab = Lab::new();
+    lab.hook(
+        "PermissionRequest",
+        json!({"session_id":"main", "tool_name":"AskUserQuestion",
+        "tool_input":{"questions":[fruit_question()]}}),
+    );
+    let expected = lab.json(&["status", "test/work"])["questions"].clone();
+    assert!(!expected.is_null());
+    for _ in 0..2 {
+        let out = Command::new(std::env::var_os("CORRAL_COMPAT_BIN").expect("baseline required"))
+            .args(["status", "test/work"])
+            .env("HOME", lab.0.path())
+            .env("CORRAL_HOME", lab.0.path().join("pens"))
+            .env("SHELL", "/bin/sh")
+            .env_remove("CODEX_SANDBOX")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let old: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(old["state"], "blocked");
+        assert_eq!(old["last_tool"], "AskUserQuestion");
+        assert_eq!(lab.json(&["status", "test/work"])["questions"], expected);
+    }
+    // An older hook's next dialog has no questions; do not reuse the previous dialog's text.
+    lab.event("PermissionRequest", json!({"tool_name":"AskUserQuestion"}));
+    let st = lab.json(&["status", "test/work"]);
+    assert_eq!(st["state"], "blocked");
+    assert!(st["questions"].is_null());
 }

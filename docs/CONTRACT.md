@@ -77,6 +77,22 @@ ranch dispatch reset <名字> [--if-version <版本>]
 - R24 的 cursor 缓存升到 7，重放旧缓存以恢复主会话的对话记录路径和本轮是否已有明确结束事件。识别结果可缓存，但持久证据仍是对话记录：同版 reader 过期回写或新旧 reader 交替重建导致缓存判断丢失后，即使已收到 idle_prompt，也能重新识别同一轮。正常 Stop、StopFailure、会话结束会关闭该轮，新输入与切换主会话重新限定证据范围，不重新覆盖正常结束；不新增事件文件写入方。旧版命令行忽略事件新增的 `transcript_path` 字段，重建自己的缓存，仍不会识别 Claude Code 的打断。
 - R24 部署边界：调用方和提醒进程需使用新版，该 CORRAL_HOME 命名空间的 `.runtime/helper` 也必须指向能记录路径的新版程序。Claude 的钩子调用这个共享 helper；新启动在链接已存在时保留其目标，所以只切 CLI 或停止再重开 Claude 并不足够。用新版执行相应 `corral upgrade` 会切换该命名空间的 helper，后续钩子才可记录路径；空 CORRAL_HOME 首次启动会创建指向启动程序的 helper。本轮不改 helper 选择逻辑，不实际部署。R24 不增加公开字段或状态值，paddock 不用动。
 
+## Claude Code 提问框与框上打断（R43）
+
+`corral status NAME` 兼容新增只读字段 `questions`。仅当前状态为 `blocked`、`last_tool` 为 `AskUserQuestion` 且收到题目时给出；其他情况字段缺省或为 `null`。结构如下（`ls` 的状态项同样适用）：
+
+```json
+{"questions":{"items":[{"header":"颜色","question":"选哪种颜色？","multi_select":false,"options":[{"label":"红色","description":"暖色"},{"label":"蓝色","description":"冷色"}]}],"truncated":false}}
+```
+
+- `items` 按上游顺序列出每道题。`header`、`question`、选项的 `label`、`description` 是字符串；`multi_select` 是布尔值，上游省略时为 `false`。完整保留多道题及各题选项，不从屏幕或用户输入推测。
+- 只从 Claude Code 的 `PermissionRequest` 钩子的 `tool_input.questions` 取这些字段；不记录 `answers`、其他参数或其他工具的参数。[官方输入格式](https://code.claude.com/docs/en/hooks#permissionrequest-input) 与 [AskUserQuestion 字段](https://code.claude.com/docs/en/hooks#pretooluse-input)（2026-10-22 核对）。钩子仍只观察，不批准或回答。
+- `questions` 的紧凑 JSON（UTF-8，包括结构和转义）最多 **16 KiB**。按题目顺序、每题 header → question → options（每项 label → description）分配剩余空间；字符串只保留完整 Unicode 字符的前缀，放不下的后续题目或选项省略，仍保留已列项的全部字段。任一内容被截断时 `truncated:true`，否则为 `false`；截断后可能没有选项，调用方应明确提示题目不完整。
+- 新输入、工具执行/结束、会话结束或切换会清掉旧题目；permission_prompt 通知保留当前题目。旧钩子下一次不带题目的 AskUserQuestion 不会复用上次内容。
+- R24 的对话记录识别扩到 `blocked`：三种框（权限、AskUserQuestion、ExitPlanMode）被 Esc，或批准后工具运行中被 Esc，仍以本主会话、非侧链、严格晚于最近输入的明确标记为依据，识别后 `idle`、`interrupted:true`，普通 `send` 可继续。没按 Esc 的框仍是 `blocked`；旧标记不能改判新一轮。已识别打断被晚到钩子拉回 blocked 时同样重新核对证据。正常结束、别家 agent 和原有字段/状态值不变。
+- 事件仍为 v1，新增可选 `questions`；旧 reader 忽略它，新 reader 接受无此字段的旧事件。cursor 从 8 升到 9，新旧 reader 交替时各自重放原事件。题目采集需要命名空间的 `.runtime/helper` 使用 R43 程序；打断需要查询方使用 R43 且钩子至少能记 R24 的 transcript_path。共用 helper 的切换规矩仍见上节，单切 CLI 链接不能更新钩子。
+- 对 paddock：兼容新增，现有调用无需修改，可以暂不显示题目；Esc 后从误报 blocked 变成 idle，paddock 不用动。pony 如何显示或回答题目由后续任务处理。
+
 ## `corral integration status`（R4）
 
 只读：不写任何文件，不碰在跑的 agent；只会对找到的程序各跑一次 `--version`。要等各家的 `--version`，一般一两秒、最多三秒多：在打开设置页、用户刷新或装完技能后调，不要放进每秒一次的刷新。和其他命令一样只输出一行 JSON，没有 `--json` 参数。多余的参数、其他子命令报 `usage`，退出码 1。

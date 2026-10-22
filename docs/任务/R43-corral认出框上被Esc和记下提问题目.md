@@ -60,3 +60,14 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：`observe_transcript` 将 R24 的读取门槛从 working 扩到 working／blocked，仍使用原来的轮次、主会话、非侧链、严格晚于输入的标记判断，不改解析器或别家适配器。AskUserQuestion 的 PermissionRequest 钩子仅记录题目白名单，`status.questions` 在当前提问框 blocked 时返回 `{items, truncated}`；单选、多选、多题及选项说明完整保留。离开该框或下一次旧钩子没有题目时清掉旧内容，通知保留当前内容。DESIGN §7 增补 R43，CONTRACT 写明字段、截断和新旧版本边界；paddock 可以不接题目，打断状态修正无需适配。
+- 针对验证：先运行权限框回归，确认在预期 idle、实际 blocked 上失败；题目回归先在实际 null 上失败；总量回归先在 truncated=false 上失败，再分别最小实现至通过。新增用例覆盖权限框、AskUserQuestion、ExitPlanMode、批准后运行中被 Esc，均验证 idle/interrupted 和普通 send 实际到达合成 cat 并被输入钩子确认；同时覆盖框仍开着、早于或等于最近输入的旧标记不误判。题目覆盖单选、多选、多题、带中文和 JSON 转义的超长截断、其他工具参数不落盘。全部用隔离 HOME/CORRAL_HOME、合成钩子和对话记录。
+- 新旧兼容与全套验证：保存修改前（基于 `219f8c2`）编出的 corral 为 `/tmp/r43.i98QjM/corral-before`，显式运行 `CORRAL_COMPAT_BIN=… cargo test -p corral-core --test interrupted claude_questions_new_and_old_clients_share_events -- --exact --ignored`，真实旧 reader 读新事件、新 reader 在旧缓存回写后重放，以及无题目的旧事件均通过。直接相关 Claude 用例 17 通过，另加该兼容用例 1 通过。最终 `cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各运行一次并通过；全套 347 通过、0 失败、12 跳过（原有 11 项及需要外部基线、已单独跑过的兼容项）。快照只将 cursor 8 改成 9，其他内容不变。自查 diff 和 `git diff --check` 通过。
+- 真实实测：只开一个 `ranch/test-r43-claude`，role=test、CAIRN_DISABLE=1、default 权限模式，cwd 为本 worktree 的 scratch。使用本分支 `.target/r43/debug/corral`，`CORRAL_HOME=/tmp/r43.i98QjM/pens` 原本为空，首次启动自动创建其 `.runtime/helper`；readlink 已确认指向本分支程序。两道测试题（一单选、一多选）在 blocked 时完整出现在 questions。只对这个自建测试 agent 用 `corral keys … esc` 送一次 Esc，后续查询为 idle/interrupted=true，questions 缺省；普通 send 返回 confirmed=true，随后回复 `R43-RECEIVED`。本次是程序送 Esc，不宣称真人按键或精确秒级计时。测试 agent 已 stop，隔离 ls 为空，scratch 已删除；用户共用 helper 前后均为 aef2b4a，未切换。状态样本、回复、基线程序及检查日志留在 `/tmp/r43.i98QjM`，不提交运行数据。
+- 拿主意的地方：按 [Claude Code 官方钩子文档](https://code.claude.com/docs/en/hooks#permissionrequest-input) 及 [AskUserQuestion 字段说明](https://code.claude.com/docs/en/hooks#pretooluse-input) 确认原始输入位置和形状，再由真实测试验证。只在 PermissionRequest 采集，避免重复保存 PreToolUse 参数，且接收之前钩子更新后的输入。上限定为 questions 紧凑 JSON 的 16 KiB（含结构和转义），按顺序保留 Unicode 字符前缀，省略放不下的后续项并置 truncated=true；不记录 answers。cursor 升到 9，防止沿用旧 reader 已消费事件却没保存题目的缓存；事件仍为 v1，不迁移原事件。
+- 没做的事：未改 pony、fence、dispatch、pen、部署逻辑、依赖或其他仓库；未切用户 helper、bin 链接，未 upgrade、操作用户 agent、部署、合并 main 或推送。未另开开发或审查 agent。只在 r43 分支提交，交主控及规定的交叉审查。
+- 踩过的坑：最初误用 Cargo 包名 corral，命令在包查找阶段失败；改成仓库实际包名 corral-core 后才取得有效 RED。真实 Esc 后紧接着的第一次查询仍是 blocked，下一次查询读到落盘标记后正常恢复；没有增加静默等待或猜测逻辑。
+- 要主控决定的事：没有新的待决定项。

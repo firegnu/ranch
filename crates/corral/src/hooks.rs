@@ -44,6 +44,12 @@ pub fn run(event: &str) {
             record["background_running"] =
                 json!(tasks.iter().filter(|t| t["status"] == "running").count());
         }
+        if event == "PermissionRequest"
+            && body["tool_name"] == "AskUserQuestion"
+            && let Some(questions) = questions(&body["tool_input"]["questions"])
+        {
+            record["questions"] = questions;
+        }
         let mut data = serde_json::to_vec(&record)?;
         data.push(b'\n');
         let mut f = OpenOptions::new()
@@ -54,6 +60,59 @@ pub fn run(event: &str) {
         f.write_all(&data)?;
         Ok(())
     })();
+}
+
+// PermissionRequest receives the same tool_input as PreToolUse, after any hook updates.
+// Only the question fields are retained, never answers or other tool parameters.
+fn questions(input: &Value) -> Option<Value> {
+    // Count JSON bytes, including escaping and structure, without cloning unbounded strings.
+    fn text(input: &Value, remaining: &mut usize, truncated: &mut bool) -> Value {
+        let mut out = String::new();
+        for ch in input.as_str().unwrap_or_default().chars() {
+            let size = serde_json::to_string(&ch).unwrap().len() - 2;
+            let Some(left) = remaining.checked_sub(size) else {
+                *truncated = true;
+                break;
+            };
+            *remaining = left;
+            out.push(ch);
+        }
+        json!(out)
+    }
+    let input = input.as_array()?;
+    let mut result = json!({"items":[], "truncated":false});
+    let mut remaining = 16 * 1024 - result.to_string().len();
+    let mut truncated = false;
+    let items = result["items"].as_array_mut().unwrap();
+    for q in input {
+        let mut item = json!({"header":"", "question":"", "multi_select":q["multiSelect"] == true, "options":[]});
+        let Some(left) =
+            remaining.checked_sub(item.to_string().len() + usize::from(!items.is_empty()))
+        else {
+            truncated = true;
+            break;
+        };
+        remaining = left;
+        item["header"] = text(&q["header"], &mut remaining, &mut truncated);
+        item["question"] = text(&q["question"], &mut remaining, &mut truncated);
+        let options = item["options"].as_array_mut().unwrap();
+        for option in q["options"].as_array().into_iter().flatten() {
+            let mut out = json!({"label":"", "description":""});
+            let Some(left) =
+                remaining.checked_sub(out.to_string().len() + usize::from(!options.is_empty()))
+            else {
+                truncated = true;
+                break;
+            };
+            remaining = left;
+            out["label"] = text(&option["label"], &mut remaining, &mut truncated);
+            out["description"] = text(&option["description"], &mut remaining, &mut truncated);
+            options.push(out);
+        }
+        items.push(item);
+    }
+    result["truncated"] = json!(truncated);
+    Some(result)
 }
 pub(crate) fn helper(target: &Path, switch: bool) -> crate::Result<std::path::PathBuf> {
     use std::os::unix::fs::{DirBuilderExt, symlink};
