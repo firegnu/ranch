@@ -18,7 +18,7 @@ pub fn digest(s: &str) -> String {
     format!("{:x}", Sha256::digest(normalize(s).as_bytes()))
 }
 fn fresh(instance: &str) -> Value {
-    json!({"cursor":8,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","interrupted":false,"state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
+    json!({"cursor":9,"fmt":1,"inst":instance,"offset":0,"main_session":null,"other_sessions":[],"pending":[],"state":"starting","interrupted":false,"state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_t":null,"inputs":[],"input_count":0,"last_prompt":null,"reply":null,"reply_t":null,"background_running":null,"raw":{}})
 }
 fn string(v: &Value) -> String {
     match v {
@@ -35,6 +35,11 @@ fn update(s: &mut Value, e: &Value) {
     }
     let previous = s["state"].clone();
     let ev = e["ev"].as_str().unwrap_or("");
+    if ev == "PermissionRequest" && e["tool_name"] == "AskUserQuestion" {
+        s["questions"] = e["questions"].clone();
+    } else if ev != "Notification" {
+        s.as_object_mut().unwrap().remove("questions");
+    }
     s["last_event"] = e["ev"].clone();
     s["last_event_t"] = e["t"].clone();
     match ev {
@@ -118,6 +123,7 @@ fn same_dir(e: &Value, cwd: &Path) -> bool {
 fn make_main(s: &mut Value, sid: &Value) -> Vec<Value> {
     if sid != &s["main_session"] {
         s.as_object_mut().unwrap().remove("transcript_path");
+        s.as_object_mut().unwrap().remove("questions");
         s["turn_open"] = json!(false);
         s["main_session"] = sid.clone();
         s["other_sessions"]
@@ -216,9 +222,9 @@ pub fn read(dir: &Path, instance: &str, cwd: &Path, adopt_session: bool) -> Resu
     };
     let size = f.metadata()?.len();
     let mut s = state::read(dir.join("cursor"));
-    // Older readers do not recognise omp user interruptions (or retain Claude's turn evidence).
+    // Older readers do not retain questions (or the earlier interruption evidence).
     // Replay their caches; the event format is unchanged in both directions.
-    if s["cursor"] != 8
+    if s["cursor"] != 9
         || s["inst"] != instance
         || s["offset"].as_u64().is_none_or(|n| n > size)
         || ["pending", "other_sessions", "inputs"]
@@ -283,7 +289,7 @@ pub(crate) fn observe_transcript(
     adapter: &dyn crate::agents::Adapter,
 ) -> Result<()> {
     let needs_transcript = match s["state"].as_str() {
-        Some("working") => s["turn_open"] == true || s["interrupted"] == true,
+        Some("working" | "blocked") => s["turn_open"] == true || s["interrupted"] == true,
         Some("idle") => s["turn_open"] == true,
         _ => false,
     };

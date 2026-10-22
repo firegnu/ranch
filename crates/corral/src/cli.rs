@@ -172,6 +172,12 @@ pub(crate) fn status(name: &str) -> Result<Status> {
         if public["state"] == snap["state"] {
             public["state_started"] = snap["state_started"].clone();
         }
+        if public["state"] == "blocked"
+            && snap["last_tool"] == "AskUserQuestion"
+            && let Some(questions) = snap.get("questions").filter(|v| !v.is_null())
+        {
+            public["questions"] = questions.clone();
+        }
         for (a, b) in [
             ("last_tool", "last_tool"),
             ("turn_started", "turn_started"),
