@@ -72,3 +72,11 @@
 - 踩过的坑：最初误用 Cargo 包名 corral，命令在包查找阶段失败；改成仓库实际包名 corral-core 后才取得有效 RED。真实 Esc 后紧接着的第一次查询仍是 blocked，下一次查询读到落盘标记后正常恢复；没有增加静默等待或猜测逻辑。
 - 要主控决定的事：没有新的待决定项。
 - 交叉审查后文档更正：按主控要求，将 CONTRACT R43 首段关于 `ls` 的错误说明改为「`wait` 返回的状态对象及其超时报错同样带此字段」；只改此句并补本记录，未重跑测试。
+
+## 主控审查
+
+- 只改了两处：`observe_transcript` 读对话记录的门槛从 `working` 扩到 `blocked`（认定条件不变）；AskUserQuestion 的 PermissionRequest 钩子记题目白名单，`status.questions` 只在该框 `blocked` 时给出，16 KiB 上限。cursor 8 → 9。pony、fence、dispatch 没改。CONTRACT、DESIGN §7 已补。
+- 开发者用隔离 `CORRAL_HOME` 开测试 Claude Code 实测：两道题完整出现在 `questions`，Esc 后 `idle`/`interrupted`，`send` 送达。没切用户共用 helper。
+- 交叉审查（Claude Code opus xhigh）：可以合并，必须改 0。审查者另在 default、auto 两种模式下实测三种框、批准后运行中、选 No 带说明（没误判）、正常回答。建议改 1（CONTRACT 一句说明）已改；建议改 2（部署要切共用 helper）由主控部署时做。
+- 主控在 r43 上重跑 `cargo test --all-targets`：347 通过、0 失败、12 忽略。
+结果：一次过
