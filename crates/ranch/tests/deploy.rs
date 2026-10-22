@@ -96,6 +96,12 @@ impl Home {
     }
 
     fn command(&self, args: &[&str]) -> Command {
+        // Service cases must use pony_run: a native launchctl target does not follow HOME.
+        assert!(
+            fs::symlink_metadata(self.path("Library/LaunchAgents/local.ranch.pony.plist"))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "pony service cases must use pony_run"
+        );
         let mut command = Command::new(env!("CARGO_BIN_EXE_ranch"));
         self.environment(&mut command);
         command.args(["deploy"]).args(args);
@@ -347,6 +353,76 @@ fn pony_changed_plist_uses_target_service_install_without_kickstart() {
     assert_eq!(step["pid"], 102);
 }
 
+fn unloaded_pony_service() -> Home {
+    let home = Home::running_pony();
+    fs::write(home.path("pony-replace"), "replace").unwrap();
+    fs::write(home.path("pony-service-fails"), "bootstrap failure").unwrap();
+    home.pony_status("pony-status-unloaded.json", "installed", None);
+    home
+}
+
+#[test]
+fn rework_pony_service_failure_reports_unloaded_service_and_install_recovery() {
+    let home = unloaded_pony_service();
+    let out = home.pony_run("new --yes", 1, true);
+    assert!(out.contains("pony 现在没在跑"), "{out}");
+    assert!(
+        out.contains("服务定义可能已卸下，launchd 不会自己再起 pony"),
+        "{out}"
+    );
+    assert!(!out.contains("launchd 会按服务策略再试"), "{out}");
+    let recovery = out
+        .lines()
+        .find(|line| line.starts_with("接着做："))
+        .unwrap();
+    assert!(
+        recovery.contains(&format!(
+            "{} service install --yes",
+            home.version("new").join("bin/pony").display()
+        )),
+        "{recovery}"
+    );
+    assert!(!recovery.contains(" deploy new"), "{recovery}");
+    assert!(out.contains(".pony/logs/launchd.log"), "{out}");
+    assert_eq!(home.records()[1]["pony"]["before"]["running"], true);
+    assert_eq!(home.records()[1]["pony_after"]["running"], false);
+}
+
+#[test]
+fn rework_pony_service_retry_restores_a_service_stopped_by_deploy() {
+    let home = unloaded_pony_service();
+    home.pony_run("new --yes", 1, true);
+    for attempt in 0..2 {
+        let before = home.snapshot();
+        let out = home.pony_run("new --dry-run", 0, true);
+        assert!(out.contains("pony service install --yes"), "{out}");
+        assert!(!out.contains("没有要做的"), "{out}");
+        assert_eq!(home.snapshot(), before);
+        if attempt == 0 {
+            home.pony_run("new --yes", 1, true);
+            assert_eq!(home.records()[3]["pony"]["before"]["running"], true);
+        }
+    }
+    fs::remove_file(home.path("pony-service-fails")).unwrap();
+    let out = home.pony_run("new --yes", 0, true);
+    assert!(out.contains("pid 102"), "{out}");
+    assert!(out.contains("pony 跑的是目标程序"), "{out}");
+    assert!(!out.contains("没有要做的"), "{out}");
+    assert!(home.path("pony-installed").exists());
+    assert!(!home.path("pony-kickstarted").exists());
+    let records = home.records();
+    assert_eq!(records[5]["result"], "done");
+    assert_eq!(records[5]["before_version"], "old");
+    let step = records[5]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["step"] == "pony_service")
+        .unwrap();
+    assert_eq!(step["result"], "done");
+    assert_eq!(step["pid"], 102);
+}
+
 #[test]
 fn pony_stopped_service_is_not_started_even_if_plist_needs_replacing() {
     let home = Home::running_pony();
@@ -355,6 +431,14 @@ fn pony_stopped_service_is_not_started_even_if_plist_needs_replacing() {
     let out = home.pony_run("new --yes", 0, true);
     assert!(out.contains("服务装着但没在跑，不重启"), "{out}");
     assert!(out.contains("config_missing"), "{out}");
+    assert!(
+        out.contains("服务定义要换（replace），deploy 没换"),
+        "{out}"
+    );
+    assert!(
+        out.contains("pony service install --yes（会启动 pony）"),
+        "{out}"
+    );
     assert!(home.path("pony-replace").exists());
     assert!(!home.path("pony-kickstarted").exists());
     assert!(!home.path("pony-installed").exists());
@@ -369,6 +453,15 @@ fn pony_manual_process_is_left_running_even_if_plist_needs_replacing() {
     let out = home.pony_run("new --yes", 0, true);
     assert!(
         out.contains("父进程不是 launchd，不重启，请自行重启"),
+        "{out}"
+    );
+    assert!(
+        out.contains("服务定义要换（replace），deploy 没换"),
+        "{out}"
+    );
+    assert!(out.contains("先停掉手动起的 pony"), "{out}");
+    assert!(
+        out.contains("pony service install --yes（会启动 pony）"),
         "{out}"
     );
     assert!(home.path("pony-replace").exists());
@@ -388,6 +481,27 @@ fn pony_identical_running_program_at_another_path_is_not_restarted() {
     assert!(out.contains("pony 跑的是目标程序（pid 101"), "{out}");
     assert!(!home.path("pony-kickstarted").exists());
     assert!(!home.path("pony-installed").exists());
+}
+
+#[test]
+fn rework_pony_restart_plan_names_running_version_or_external_program() {
+    let home = Home::running_pony();
+    let out = home.pony_run("new --dry-run", 0, true);
+    assert!(
+        out.contains("正在跑的是 old 的 pony（pid 101），换成 new"),
+        "{out}"
+    );
+    let external = home.path("external-pony");
+    fs::copy(home.version("old").join("bin/pony"), &external).unwrap();
+    home.pony_process(101, 1, &external);
+    let out = home.pony_run("new --dry-run", 0, true);
+    assert!(
+        out.contains(&format!(
+            "正在跑的是 {} 的 pony（pid 101），换成 new",
+            external.display()
+        )),
+        "{out}"
+    );
 }
 
 #[test]
@@ -415,12 +529,18 @@ fn pony_retry_still_restarts_old_process_after_links_already_changed() {
     fs::write(home.path("fail-install"), "fail").unwrap();
     let out = home.pony_run("new --yes", 1, true);
     assert!(out.contains("没做 重启 pony"), "{out}");
+    assert!(!out.contains("pony 现在"), "{out}");
+    assert!(!out.contains(".pony/logs/"), "{out}");
     assert!(!home.path("pony-kickstarted").exists());
     fs::remove_file(home.path("fail-install")).unwrap();
     let before = home.snapshot();
     let out = home.pony_run("new --dry-run", 0, true);
     assert!(out.contains("接着上次未完成的部署"), "{out}");
     assert!(out.contains("重启 pony：launchctl kickstart"), "{out}");
+    assert!(
+        out.contains("正在跑的是 old 的 pony（pid 101），换成 new"),
+        "{out}"
+    );
     assert!(!out.contains("切链接（"), "{out}");
     assert_eq!(home.snapshot(), before);
     let out = home.pony_run("new --yes", 0, true);
@@ -438,6 +558,8 @@ fn pony_restart_timeout_reports_stopped_state_first_and_records_failure() {
     let out = home.pony_run("new --yes", 1, true);
     assert!(started.elapsed() >= std::time::Duration::from_secs(30));
     assert!(out.contains("30 秒内没等到新的 pony 起来"), "{out}");
+    assert!(out.contains("config_missing"), "{out}");
+    assert!(!out.contains("launchd 会按服务策略再试"), "{out}");
     assert!(
         out.find("pony 现在没在跑").unwrap() < out.find("中途失败").unwrap(),
         "{out}"
@@ -857,4 +979,35 @@ fn history_truncated_in_a_chinese_character_still_allows_preview() {
     let out = home.run(&["new", "--dry-run"], 0);
     assert!(out.contains("末行不完整（可能被中断）"), "{out}");
     assert_eq!(home.snapshot(), before);
+}
+
+#[test]
+fn rework_history_append_separates_truncated_tail_from_new_records() {
+    let home = Home::new();
+    home.package("new");
+    let mut history = b"{\"to\":\"old\",\"result\":\"done\"}\n{\"title\":\"".to_vec();
+    history.extend_from_slice(&"切".as_bytes()[..2]);
+    let path = home.path(".local/share/ranch/deploys.jsonl");
+    fs::write(&path, &history).unwrap();
+    home.run(&["new", "--yes"], 0);
+    let appended = fs::read(path).unwrap();
+    assert!(appended.starts_with(&history));
+    let lines: Vec<_> = appended
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(
+        lines.len(),
+        4,
+        "keep the old record and truncated tail, plus separate started/done records"
+    );
+    assert!(serde_json::from_slice::<Value>(lines[1]).is_err());
+    assert_eq!(
+        serde_json::from_slice::<Value>(lines[2]).unwrap()["result"],
+        "started"
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(lines[3]).unwrap()["result"],
+        "done"
+    );
 }

@@ -1,4 +1,4 @@
-use super::{Bundle, Result, command, hash, probe};
+use super::{Bundle, Paths, Result, command, hash, probe, version_of};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -84,6 +84,9 @@ pub(super) struct Plan {
     target_hash: String,
     pub action: Option<&'static str>,
     before: Value,
+    recovery_before: Option<Value>,
+    service_status: String,
+    current_program: Option<PathBuf>,
     pub note: String,
     verify_running: bool,
     logs: PathBuf,
@@ -119,7 +122,12 @@ fn pid(value: &Value) -> Option<i32> {
         .filter(|pid| *pid > 0)
 }
 
-pub(super) fn plan(bundle: &Bundle, home: &Path, system: &System) -> Result<Option<Plan>> {
+pub(super) fn plan(
+    bundle: &Bundle,
+    home: &Path,
+    system: &System,
+    unfinished: Option<&Value>,
+) -> Result<Option<Plan>> {
     let Some(target_hash) = bundle.hashes.get("pony") else {
         return Ok(None);
     };
@@ -128,6 +136,9 @@ pub(super) fn plan(bundle: &Bundle, home: &Path, system: &System) -> Result<Opti
         target_hash: target_hash.clone(),
         action: None,
         before: Value::Null,
+        recovery_before: None,
+        service_status: String::new(),
+        current_program: None,
         note: String::new(),
         verify_running: false,
         logs: home.join(".pony/logs"),
@@ -161,20 +172,51 @@ pub(super) fn plan(bundle: &Bundle, home: &Path, system: &System) -> Result<Opti
     if !matches!(service["status"].as_str(), Some("same" | "replace")) {
         return Err(format!("不认识的 pony 服务定义状态：{service}"));
     }
+    plan.service_status = service["status"].as_str().unwrap().into();
+    let skipped_definition = if plan.service_status == "replace" {
+        format!(
+            "；服务定义要换（replace），deploy 没换；要换时跑 {} service install --yes（会启动 pony）",
+            super::quote(&plan.program)
+        )
+    } else {
+        String::new()
+    };
+    plan.recovery_before = unfinished
+        .filter(|record| {
+            record["pony"]["before"]["running"] == true
+                && record["steps"].as_array().is_some_and(|steps| {
+                    steps
+                        .iter()
+                        .any(|step| step["step"] == "pony_service" && step["result"] == "failed")
+                })
+        })
+        .map(|record| record["pony"]["before"].clone());
     if plan.before["running"] == false {
+        if plan.recovery_before.is_some() {
+            plan.action = Some("pony_service");
+            plan.verify_running = true;
+            plan.note = "pony 原本在跑，上次部署的服务安装失败；本次恢复服务并核对启动".into();
+            return Ok(Some(plan));
+        }
         plan.note = format!(
             "pony 服务装着但没在跑，不重启；last_exit {}；launchd 下次启动会用新程序",
             plan.before["last_exit"]
         );
+        plan.note.push_str(&skipped_definition);
         return Ok(Some(plan));
     }
     let current = (system.process)(pid(&plan.before).ok_or("pony 没有运行 pid")?)?;
+    plan.current_program = Some(current.program.clone());
     if current.parent != 1 {
         plan.note = "pony 在跑，但父进程不是 launchd，不重启，请自行重启".into();
+        if plan.service_status == "replace" {
+            plan.note.push_str("；先停掉手动起的 pony");
+        }
+        plan.note.push_str(&skipped_definition);
         return Ok(Some(plan));
     }
     plan.verify_running = true;
-    if service["status"] == "replace" {
+    if service["status"] == "replace" || plan.recovery_before.is_some() {
         plan.action = Some("pony_service");
     } else if hash(&current.program)? != plan.target_hash {
         plan.action = Some("pony_restart");
@@ -193,30 +235,54 @@ pub(super) fn plan(bundle: &Bundle, home: &Path, system: &System) -> Result<Opti
 
 impl Plan {
     pub fn title(&self) -> &'static str {
-        if self.action == Some("pony_service") {
+        if self.recovery_before.is_some() {
+            "恢复 pony 服务并启动"
+        } else if self.action == Some("pony_service") {
             "更换 pony 服务定义并重启"
         } else {
             "重启 pony"
         }
     }
 
-    pub fn description(&self) -> String {
-        if self.action == Some("pony_service") {
+    pub fn description(&self, paths: &Paths) -> String {
+        let mut description = if self.action == Some("pony_service") {
             format!(
-                "更换 pony 服务定义并重启：{} service install --yes",
+                "{}：{} service install --yes",
+                self.title(),
                 super::quote(&self.program)
             )
         } else {
             format!(
-                "重启 pony：launchctl kickstart -k gui/{}/local.ranch.pony（当前 pid {}）",
+                "重启 pony：launchctl kickstart -k gui/{}/local.ranch.pony",
                 unsafe { libc::geteuid() },
-                self.before["pid"]
             )
+        };
+        if let Some(program) = &self.current_program {
+            let current =
+                version_of(paths, program, "pony").unwrap_or_else(|| program.display().to_string());
+            let target = version_of(paths, &self.program, "pony")
+                .unwrap_or_else(|| self.program.display().to_string());
+            description.push_str(&format!(
+                "\n       正在跑的是 {current} 的 pony（pid {}），换成 {target}",
+                self.before["pid"]
+            ));
         }
+        description
     }
 
     pub fn record(&self) -> Value {
-        json!({"action":self.action.unwrap_or("skip"),"reason":self.note,"before":self.before})
+        json!({"action":self.action.unwrap_or("skip"),"reason":self.note,"before":self.original_before()})
+    }
+
+    fn original_before(&self) -> &Value {
+        self.recovery_before.as_ref().unwrap_or(&self.before)
+    }
+
+    pub fn service_recovery(&self) -> String {
+        format!(
+            "服务定义可能已卸下，launchd 不会自己再起 pony；找到原因后先跑 {} service install --yes",
+            super::quote(&self.program)
+        )
     }
 
     fn is_target(&self, value: &Value, system: &System) -> Result<bool> {
@@ -227,12 +293,14 @@ impl Plan {
         Ok(process.parent == 1 && hash(&process.program)? == self.target_hash)
     }
 
-    pub fn execute(&self, system: &System) -> Result<Value> {
+    pub fn execute(&self, system: &System, attempted: &mut bool) -> Result<Value> {
         let before = status(&self.program, Duration::from_secs(5))?;
         if before["pid"] != self.before["pid"] || before["running"] != self.before["running"] {
             return Err("pony 运行状态在计划后变了，请重跑".into());
         }
-        if (system.process)(pid(&before).ok_or("pony 没有运行 pid")?)?.parent != 1 {
+        if before["running"] == true
+            && (system.process)(pid(&before).ok_or("pony 没有运行 pid")?)?.parent != 1
+        {
             return Err("pony 父进程不是 launchd，不重启，请自行重启".into());
         }
         let service = probe(
@@ -240,14 +308,10 @@ impl Plan {
             &["service".into(), "install".into(), "--dry-run".into()],
         )?
         .ok_or("pony 不再支持 service，请重跑")?;
-        let expected = if self.action == Some("pony_service") {
-            "replace"
-        } else {
-            "same"
-        };
-        if service["status"] != expected {
+        if service["status"] != self.service_status {
             return Err("pony 服务定义在计划后变了，请重跑".into());
         }
+        *attempted = true;
         if self.action == Some("pony_service") {
             // pony service may itself spend 30 seconds waiting for bootout.
             let output = command::run(
@@ -279,7 +343,7 @@ impl Plan {
             }
             match status(&self.program, remaining.min(Duration::from_secs(5))) {
                 Ok(value) => {
-                    if value["pid"] != before["pid"]
+                    if value["pid"] != self.original_before()["pid"]
                         && self.is_target(&value, system).unwrap_or(false)
                     {
                         println!(
@@ -308,7 +372,7 @@ impl Plan {
         if self.verify_running {
             let value = status(&self.program, Duration::from_secs(5))?;
             if !self.is_target(&value, system)?
-                || (self.action.is_some() && value["pid"] == self.before["pid"])
+                || (self.action.is_some() && value["pid"] == self.original_before()["pid"])
             {
                 return Err("pony 核对失败：没有运行目标程序".into());
             }
@@ -323,7 +387,7 @@ impl Plan {
         Ok(())
     }
 
-    pub fn failure_status(&self, system: &System) -> Value {
+    pub fn failure_status(&self, system: &System, service_failed: bool) -> Value {
         if !system.macos {
             return json!({"service":"unsupported"});
         }
@@ -331,9 +395,6 @@ impl Plan {
             Ok(value) => {
                 if value["running"] == false {
                     println!("pony 现在没在跑，last_exit {}。", value["last_exit"]);
-                    if value["service"] == "installed" {
-                        println!("launchd 会按服务策略再试。");
-                    }
                 } else {
                     println!(
                         "pony 现在在跑（pid {}，{}），尚未确认部署成功。",
@@ -348,6 +409,9 @@ impl Plan {
                 json!({"error":error})
             }
         };
+        if service_failed {
+            println!("{}", self.service_recovery());
+        }
         println!(
             "日志：{}、{}",
             self.logs.join("launchd.log").display(),

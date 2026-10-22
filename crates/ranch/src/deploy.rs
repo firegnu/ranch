@@ -12,7 +12,7 @@ use std::{
     ffi::CString,
     fs,
     io::{self, IsTerminal, Read, Write},
-    os::unix::fs::{OpenOptionsExt, symlink},
+    os::unix::fs::{FileExt, OpenOptionsExt, symlink},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -515,7 +515,7 @@ fn plan(name: &str, system: &pony::System) -> Result<Plan> {
             .into(),
         );
     }
-    let pony = pony::plan(&bundle, &home, system)?;
+    let pony = pony::plan(&bundle, &home, system, unfinished)?;
     notes.push(
         pony.as_ref()
             .map_or("目标版本没有 pony，不动服务".into(), |p| {
@@ -658,7 +658,7 @@ fn preview(plan: &Plan, dry: bool, yes: bool, system: &pony::System) -> Result<(
         && pony.action.is_some()
     {
         count += 1;
-        println!("  {count}. {}", pony.description());
+        println!("  {count}. {}", pony.description(&plan.paths));
     }
     println!("\n不做的：");
     for link in plan.links.iter().filter(|l| !l.changes()) {
@@ -889,9 +889,19 @@ fn record(file: &mut fs::File, mut value: Value) -> Result<()> {
     value["at"] = json!(now()?);
     let mut bytes = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
     bytes.push(b'\n');
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|e| format!("部署记录写入失败：{e}"))
+    (|| -> io::Result<()> {
+        let length = file.metadata()?.len();
+        if length > 0 {
+            let mut last = [0];
+            file.read_exact_at(&mut last, length - 1)?;
+            if last[0] != b'\n' {
+                bytes.insert(0, b'\n');
+            }
+        }
+        file.write_all(&bytes)?;
+        file.sync_all()
+    })()
+    .map_err(|e| format!("部署记录写入失败：{e}"))
 }
 
 fn apply(plan: &Plan, system: &pony::System) -> Result<()> {
@@ -913,6 +923,7 @@ fn apply(plan: &Plan, system: &pony::System) -> Result<()> {
     unchanged(plan)?;
     let log_path = plan.paths.state.join("deploys.jsonl");
     let mut log = fs::OpenOptions::new()
+        .read(true)
         .append(true)
         .create(true)
         .mode(0o600)
@@ -945,17 +956,21 @@ fn apply(plan: &Plan, system: &pony::System) -> Result<()> {
     }
     steps.push(json!({"step":"verify","title":"核对","result":"not_done"}));
     let mut failure = None;
+    let mut pony_attempted = false;
     for step in &mut steps {
         let id = step["step"].as_str().unwrap();
         let result = match id {
             "links" => switch_links(plan),
             "verify" => verify(plan, system),
-            "pony_restart" | "pony_service" => {
-                plan.pony.as_ref().unwrap().execute(system).map(|value| {
+            "pony_restart" | "pony_service" => plan
+                .pony
+                .as_ref()
+                .unwrap()
+                .execute(system, &mut pony_attempted)
+                .map(|value| {
                     step["pid"] = value["pid"].clone();
                     step["chats"] = value["chats"].clone();
-                })
-            }
+                }),
             _ => install(plan.installs.iter().find(|i| i.id == id).unwrap()),
         };
         match result {
@@ -983,8 +998,12 @@ fn apply(plan: &Plan, system: &pony::System) -> Result<()> {
         .collect();
     let mut pony_after = Value::Null;
     if failure.is_some() {
-        if let Some(pony) = &plan.pony {
-            pony_after = pony.failure_status(system);
+        let service_failed = pony_attempted
+            && steps
+                .iter()
+                .any(|step| step["step"] == "pony_service" && step["result"] == "failed");
+        if pony_attempted && let Some(pony) = &plan.pony {
+            pony_after = pony.failure_status(system, service_failed);
         }
         println!("\n中途失败，不自动撤回：");
         for step in &steps {
@@ -1006,10 +1025,14 @@ fn apply(plan: &Plan, system: &pony::System) -> Result<()> {
                 .unwrap_or("未安装");
             println!("  当前链接 {name}：{text}");
         }
-        println!(
-            "接着做：找到原因后重跑 {}，做过的会跳过",
-            deploy_command(&plan.paths, &plan.bundle.name)
-        );
+        if service_failed {
+            println!("接着做：{}", plan.pony.as_ref().unwrap().service_recovery());
+        } else {
+            println!(
+                "接着做：找到原因后重跑 {}，做过的会跳过",
+                deploy_command(&plan.paths, &plan.bundle.name)
+            );
+        }
     }
     // Always print recovery instructions, including when the final record cannot be saved.
     println!("退回：{}", plan.rollback);

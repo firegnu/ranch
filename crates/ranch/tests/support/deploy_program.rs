@@ -46,9 +46,21 @@ fn main() {
             let state = if home.join("pony-replace").exists() { "replace" } else { "same" };
             println!(r#"{{"ok":true,"status":"{state}"}}"#);
         } else if args == ["service", "install", "--yes"] {
-            assert!(home.join("pony-replace").exists());
+            if home.join("pony-service-fails").exists() {
+                // Simulate bootout succeeding and bootstrap failing after the new plist is written.
+                std::fs::copy(home.join("pony-status-unloaded.json"), home.join("pony-status.json")).unwrap();
+                if home.join("pony-replace").exists() {
+                    std::fs::remove_file(home.join("pony-replace")).unwrap();
+                }
+                std::fs::write(home.join("pony-service-failed"), "unloaded").unwrap();
+                println!(r#"{{"ok":false,"error":"launchctl_failed","message":"previous service was unloaded; rerun pony service install --yes"}}"#);
+                std::process::exit(1);
+            }
+            assert!(home.join("pony-replace").exists() || home.join("pony-service-failed").exists());
             std::fs::rename(home.join("pony-status-next.json"), home.join("pony-status.json")).unwrap();
-            std::fs::remove_file(home.join("pony-replace")).unwrap();
+            if home.join("pony-replace").exists() {
+                std::fs::remove_file(home.join("pony-replace")).unwrap();
+            }
             std::fs::write(home.join("pony-installed"), "yes").unwrap();
             println!(r#"{{"ok":true,"status":"replace","applied":true}}"#);
         } else {

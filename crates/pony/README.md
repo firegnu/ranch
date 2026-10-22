@@ -277,7 +277,10 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
    sha256，内容不同才 kickstart。程序相同不重启；服务未装或非 macOS 只切链接；
    服务装着但没在跑时说明 `last_exit`，手动运行时提醒自行重启，两种都不重启。
    重启后最多等 30 秒，核对 running、新 pid 和目标程序；Slack 连接状态照实
-   显示，不要求已 connected。失败时先说明 pony 当前状态并给日志位置，不自动撤回。
+   显示，不要求已 connected。pony 操作失败时先说明当前状态并给日志位置，不自动撤回。
+   若替换服务定义失败，旧定义可能已卸下，按提示先用目标版本的
+   `pony service install --yes` 恢复。重跑同一目标的 deploy 时，若失败记录表明
+   pony 原本在跑，也会重新列出服务安装、等待和核对，不把它当成原本就停着的服务。
 
    没配置时 pony 退出 0，launchd 不再重起。运行中删掉配置也一样；放回配置后
    要执行 `launchctl kickstart -k "gui/$(id -u)/local.ranch.pony"` 或重新登录，
