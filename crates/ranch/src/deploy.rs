@@ -5,7 +5,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, fs,
+    env,
+    ffi::CString,
+    fs,
     io::{self, IsTerminal, Read, Write},
     os::unix::fs::{OpenOptionsExt, symlink},
     path::{Path, PathBuf},
@@ -72,6 +74,7 @@ struct Plan {
     rollback: String,
     notes: Vec<String>,
     pony: Option<String>,
+    history: Vec<Value>,
 }
 
 pub fn run(args: &[&str]) -> u8 {
@@ -182,6 +185,13 @@ fn target(paths: &Paths, name: &str) -> Result<Bundle> {
             return Err(format!("{name} 和 BUILD.txt 的校验和不一致或缺失"));
         }
         hashes.insert(name, digest);
+    }
+    for file in expected.keys() {
+        if let Some(name) = file.strip_prefix("bin/")
+            && !hashes.contains_key(name)
+        {
+            return Err(format!("BUILD.txt 列出的 {file} 缺失，版本目录被改过"));
+        }
     }
     if !hashes.contains_key("corral") {
         return Err("目标版本没有 corral".into());
@@ -304,7 +314,12 @@ fn rollback(paths: &Paths, links: &[Link], previous: Option<&str>) -> String {
 /// `usage`/`unsupported` means an older executable lacks this optional command.
 /// Other failures and malformed output must stop deployment, never look like `same`.
 fn probe(program: &Path, args: &[String]) -> Result<Option<Value>> {
-    let output = command::run(program, args, Duration::from_secs(5))?;
+    let timeout = if args == ["integration", "status"] {
+        15
+    } else {
+        5
+    };
+    let output = command::run(program, args, Duration::from_secs(timeout))?;
     let value: Value = serde_json::from_slice(&output.stdout).map_err(|e| {
         format!(
             "{} {} 输出不是 JSON：{e}",
@@ -461,17 +476,56 @@ fn plan(name: &str) -> Result<Plan> {
             description,
         });
     }
-    let previous = before_version(&paths, &links);
-    let rollback = rollback(&paths, &links, previous.as_deref());
-    let pony_link = links.iter().find(|l| l.name == "pony").unwrap();
-    let pony = if pony_link.target.is_some() && matches!(pony_link.description, "程序变了" | "新建")
+    let history = read_history(&paths.state.join("deploys.jsonl"))?;
+    let mut previous = before_version(&paths, &links);
+    let mut rollback = rollback(&paths, &links, previous.as_deref());
+    let unfinished =
+        history.iter().rev().find(|r| r.is_object()).filter(|r| {
+            r["to"] == name && matches!(r["result"].as_str(), Some("started" | "failed"))
+        });
+    let prior = unfinished.or_else(|| {
+        if previous.as_deref() == Some(name) {
+            history.iter().rev().find(|r| r["to"] == name)
+        } else {
+            None
+        }
+    });
+    if let Some(prior) = prior
+        && let Some(saved) = prior["rollback"].as_str().map(str::to_owned).or_else(|| {
+            prior["before_version"]
+                .as_str()
+                .map(|version| deploy_command(&paths, version))
+        })
     {
+        previous = prior["before_version"].as_str().map(str::to_owned);
+        rollback = saved;
+        notes.push(
+            if unfinished.is_some() {
+                "接着上次未完成的部署，退回沿用那次"
+            } else {
+                "当前已是目标版本，退回沿用最近一次部署记录"
+            }
+            .into(),
+        );
+    }
+    let pony_link = links.iter().find(|l| l.name == "pony").unwrap();
+    let pony = if pony_link.description == "新建" {
+        notes.push("pony 第一次装，服务另装，deploy 不装".into());
+        None
+    } else if cfg!(target_os = "macos") && pony_link.description == "程序变了" {
         Some(format!(
             "要你手动重启 pony：launchctl kickstart -k gui/{}/local.ranch.pony",
             unsafe { libc::geteuid() }
         ))
     } else {
-        notes.push("pony 程序没变或目标版本没有，不重启".into());
+        notes.push(
+            if cfg!(target_os = "macos") {
+                "pony 程序没变或目标版本没有，不重启"
+            } else {
+                "pony 非 macOS 平台，跳过重启"
+            }
+            .into(),
+        );
         None
     };
     let helper = env::var_os("CORRAL_HOME")
@@ -506,33 +560,72 @@ fn plan(name: &str) -> Result<Plan> {
         rollback,
         notes,
         pony,
+        history,
     })
 }
 
-fn last_record(path: &Path) -> Result<String> {
+fn read_history(path: &Path) -> Result<Vec<Value>> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok("没有记录".into()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(error(path, e)),
     };
-    let Some(line) = text.lines().rev().find(|l| !l.trim().is_empty()) else {
-        return Ok("没有记录".into());
+    Ok(text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap_or(Value::Null))
+        .collect())
+}
+
+// Records use UTC; only the human-facing plan uses the machine's local zone.
+fn local_time(at: &str) -> String {
+    let Ok(input) = CString::new(at) else {
+        return at.into();
     };
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
-        return Ok("末行不完整（可能被中断）".into());
+    let mut utc: libc::tm = unsafe { std::mem::zeroed() };
+    let end = unsafe { libc::strptime(input.as_ptr(), c"%Y-%m-%dT%H:%M:%SZ".as_ptr(), &mut utc) };
+    if end.is_null() || unsafe { *end } != 0 {
+        return at.into();
+    }
+    let seconds = unsafe { libc::timegm(&mut utc) };
+    let mut local: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&seconds, &mut local) }.is_null() {
+        return at.into();
+    }
+    let mut text = [0u8; 64];
+    let len = unsafe {
+        libc::strftime(
+            text.as_mut_ptr().cast(),
+            text.len(),
+            c"%Y-%m-%d %H:%M:%S %z".as_ptr(),
+            &local,
+        )
     };
+    if len == 0 {
+        return at.into();
+    }
+    String::from_utf8_lossy(&text[..len]).into_owned()
+}
+
+fn last_record(history: &[Value]) -> String {
+    let Some(value) = history.last() else {
+        return "没有记录".into();
+    };
+    if !value.is_object() {
+        return "末行不完整（可能被中断）".into();
+    }
     let result = match value["result"].as_str() {
         Some("started") => "没有结束记录（可能被中断）",
         Some("done") => "做完",
         Some("failed") => "失败",
         _ => "不认识的记录",
     };
-    Ok(format!(
+    format!(
         "{} {} → {}，{result}",
-        value["at"].as_str().unwrap_or("?"),
+        local_time(value["at"].as_str().unwrap_or("?")),
         value["before_version"].as_str().unwrap_or("混合或未安装"),
         value["to"].as_str().unwrap_or("?")
-    ))
+    )
 }
 
 fn preview(plan: &Plan, dry: bool, yes: bool) -> Result<()> {
@@ -554,12 +647,11 @@ fn preview(plan: &Plan, dry: bool, yes: bool) -> Result<()> {
         count += 1;
         println!("  {count}. 切链接（{}）", plan.paths.bin.display());
         for link in plan.links.iter().filter(|l| l.changes()) {
+            let before = link_record(&plan.paths, link.name, &link.before);
             println!(
                 "       {}  {} → {}  {}",
                 link.name,
-                link.before
-                    .as_ref()
-                    .map_or("未安装".into(), |p| p.display().to_string()),
+                before.as_str().unwrap_or("未安装"),
                 bundle.name,
                 link.description
             );
@@ -609,10 +701,7 @@ fn preview(plan: &Plan, dry: bool, yes: bool) -> Result<()> {
     for note in &plan.notes {
         println!("  {note}");
     }
-    println!(
-        "\n上次部署：{}",
-        last_record(&plan.paths.state.join("deploys.jsonl"))?
-    );
+    println!("\n上次部署：{}", last_record(&plan.history));
     println!("做完后退回：{}", plan.rollback);
     if count == 0 {
         println!("已经是 {}，没有要做的", bundle.name);
@@ -897,7 +986,11 @@ fn apply(plan: &Plan) -> Result<()> {
             );
         }
         for (name, link) in &after {
-            println!("  当前链接 {name}：{link}");
+            let text = link
+                .as_str()
+                .or_else(|| link["error"].as_str())
+                .unwrap_or("未安装");
+            println!("  当前链接 {name}：{text}");
         }
         println!("pony 运行状态未查询；本次没有重启或修改服务。");
         println!(

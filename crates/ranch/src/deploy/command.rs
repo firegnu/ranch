@@ -8,7 +8,7 @@ use std::{
 };
 
 /// Only starts target-version programs. Bound both process lifetime and pipe reads;
-/// on timeout kill/reap only the process group created by this invocation.
+/// On failure, kill/reap its group only while the leader has not been reaped.
 pub(super) fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Output, String> {
     let mut child = Command::new(program)
         .args(args)
@@ -65,8 +65,9 @@ pub(super) fn run(program: &Path, args: &[String], timeout: Duration) -> Result<
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    if result.is_err() {
-        // This group belongs exclusively to the command above, never a user's agent.
+    if result.is_err() && status.is_none() {
+        // An unreaped leader still reserves its PID. After reaping it, the group
+        // may have disappeared and its number may belong to an unrelated process.
         unsafe {
             libc::kill(-group, libc::SIGKILL);
         }

@@ -382,6 +382,26 @@ fn failed_install_stops_records_state_and_retry_finishes_remaining_steps() {
     );
     assert_eq!(home.records().len(), 4);
     assert_eq!(home.records()[3]["result"], "done");
+    assert!(
+        out.lines()
+            .any(|line| line.starts_with("退回：") && line.ends_with(" deploy old")),
+        "{out}"
+    );
+    assert!(
+        home.records()[3]["rollback"]
+            .as_str()
+            .unwrap()
+            .ends_with(" deploy old")
+    );
+    assert_eq!(home.records()[3]["before_version"], "old");
+    assert!(out.contains("接着上次未完成的部署，退回沿用那次"), "{out}");
+    let again = home.run(&["new", "--dry-run"], 0);
+    assert!(
+        again
+            .lines()
+            .any(|line| line.starts_with("做完后退回：") && line.ends_with(" deploy old")),
+        "{again}"
+    );
     assert_eq!(
         fs::read_link(helper).unwrap(),
         home.version("old").join("bin/corral")
@@ -391,4 +411,130 @@ fn failed_install_stops_records_state_and_retry_finishes_remaining_steps() {
         "untouched"
     );
     assert!(!home.path(".pony").exists());
+}
+
+#[test]
+fn rework_interrupted_partial_links_keep_the_original_individual_rollback() {
+    let home = Home::new();
+    home.package("old");
+    home.package("new");
+    for name in PROGRAMS {
+        home.link(name, "old");
+    }
+    // An external pony makes a single before_version impossible.
+    let original_pony = home.path("original-pony");
+    fs::copy("/bin/cat", &original_pony).unwrap();
+    fs::remove_file(home.path(".local/bin/pony")).unwrap();
+    symlink(&original_pony, home.path(".local/bin/pony")).unwrap();
+    let preview = home.run(&["new", "--dry-run"], 0);
+    let rollback = preview
+        .split_once("做完后退回：")
+        .unwrap()
+        .1
+        .trim()
+        .to_owned();
+    let record = serde_json::json!({"to":"new", "before_version":null, "rollback":rollback, "result":"started"});
+    fs::write(
+        home.path(".local/share/ranch/deploys.jsonl"),
+        format!("{record}\n"),
+    )
+    .unwrap();
+    // Simulate interruption after the first atomic switch; no process is killed.
+    home.link("corral", "new");
+    let out = home.run(&["new", "--yes"], 0);
+    assert!(out.contains("接着上次未完成的部署，退回沿用那次"), "{out}");
+    assert!(out.contains("没有结束记录"), "{out}");
+    assert!(out.contains(&rollback), "{out}");
+    assert!(rollback.contains("/old/bin/corral"), "{rollback}");
+    let records = home.records();
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[2]["result"], "done");
+    assert_eq!(records[2]["rollback"], rollback);
+    assert_eq!(records[2]["before_version"], Value::Null);
+}
+
+#[test]
+fn rework_integration_status_can_take_more_than_five_seconds() {
+    let home = Home::new();
+    home.package("new");
+    fs::copy(
+        home.version("new").join("bin/fence"),
+        home.version("new").join("bin/corral"),
+    )
+    .unwrap();
+    home.manifest("new");
+    let output = home
+        .command(&["new", "--dry-run"])
+        .env("DEPLOY_SLOW_STATUS", "1")
+        .output()
+        .unwrap();
+    let out = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{out}");
+    assert!(out.contains("全局插件 amp"), "{out}");
+    assert!(!home.path(".local/share/ranch/deploys.jsonl").exists());
+}
+
+#[test]
+fn rework_timeout_does_not_signal_the_group_after_its_leader_was_reaped() {
+    let home = Home::new();
+    home.package("new");
+    let finished = home.path("pipe-holder-finished");
+    let output = home
+        .command(&["new", "--dry-run"])
+        .env("DEPLOY_HELD_PIPE_DONE", &finished)
+        .output()
+        .unwrap();
+    let out = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{out}");
+    assert!(out.contains("超过 5 秒"), "{out}");
+    // Wait for this finite-lived synthetic descendant, never a real agent.
+    // It finishes after the timeout only if the reaped leader's group was not signalled.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    while !finished.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        finished.exists(),
+        "the already-reaped leader's group was killed: {out}"
+    );
+}
+
+#[test]
+fn rework_pony_notice_distinguishes_first_install_and_platform() {
+    let home = Home::new();
+    home.package("new");
+    let out = home.run(&["new", "--dry-run"], 0);
+    assert!(
+        out.contains("pony 第一次装，服务另装，deploy 不装"),
+        "{out}"
+    );
+    assert!(!out.contains("launchctl kickstart"), "{out}");
+
+    home.package("old");
+    fs::copy("/bin/cat", home.version("old").join("bin/pony")).unwrap();
+    home.manifest("old");
+    home.link("pony", "old");
+    let out = home.run(&["new", "--dry-run"], 0);
+    assert!(!out.contains("pony 第一次装"), "{out}");
+    assert_eq!(
+        out.contains("要你手动重启 pony：launchctl kickstart"),
+        cfg!(target_os = "macos"),
+        "{out}"
+    );
+    assert!(!home.path(".pony").exists());
+}
+
+#[test]
+fn rework_manifest_program_missing_from_bin_is_rejected() {
+    let home = Home::new();
+    home.package("new");
+    fs::remove_file(home.version("new").join("bin/pony")).unwrap();
+    let before = home.snapshot();
+    let out = home.run(&["new", "--dry-run"], 1);
+    assert!(out.contains("BUILD.txt 列出的 bin/pony 缺失"), "{out}");
+    assert_eq!(home.snapshot(), before);
+    // Old packages that never declared pony remain valid.
+    home.manifest("new");
+    let out = home.run(&["new", "--dry-run"], 0);
+    assert!(out.contains("目标版本没有，不动这个链接"), "{out}");
 }

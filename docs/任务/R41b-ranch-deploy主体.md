@@ -67,3 +67,13 @@
 - 拿主意的地方：没有需要改变设计或交主控决定的事项。沿用已有依赖（sha2、libc、shell-words、tempfile），没有升级依赖；旧程序明确报 usage／unsupported 才跳过可选检查，真正的检查错误停止部署。原先缺失的链接在逐个退回说明中给出 `rm --`；其余使用 `ln -sfn --`，路径均做 shell 引用。部署锁保留文件、靠文件锁释放，不删锁文件。
 - 没做的事：没有改 corral、pony 源码、fence、dispatch 的行为，没有查 pony 进程、调 launchctl、装服务、动 helper 或任何真实 agent。没有在真实 HOME 下运行 deploy（含 dry-run）或安装命令；没有打包、部署、合并或推送，也没有扩大指定验证范围。交叉审查和合并留给主控。
 - 踩过的坑：最初用短测试名加 `--exact` 筛到了 0 个测试，改为前缀筛选后才取得有效 RED；没有把空测试运行当验证。混合链接夹具起初用了本机不存在的 `/bin/true`，改用任务允许的 `/bin/cat` 后通过；这是夹具路径错误，没有作为目标行为的 RED。
+
+## 返工记录
+
+2026-10-22，按主控对交叉审查意见的决定返工第 1 次。
+
+- 必须改 1：计划时读取部署记录。最近的部署未完成且目标相同时，沿用那次的 `before_version` 和完整 `rollback`，在计划里说明；当前链接已经等于目标版本时，取最近一次去该目标的记录，避免退回指向目标自己。续跑的开始、结束记录均保留这一退回来源，逐个链接的退回办法也不因部分链接已切换而丢失。DESIGN §3 补明这条规则。
+- 建议改 1–4：仅把 `integration status` 的预检超时改为 15 秒，其他预检仍为 5 秒；子进程已被回收时不再向原进程组发信号；pony 仅在 macOS、原来已有链接且程序改变时提醒 kickstart，首装改为「pony 第一次装，服务另装，deploy 不装」；BUILD.txt 声明了但 bin 中缺失的程序一律拒绝，原本没声明 pony 的旧版本仍可部署。
+- 采纳的三处输出：链接计划优先显示版本名、指向别处时显示路径；失败汇报的当前链接不带 JSON 引号；上次部署时间转换为本地时区，记录仍写 UTC。确认只认 y、重复报错、测试依赖先编好的 corral 均按主控决定保留；输出细节没有另补独立用例。
+- 验证：先只给已有失败续跑测试追加断言，确认最后输出仍为 `deploy new` 而失败，再改实现转绿；同时断言结束记录的 rollback、before_version 仍指 old，并检查完成后再次预览仍保留 old。新增只有 started 记录且部分链接已切换时保留完整逐个退回办法的用例。四条建议各补一例并经历有效 RED → GREEN：6 秒插件状态检查、已回收组长留下输出管道时不再杀组、pony 首装与当前平台提醒、BUILD 清单程序缺失及合法旧包。所有部署均在隔离 HOME、CORRAL_HOME、PONY_HOME 和临时 versions 中；管道持有者是 7 秒自行结束的 Rust 合成程序，测试等待其结束标记，不操作真实 agent。平台用例在本机 macOS 执行，Linux 条件随测试所在平台断言，未做 Linux 实机验证。
+- 验证预算：除上述新增用例（含新增断言）外，`cargo test --offline --all-targets`、`cargo clippy --offline --all-targets -- -D warnings`、`cargo fmt --check` 各执行一次并通过；全量 323 passed、0 failed、11 个既有 ignored，部署测试共 11 个通过。编译目录始终为 `.target/r41b`，自查范围及 `git diff --check` 通过。没有改依赖和 corral、pony 源码、fence、dispatch，没有部署、合并或推送；对 paddock 无影响，无需主控另作决定。
