@@ -79,3 +79,11 @@
 - 验证了什么：先用假的 service install 复现「旧服务已卸、新 plist 已写、bootstrap 失败」，两个用例分别因错误恢复提示和续跑「没有要做的」失败，修复后通过；其中续跑用例连续失败两次再成功，验证恢复依据保留。记录补换行用例先复现三行而非四行，修复后确认旧半行保留、started／done 各自可解析。版本／路径提示、两类跳过 replace 的提示也先确认缺失再补齐；原有用例增加了未动 pony 不报状态日志、正常退出不声称重试的断言。
 - 验证了什么：只运行本次相关用例和 `cargo test -p ranch --all-targets`（部署 26 个、dispatch 11 个，全通过）；`cargo clippy -p ranch --all-targets -- -D warnings`、`cargo fmt --check -p ranch` 各一次通过。沿用 `.target/r41c`，命令均等待前台完成。没有运行本轮范围外的全仓测试，没有真实 launchctl 或真实服务操作。
 - 拿主意／没做／坑：只落实主控采纳项；未改 PONY_HOME 继承或父进程识别方式，未改 corral、pony/src、fence、依赖和 Cargo.lock，未部署、合并或推送。没有新的主控待决定事项。本轮没有额外的工具或环境问题。
+
+## 主控审查
+
+- 照任务书 1.4 判断 pony：kickstart、`service install --yes`、不动、拒绝各分支都有用例；按 pid 查真实程序比 sha256；重启后最多等 30 秒核对 running、新 pid、目标程序；续跑按进程比对；`deploys.jsonl` 按字节逐行解析。DESIGN §3 和 pony README 已改成由 deploy 做。corral、pony/src、fence、依赖没动；测试里假 launchctl 和进程查询都是函数注入，生产程序没有测试开关。
+- 交叉审查（Claude Code opus xhigh）第一轮：必须改 1 条（替换服务定义时旧服务已卸下，汇报说 launchd 会再试，重跑报「没有要做的」，pony 一直停着），主控采纳并加采纳建议改 1–3、可以不改 3 和 4 的措辞部分；不采纳可以不改 1、2（理由见审查文件）。返工一次，同一审查者复核：可以合并。
+- 复核新提 2 条建议改，本次不改：1）上次部署在 `service install` 期间被 Ctrl-C、只留 started 记录时，续跑不会恢复 pony 服务；复查不通过也记成 failed，会误提议恢复（要用户确认、后果小）。2）测试保护只拦了 plist，没拦假的 `pony-status.json`（现在没有这样的用例）。两条都窄，交用户定要不要另开一件。
+- 主控在 r41c 上重跑：`cargo test --all-targets` 338 通过、0 失败、11 忽略；clippy、fmt 通过。
+结果：返工 1 次
