@@ -334,6 +334,21 @@ impl Fixture {
         self.engine.configs = config.chats;
         self.engine.config_file = Some(file);
     }
+
+    fn binding_reply(&self, thread: &str, text: &str) {
+        self.events
+            .emit(Event::Message(Message {
+                channel: "CNEW".into(),
+                id: "followup".into(),
+                thread: Some(thread.into()),
+                sender: "UOWNER".into(),
+                mentioned: false,
+                text: text.into(),
+                attachments: false,
+                at: 12.,
+            }))
+            .unwrap();
+    }
 }
 
 #[test]
@@ -365,6 +380,102 @@ fn binding_writes_config_then_reload_routes_the_next_message() {
         f.corral.sent,
         vec![("ranch/main".into(), "请检查代码".into())]
     );
+}
+
+#[test]
+fn binding_thread_followup_without_mention_reaches_main_and_reply_returns() {
+    let mut f = Fixture::binding();
+    f.binding_message("bind", "绑 ranch");
+    f.step(10.);
+    assert_eq!(f.texts(), "已绑 ranch\n• main — 空闲");
+    f.reload_binding_config();
+    f.binding_reply("bind", "回复 收到 即可");
+    f.step(12.);
+    assert_eq!(
+        f.corral.sent,
+        vec![("ranch/main".into(), "回复 收到 即可".into())]
+    );
+    assert_eq!(f.memory.borrow().posted[1].text, "→ ranch/main");
+
+    let s = f.corral.agents.get_mut("ranch/main").unwrap();
+    s.turn_started = Some(13.);
+    s.last_event_at = Some(14.);
+    f.corral.replies.insert(
+        "ranch/main".into(),
+        Ok(Reply {
+            instance: "instance-1".into(),
+            text: "收到".into(),
+            at: 14.,
+        }),
+    );
+    f.step(14.);
+    f.step(16.);
+    let memory = f.memory.borrow();
+    assert_eq!(memory.posted.len(), 3);
+    assert_eq!(memory.posted[2].text, "收到");
+    assert!(memory.posted[2].notify);
+    for posted in &memory.posted {
+        assert_eq!(posted.channel, "CNEW");
+        assert_eq!(posted.thread.as_deref(), Some("bind"));
+    }
+}
+
+#[test]
+fn binding_thread_without_main_handles_followup_before_or_after_main_starts() {
+    for started in [true, false] {
+        let mut f = Fixture::binding();
+        f.corral.agents.remove("ranch/main");
+        f.binding_message("bind", "绑 ranch");
+        f.step(10.);
+        assert_eq!(f.texts(), "已绑 ranch\nranch/main 没在跑");
+        f.reload_binding_config();
+        if started {
+            f.corral
+                .agents
+                .insert("ranch/main".into(), status("ranch/main", "idle"));
+        }
+        f.binding_reply("bind", "回复 收到 即可");
+        f.step(12.);
+        if started {
+            assert_eq!(
+                f.corral.sent,
+                vec![("ranch/main".into(), "回复 收到 即可".into())]
+            );
+        } else {
+            assert!(f.corral.sent.is_empty());
+        }
+        let memory = f.memory.borrow();
+        assert_eq!(memory.posted.len(), 2);
+        assert_eq!(
+            memory.posted[1].text,
+            if started {
+                "→ ranch/main"
+            } else {
+                "ranch/main 没在跑，没送"
+            }
+        );
+        assert_eq!(memory.posted[1].channel, "CNEW");
+        assert_eq!(memory.posted[1].thread.as_deref(), Some("bind"));
+    }
+}
+
+#[test]
+fn rejected_binding_thread_followup_without_mention_is_ignored() {
+    let mut f = Fixture::binding();
+    f.binding_message("refused", "绑 invalid/repo");
+    f.step(8.);
+    assert!(f.texts().contains("仓库名不合规则，没绑"));
+    assert!(f.corral.sent.is_empty());
+    // Bind successfully in another thread so an erroneous mapping would route the reply.
+    f.binding_message("bind", "绑 ranch");
+    f.step(10.);
+    assert!(f.texts().contains("已绑 ranch"));
+    f.reload_binding_config();
+    let before = f.texts();
+    f.binding_reply("refused", "回复 收到 即可");
+    f.step(12.);
+    assert!(f.corral.sent.is_empty());
+    assert_eq!(f.texts(), before);
 }
 
 #[test]

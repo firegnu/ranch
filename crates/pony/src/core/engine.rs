@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     chats::{ChannelInfo, Connection, ConnectionInfo, Event, HistoryAfter, Message, Outgoing},
-    corral::{Agent, Corral, Status},
+    corral::{self, Agent, Corral, Status},
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -410,15 +410,20 @@ impl Engine {
         let status = match corral.status(&name) {
             Ok(s) => s,
             Err(e) if e.exit == Some(2) => {
+                let reason = if known.as_ref().is_some_and(|t| t.instance.is_empty()) {
+                    "没在跑"
+                } else {
+                    "已经不在了"
+                };
                 self.save()?;
-                self.post(&address, &format!("{name} 已经不在了，没送"), false, false)?;
+                self.post(&address, &format!("{name} {reason}，没送"), false, false)?;
                 return Ok(());
             }
             Err(e) => return Err(corral_error(e)),
         };
         let reopened = known
             .as_ref()
-            .is_some_and(|t| t.instance != status.instance);
+            .is_some_and(|t| !t.instance.is_empty() && t.instance != status.instance);
         let immediate_head = !status.paused
             && matches!(status.state.as_str(), "idle" | "unknown")
             && self
@@ -578,10 +583,26 @@ impl Engine {
         let text = match result {
             Ok(()) => {
                 let name = format!("{repo}/main");
-                let status = self
-                    .agent_summary(&name, corral, at)
+                let status = corral.status(&name);
+                let instance = status
+                    .as_ref()
+                    .map(|s| s.instance.clone())
+                    .unwrap_or_default();
+                let summary = self
+                    .agent_summary(&name, status, at)
                     .unwrap_or_else(|| format!("{name} 没在跑"));
-                format!("已绑 {repo}\n{status}")
+                if self.connections[&address.kind].limits().threads {
+                    self.state.threads.retain(|t| t.address != *address);
+                    self.state.threads.push(Thread {
+                        address: address.clone(),
+                        agent: name,
+                        instance,
+                        created: at,
+                        used: at,
+                    });
+                    self.save()?;
+                }
+                format!("已绑 {repo}\n{summary}")
             }
             Err(error) => {
                 let text = match error.code.as_str() {
@@ -609,8 +630,8 @@ impl Engine {
         self.post(address, text, false, false).map(|_| ())
     }
 
-    fn agent_summary(&self, name: &str, corral: &mut dyn Corral, at: f64) -> Option<String> {
-        let s = match corral.status(name) {
+    fn agent_summary(&self, name: &str, status: corral::Result<Status>, at: f64) -> Option<String> {
+        let s = match status {
             Ok(s) => Some(s),
             Err(e) if e.exit == Some(2) => return None,
             Err(_) => None,
@@ -678,7 +699,8 @@ impl Engine {
                     .split_once('/')
                     .is_some_and(|(r, _)| r == channel.repo)
             }) {
-                if let Some(line) = self.agent_summary(&agent.name, corral, at) {
+                if let Some(line) = self.agent_summary(&agent.name, corral.status(&agent.name), at)
+                {
                     lines.push(line);
                 }
             }
