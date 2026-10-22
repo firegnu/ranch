@@ -522,8 +522,7 @@ impl Engine {
         at: f64,
     ) -> Result<()> {
         if !name_segment(repo) {
-            self.post(address, "仓库名不合规则，没绑：须以 ASCII 字母或数字开头，只能含字母、数字、点、下划线和连字符", false, false)?;
-            return Ok(());
+            return self.refuse_binding(address, "invalid_repo", "仓库名不合规则，没绑：须以 ASCII 字母或数字开头，只能含字母、数字、点、下划线和连字符");
         }
         let channel = self
             .connections
@@ -533,17 +532,21 @@ impl Engine {
         match channel.map(|channel| channel.private) {
             Ok(Some(true)) => {}
             Ok(Some(false)) => {
-                self.post(address, "这是公开频道，没绑：主控的回复会带仓库代码和路径，整个工作区都看得到。请建私有频道再绑", false, false)?;
-                return Ok(());
+                return self.refuse_binding(address, "public_channel", "这是公开频道，没绑：主控的回复会带仓库代码和路径，整个工作区都看得到。请建私有频道再绑");
             }
-            Ok(None) | Err(_) => {
-                self.post(
+            Ok(None) => {
+                return self.refuse_binding(
                     address,
+                    "channel_unknown",
                     "查不到这个频道是不是私有的，没绑；请稍后再试",
-                    false,
-                    false,
-                )?;
-                return Ok(());
+                );
+            }
+            Err(error) => {
+                return self.refuse_binding(
+                    address,
+                    &error.code,
+                    "查不到这个频道是不是私有的，没绑；请稍后再试",
+                );
             }
         }
         if let Some(binding) = self
@@ -561,13 +564,11 @@ impl Engine {
                 .and_then(|channel| channel.name)
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| binding.id.clone());
-            self.post(
+            return self.refuse_binding(
                 address,
+                "repo_bound",
                 &format!("{repo} 已经绑在 #{display}，没绑"),
-                false,
-                false,
-            )?;
-            return Ok(());
+            );
         }
         let result = self
             .config_file
@@ -582,14 +583,26 @@ impl Engine {
                     .unwrap_or_else(|| format!("{name} 没在跑"));
                 format!("已绑 {repo}\n{status}")
             }
-            Err(error) => match error.code.as_str() {
-                "config_invalid" => "配置现在有错，没绑；请先修好配置".into(),
-                "changed" => "配置刚被改过，请再说一次".into(),
-                _ => format!("写配置失败，没绑：{}", safe_code(&error.code)),
-            },
+            Err(error) => {
+                let text = match error.code.as_str() {
+                    "config_invalid" => "配置现在有错，没绑；请先修好配置".into(),
+                    "changed" => "配置刚被改过，请再说一次".into(),
+                    "format_not_preserved" => {
+                        "配置文件的格式没法原样保留，没绑；请手动加这一行".into()
+                    }
+                    "config_not_writable" => "配置文件是链接或只读的，没绑；请手动加这一行".into(),
+                    _ => format!("写配置失败，没绑：{}", safe_code(&error.code)),
+                };
+                return self.refuse_binding(address, &error.code, &text);
+            }
         };
         self.post(address, &text, false, false)?;
         Ok(())
+    }
+
+    fn refuse_binding(&mut self, address: &Address, code: &str, text: &str) -> Result<()> {
+        self.log.push(format!("bind_failed {}", safe_code(code)));
+        self.post(address, text, false, false).map(|_| ())
     }
 
     fn agent_summary(&self, name: &str, corral: &mut dyn Corral, at: f64) -> Option<String> {

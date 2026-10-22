@@ -5,6 +5,7 @@ use std::{
     collections::HashSet,
     fs, io,
     io::Write,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 use toml_edit::{DocumentMut, InlineTable, Item, Table, Value, value};
@@ -226,14 +227,51 @@ impl ConfigFile {
         Ok(())
     }
 
+    fn writable_permissions(&self) -> Result<fs::Permissions> {
+        let metadata = fs::symlink_metadata(&self.path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                Error::new("changed", "configuration changed")
+            } else {
+                files::io_error(&self.path, error)
+            }
+        })?;
+        let refused = || {
+            Error::new(
+                "config_not_writable",
+                "configuration is linked or read-only",
+            )
+        };
+        if !metadata.is_file() || metadata.nlink() > 1 {
+            return Err(refused());
+        }
+        // Opening without truncate/create checks effective user access, including ACLs.
+        fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&self.path)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::PermissionDenied {
+                    refused()
+                } else {
+                    files::io_error(&self.path, error)
+                }
+            })?;
+        Ok(metadata.permissions())
+    }
+
     fn prepare_binding(&self, kind: &str, channel: &str, repo: &str) -> Result<Binding<'_>> {
+        let permissions = self.writable_permissions()?;
         let current = self.current()?;
         parse(&current, &self.path)?;
         self.unchanged(&current)?;
-        let mut document: DocumentMut = current
+        let mut editable = current;
+        if !editable.ends_with('\n') {
+            editable.push('\n');
+        }
+        let mut document: DocumentMut = editable
             .parse()
             .map_err(|_| Error::new("config_invalid", "invalid TOML"))?;
-        if document.to_string() != current {
+        if document.to_string() != editable {
             return Err(Error::new(
                 "format_not_preserved",
                 "cannot preserve TOML formatting",
@@ -262,9 +300,7 @@ impl ConfigFile {
         let prepare = || -> io::Result<tempfile::NamedTempFile> {
             let mut temporary = tempfile::NamedTempFile::new_in(self.path.parent().unwrap())?;
             temporary.write_all(candidate.as_bytes())?;
-            temporary
-                .as_file()
-                .set_permissions(fs::metadata(&self.path)?.permissions())?;
+            temporary.as_file().set_permissions(permissions)?;
             temporary.as_file().sync_all()?;
             Ok(temporary)
         };
@@ -283,6 +319,7 @@ struct Binding<'a> {
 
 impl Binding<'_> {
     fn commit(self) -> Result<()> {
+        self.config.writable_permissions()?;
         self.config.unchanged(&self.config.current()?)?;
         self.temporary
             .persist(&self.config.path)

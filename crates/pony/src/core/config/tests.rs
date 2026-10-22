@@ -60,6 +60,26 @@ fn binding_preserves_array_of_tables_comments_and_order() {
 }
 
 #[test]
+fn binding_accepts_missing_final_newline_in_both_channel_formats() {
+    let kind = CHATS[0].kind();
+    for channels in [
+        "channels = [{id = 'COLD', repo = 'old'}] # keep".to_owned(),
+        format!("[[{kind}.channels]]\nid = 'COLD'\nrepo = 'old' # keep"),
+    ] {
+        let source = format!("[{kind}]\nowner = 'UOWNER'\n{channels}");
+        let (home, file) = fixture(&source);
+        file.bind(kind, "CNEW", "new").unwrap();
+        let written = fs::read_to_string(&file.path).unwrap();
+        assert!(written.ends_with('\n'));
+        assert!(written.contains("# keep"));
+        let config = load(home.path()).unwrap().unwrap();
+        assert_eq!(config.chats[0].channels.len(), 2);
+        assert_eq!(config.chats[0].channels[0].repo, "old");
+        assert_eq!(config.chats[0].channels[1].id, "CNEW");
+    }
+}
+
+#[test]
 fn binding_rechecks_disk_after_staging_and_discards_the_temporary_file() {
     let kind = CHATS[0].kind();
     let source = format!("[{kind}]\nowner = 'UOWNER'\nchannels = []\n");
@@ -70,6 +90,65 @@ fn binding_rechecks_disk_after_staging_and_discards_the_temporary_file() {
     assert_eq!(binding.commit().unwrap_err().code, "changed");
     assert_eq!(fs::read_to_string(&file.path).unwrap(), edited);
     assert_eq!(fs::read_dir(home.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn binding_rechecks_links_read_only_access_and_removal_before_rename() {
+    use std::os::unix::fs::{MetadataExt, symlink};
+    let kind = CHATS[0].kind();
+    let source = format!("[{kind}]\nowner = 'UOWNER'\nchannels = []\n");
+    for case in ["removed", "symlink", "hardlink", "readonly"] {
+        let (home, file) = fixture(&source);
+        let binding = file.prepare_binding(kind, "CNEW", "new").unwrap();
+        let target = home.path().join("original.toml");
+        if case == "readonly" {
+            fs::set_permissions(&file.path, fs::Permissions::from_mode(0o444)).unwrap();
+        } else {
+            fs::rename(&file.path, &target).unwrap();
+            if case == "symlink" {
+                symlink(&target, &file.path).unwrap();
+            } else if case == "hardlink" {
+                fs::hard_link(&target, &file.path).unwrap();
+            }
+        }
+        assert_eq!(
+            binding.commit().unwrap_err().code,
+            if case == "removed" {
+                "changed"
+            } else {
+                "config_not_writable"
+            }
+        );
+        if case == "removed" {
+            assert!(!file.path.exists());
+        } else if case == "symlink" {
+            assert!(
+                fs::symlink_metadata(&file.path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+        } else if case == "hardlink" {
+            assert_eq!(fs::metadata(&file.path).unwrap().nlink(), 2);
+        }
+        assert_eq!(
+            fs::read_to_string(if case == "readonly" {
+                &file.path
+            } else {
+                &target
+            })
+            .unwrap(),
+            source
+        );
+        assert_eq!(
+            fs::read_dir(home.path()).unwrap().count(),
+            if matches!(case, "removed" | "readonly") {
+                1
+            } else {
+                2
+            }
+        );
+    }
 }
 
 #[test]

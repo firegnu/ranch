@@ -401,6 +401,41 @@ fn binding_requires_a_confirmed_private_channel() {
         assert!(f.corral.sent.is_empty());
         assert!(f.corral.status_reads.is_empty());
         assert_eq!(f.memory.borrow().posted[0].thread.as_deref(), Some("bind"));
+        assert!(f.engine.log.contains(&format!(
+            "bind_failed {}",
+            if error {
+                "io"
+            } else if private == Some(false) {
+                "public_channel"
+            } else {
+                "channel_unknown"
+            }
+        )));
+    }
+}
+
+#[test]
+fn binding_failure_logs_only_one_sanitized_error_code() {
+    for (code, expected) in [
+        ("not_member", "not_member"),
+        ("private diagnostic\ncredential-value", "adapter_error"),
+    ] {
+        let mut f = Fixture::binding();
+        f.memory.borrow_mut().channel_errors.insert("CNEW".into());
+        f.memory.borrow_mut().adapter_error_code = Some(code.into());
+        f.binding_message("bind", "绑 ranch");
+        f.step(10.);
+        assert_eq!(
+            f.engine
+                .log
+                .iter()
+                .filter(|line| line.starts_with("bind_failed"))
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![format!("bind_failed {expected}")]
+        );
+        assert!(!f.engine.log.join("\n").contains("credential-value"));
+        assert!(!f.texts().contains(code));
     }
 }
 
@@ -413,6 +448,7 @@ fn binding_rejects_invalid_repository_names_without_writing() {
         f.binding_message("bind", &format!("绑 {repo}"));
         f.step(10.);
         assert!(f.texts().contains("仓库名不合规则"), "{}", f.texts());
+        assert!(f.engine.log.contains(&"bind_failed invalid_repo".into()));
         assert_eq!(std::fs::read(path).unwrap(), before);
         assert!(f.corral.status_reads.is_empty());
     }
@@ -444,6 +480,7 @@ fn binding_reports_the_existing_channel_name_or_id() {
         );
         assert_eq!(std::fs::read_to_string(path).unwrap(), source);
         assert!(f.corral.sent.is_empty());
+        assert!(f.engine.log.contains(&"bind_failed repo_bound".into()));
     }
 }
 
@@ -480,6 +517,14 @@ fn binding_refuses_invalid_or_changed_config_without_overwriting() {
         f.step(10.);
         assert!(f.texts().contains(expected), "{}", f.texts());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        assert!(f.engine.log.contains(&format!(
+            "bind_failed {}",
+            if replacement.starts_with('#') {
+                "changed"
+            } else {
+                "config_invalid"
+            }
+        )));
         assert!(f.corral.status_reads.is_empty());
         assert_eq!(f.memory.borrow().posted[0].thread.as_deref(), Some("bind"));
         if replacement.starts_with('#') {
@@ -503,6 +548,93 @@ fn binding_reports_non_utf8_config_as_invalid() {
 }
 
 #[test]
+fn binding_requests_config_repair_when_reload_has_disabled_writes() {
+    let mut f = Fixture::binding();
+    let path = f._dir.path().join("config.toml");
+    let changed = format!(
+        "proxy = 'http://localhost:9'\n{}",
+        std::fs::read_to_string(&path).unwrap()
+    );
+    std::fs::write(&path, &changed).unwrap();
+    f.engine.config_file = None;
+    f.binding_message("bind", "绑 ranch");
+    f.step(10.);
+    assert_eq!(f.texts(), "配置现在有错，没绑；请先修好配置");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), changed);
+    assert!(f.corral.status_reads.is_empty());
+}
+
+#[test]
+fn binding_explains_unpreservable_format_without_claiming_a_disk_failure() {
+    let mut f = Fixture::binding();
+    let path = f._dir.path().join("config.toml");
+    let source = format!("\u{feff}{}", std::fs::read_to_string(&path).unwrap());
+    std::fs::write(&path, &source).unwrap();
+    f.reload_binding_config();
+    f.binding_message("bind", "绑 ranch");
+    f.step(10.);
+    assert_eq!(
+        f.texts(),
+        "配置文件的格式没法原样保留，没绑；请手动加这一行"
+    );
+    assert!(
+        f.engine
+            .log
+            .contains(&"bind_failed format_not_preserved".into())
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), source);
+}
+
+#[test]
+fn binding_preserves_linked_and_current_user_read_only_configs() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    for case in ["symlink", "hardlink", "readonly", "owner-readonly"] {
+        let mut f = Fixture::binding();
+        let path = f._dir.path().join("config.toml");
+        let target = f._dir.path().join("original.toml");
+        let source = std::fs::read(&path).unwrap();
+        match case {
+            "symlink" => {
+                std::fs::rename(&path, &target).unwrap();
+                symlink(&target, &path).unwrap();
+            }
+            "hardlink" => std::fs::hard_link(&path, &target).unwrap(),
+            _ => std::fs::set_permissions(
+                &path,
+                std::fs::Permissions::from_mode(if case == "readonly" { 0o444 } else { 0o466 }),
+            )
+            .unwrap(),
+        }
+        f.binding_message("bind", "绑 ranch");
+        f.step(10.);
+        assert_eq!(
+            f.texts(),
+            "配置文件是链接或只读的，没绑；请手动加这一行",
+            "{case}"
+        );
+        assert!(
+            f.engine
+                .log
+                .contains(&"bind_failed config_not_writable".into())
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), source);
+        if case == "symlink" {
+            assert!(
+                std::fs::symlink_metadata(&path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(std::fs::read(&target).unwrap(), source);
+        } else if case == "hardlink" {
+            assert_eq!(std::fs::metadata(&path).unwrap().nlink(), 2);
+            assert_eq!(std::fs::read(&target).unwrap(), source);
+        }
+        assert!(f.corral.status_reads.is_empty());
+    }
+}
+
+#[test]
 fn binding_write_failure_reports_only_the_code_and_preserves_config() {
     use std::os::unix::fs::PermissionsExt;
     let mut f = Fixture::binding();
@@ -519,6 +651,7 @@ fn binding_write_failure_reports_only_the_code_and_preserves_config() {
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
     result.unwrap();
     assert_eq!(f.texts(), "写配置失败，没绑：io");
+    assert!(f.engine.log.contains(&"bind_failed io".into()));
     assert_eq!(std::fs::read(home.join("config.toml")).unwrap(), source);
     assert_eq!(std::fs::read_dir(&home).unwrap().count(), 1);
     assert!(f.corral.status_reads.is_empty());
