@@ -1,7 +1,17 @@
 use super::{Error, Result, files};
 use crate::chats::CHATS;
 use serde::Deserialize;
-use std::{collections::HashSet, fs, io, path::Path};
+use std::{
+    collections::HashSet,
+    fs, io,
+    io::Write,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    path::{Path, PathBuf},
+};
+use toml_edit::{DocumentMut, InlineTable, Item, Table, Value, value};
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, PartialEq)]
 pub struct Config {
@@ -54,11 +64,7 @@ impl ChatConfig {
                 .ok_or_else(|| Problem::new(&position, "expected a channel binding"))?;
             let id = string(table.get("id"), &format!("{position}.id"))?;
             let repo = string(table.get("repo"), &format!("{position}.repo"))?;
-            if !repo.as_bytes()[0].is_ascii_alphanumeric()
-                || !repo
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            {
+            if !name_segment(&repo) {
                 return Err(Problem::new(
                     format!("{position}.repo"),
                     "expected an ASCII repository name starting with a letter or digit and containing only letters, digits, '.', '_' or '-'",
@@ -95,6 +101,11 @@ fn string(value: Option<&toml::Value>, position: &str) -> std::result::Result<St
 }
 
 pub fn load(home: &Path) -> Result<Option<Config>> {
+    Ok(load_with_source(home)?.map(|(config, _)| config))
+}
+
+/// Keep exactly the bytes that were validated and adopted by the runtime.
+pub fn load_with_source(home: &Path) -> Result<Option<(Config, ConfigFile)>> {
     let path = home.join("config.toml");
     if let Err(error) = fs::symlink_metadata(&path) {
         if error.kind() == io::ErrorKind::NotFound {
@@ -116,6 +127,11 @@ pub fn load(home: &Path) -> Result<Option<Config>> {
             ));
         }
     };
+    let config = parse(&source, &path)?;
+    Ok(Some((config, ConfigFile { path, source })))
+}
+
+fn parse(source: &str, path: &Path) -> Result<Config> {
     let syntax_error = |error: toml::de::Error| {
         let offset = error.span().map_or(0, |span| span.start).min(source.len());
         let prefix = &source.as_bytes()[..offset];
@@ -129,8 +145,8 @@ pub fn load(home: &Path) -> Result<Option<Config>> {
             format!("{}:{line}:{column}: invalid TOML", path.display()),
         )
     };
-    let document = toml::de::DeTable::parse(&source).map_err(syntax_error)?;
-    validate_keys(document.get_ref(), &source, &path)?;
+    let document = toml::de::DeTable::parse(source).map_err(syntax_error)?;
+    validate_keys(document.get_ref(), source, path)?;
     let table =
         toml::Table::deserialize(toml::de::Deserializer::from(document)).map_err(syntax_error)?;
     let problem = |p: Problem| {
@@ -169,11 +185,147 @@ pub fn load(home: &Path) -> Result<Option<Config>> {
             })?);
         }
     }
-    Ok(Some(Config {
+    Ok(Config {
         corral,
         proxy,
         chats,
-    }))
+    })
+}
+
+pub(crate) fn name_segment(s: &str) -> bool {
+    s.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+}
+
+pub struct ConfigFile {
+    path: PathBuf,
+    source: String,
+}
+
+impl ConfigFile {
+    pub fn bind(&self, kind: &str, channel: &str, repo: &str) -> Result<()> {
+        self.prepare_binding(kind, channel, repo)?.commit()
+    }
+
+    fn current(&self) -> Result<String> {
+        fs::read_to_string(&self.path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                Error::new("changed", "configuration changed")
+            } else if error.kind() == io::ErrorKind::InvalidData {
+                Error::new("config_invalid", "configuration is not UTF-8")
+            } else {
+                files::io_error(&self.path, error)
+            }
+        })
+    }
+
+    fn unchanged(&self, current: &str) -> Result<()> {
+        if current != self.source {
+            return Err(Error::new("changed", "configuration changed"));
+        }
+        Ok(())
+    }
+
+    fn writable_permissions(&self) -> Result<fs::Permissions> {
+        let metadata = fs::symlink_metadata(&self.path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                Error::new("changed", "configuration changed")
+            } else {
+                files::io_error(&self.path, error)
+            }
+        })?;
+        let refused = || {
+            Error::new(
+                "config_not_writable",
+                "configuration is linked or read-only",
+            )
+        };
+        if !metadata.is_file() || metadata.nlink() > 1 {
+            return Err(refused());
+        }
+        // Opening without truncate/create checks effective user access, including ACLs.
+        fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&self.path)
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::PermissionDenied {
+                    refused()
+                } else {
+                    files::io_error(&self.path, error)
+                }
+            })?;
+        Ok(metadata.permissions())
+    }
+
+    fn prepare_binding(&self, kind: &str, channel: &str, repo: &str) -> Result<Binding<'_>> {
+        let permissions = self.writable_permissions()?;
+        let current = self.current()?;
+        parse(&current, &self.path)?;
+        self.unchanged(&current)?;
+        let mut editable = current;
+        if !editable.ends_with('\n') {
+            editable.push('\n');
+        }
+        let mut document: DocumentMut = editable
+            .parse()
+            .map_err(|_| Error::new("config_invalid", "invalid TOML"))?;
+        if document.to_string() != editable {
+            return Err(Error::new(
+                "format_not_preserved",
+                "cannot preserve TOML formatting",
+            ));
+        }
+        let channels = document
+            .get_mut(kind)
+            .and_then(Item::as_table_like_mut)
+            .and_then(|table| table.get_mut("channels"))
+            .ok_or_else(|| Error::new("config_invalid", "missing channel bindings"))?;
+        if let Some(array) = channels.as_array_mut() {
+            let mut binding = InlineTable::new();
+            binding.insert("id", Value::from(channel));
+            binding.insert("repo", Value::from(repo));
+            array.push(binding);
+        } else if let Some(array) = channels.as_array_of_tables_mut() {
+            let mut binding = Table::new();
+            binding.insert("id", value(channel));
+            binding.insert("repo", value(repo));
+            array.push(binding);
+        } else {
+            return Err(Error::new("config_invalid", "expected channel bindings"));
+        }
+        let candidate = document.to_string();
+        parse(&candidate, &self.path)?;
+        let prepare = || -> io::Result<tempfile::NamedTempFile> {
+            let mut temporary = tempfile::NamedTempFile::new_in(self.path.parent().unwrap())?;
+            temporary.write_all(candidate.as_bytes())?;
+            temporary.as_file().set_permissions(permissions)?;
+            temporary.as_file().sync_all()?;
+            Ok(temporary)
+        };
+        let temporary = prepare().map_err(|error| files::io_error(&self.path, error))?;
+        Ok(Binding {
+            config: self,
+            temporary,
+        })
+    }
+}
+
+struct Binding<'a> {
+    config: &'a ConfigFile,
+    temporary: tempfile::NamedTempFile,
+}
+
+impl Binding<'_> {
+    fn commit(self) -> Result<()> {
+        self.config.writable_permissions()?;
+        self.config.unchanged(&self.config.current()?)?;
+        self.temporary
+            .persist(&self.config.path)
+            .map_err(|error| files::io_error(&self.config.path, error.error))?;
+        Ok(())
+    }
 }
 
 fn validate_keys(table: &toml::de::DeTable<'_>, source: &str, path: &Path) -> Result<()> {

@@ -79,8 +79,35 @@ fn missing(log: &Log, snapshot: &mut Snapshot) -> Result<()> {
     Ok(())
 }
 
+fn reload_config(
+    home: &Path,
+    active: &Config,
+    had_error: bool,
+    config_file: &mut Option<config::ConfigFile>,
+) -> Result<Option<Config>> {
+    let next = config::load_with_source(home).and_then(|loaded| {
+        if let Some((next, _)) = &loaded
+            && (next != active || had_error)
+        {
+            validate_credentials(home, next)?;
+        }
+        Ok(loaded)
+    });
+    match next {
+        Ok(Some((next, file))) => {
+            *config_file = Some(file);
+            Ok(Some(next))
+        }
+        Ok(None) => Ok(None),
+        Err(error) => {
+            *config_file = None;
+            Err(error)
+        }
+    }
+}
+
 fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
-    let Some(mut active) = config::load(home)? else {
+    let Some((mut active, config_file)) = config::load_with_source(home)? else {
         return missing(log, snapshot);
     };
     snapshot.chats = status::chats(&active, "off", None);
@@ -93,6 +120,7 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
         active.chats.clone(),
         connect(home, &active, &store)?,
     );
+    engine.config_file = Some(config_file);
     snapshot.chats = status::chats(&active, "connecting", Some(now()));
     snapshot.save(home)?;
     log.event("run_started")?;
@@ -101,10 +129,14 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
         if STOP.load(Ordering::Relaxed) != 0 {
             break;
         }
-        let next = match config::load(home) {
+        let next = match reload_config(
+            home,
+            &active,
+            snapshot.config_error.is_some(),
+            &mut engine.config_file,
+        ) {
             Ok(None) => return missing(log, snapshot),
-            Ok(Some(next)) if next == active && snapshot.config_error.is_none() => Ok(next),
-            Ok(Some(next)) => validate_credentials(home, &next).map(|()| next),
+            Ok(Some(next)) => Ok(next),
             Err(error) => Err(error),
         };
         match next {
@@ -244,4 +276,52 @@ fn connect(
         connections.insert(chat.kind.clone(), connection);
     }
     Ok(connections)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    #[test]
+    fn reload_error_disables_binding_until_credentials_are_valid() {
+        let home = tempfile::tempdir().unwrap();
+        fs::set_permissions(home.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let kind = CHATS[0].kind();
+        let source = format!("[{kind}]\nowner = 'UOWNER'\nchannels = []\n");
+        let path = home.path().join("config.toml");
+        fs::write(&path, &source).unwrap();
+        let (active, file) = config::load_with_source(home.path()).unwrap().unwrap();
+        let mut config_file = Some(file);
+        let changed = format!("proxy = 'http://localhost:9'\n{source}");
+        fs::write(&path, &changed).unwrap();
+        for had_error in [false, true] {
+            let error = reload_config(home.path(), &active, had_error, &mut config_file)
+                .err()
+                .unwrap();
+            assert_eq!(error.code, "secrets_missing");
+            assert!(config_file.is_none());
+            assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+        }
+        let secrets = home.path().join("secrets");
+        fs::create_dir(&secrets).unwrap();
+        fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700)).unwrap();
+        let credentials = CHATS[0]
+            .secret_keys()
+            .iter()
+            .map(|key| format!("{key} = 'test-only'\n"))
+            .collect::<String>();
+        let path = secrets.join(format!("{kind}.toml"));
+        fs::write(&path, credentials).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        let updated = reload_config(home.path(), &active, true, &mut config_file)
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.proxy.as_deref(), Some("http://localhost:9"));
+        config_file.unwrap().bind(kind, "CNEW", "new").unwrap();
+        assert_eq!(
+            config::load(home.path()).unwrap().unwrap().chats[0].channels[0].repo,
+            "new"
+        );
+    }
 }
