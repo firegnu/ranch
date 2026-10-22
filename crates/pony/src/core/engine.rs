@@ -2,8 +2,8 @@ use super::{
     Error, Result,
     config::{ChatConfig, ConfigFile, name_segment},
     state::{
-        Address, Backfill, Cursor, Expired, Pending, Phase, Seen, State, Store, Thread,
-        Verification, Watch,
+        Address, Backfill, Cursor, Expired, Interrupt, Pending, Phase, QuestionContext, Seen,
+        State, Store, Thread, Verification, Watch,
     },
 };
 use crate::{
@@ -304,6 +304,41 @@ impl Engine {
             self.save()?;
             return Ok(());
         }
+        let text = m.text.trim_start();
+        let agents = corral.list().map_err(corral_error)?;
+        let words: Vec<_> = text.split_whitespace().collect();
+        let stop = match words.as_slice() {
+            ["停" | "打断"] => Some(
+                known
+                    .as_ref()
+                    .map_or_else(|| format!("{}/main", binding.repo), |t| t.agent.clone()),
+            ),
+            ["停" | "打断", target]
+                if known.is_none() && (target.contains('/') || name_segment(target)) =>
+            {
+                if target
+                    .split_once('/')
+                    .is_some_and(|(repo, _)| repo != binding.repo)
+                {
+                    self.save()?;
+                    return self.say(&address, "只能停本频道仓库的 agent，没按", false);
+                }
+                let name = if target.contains('/') {
+                    (*target).to_owned()
+                } else {
+                    format!("{}/{target}", binding.repo)
+                };
+                if !agents.iter().any(|a| a.name == name) {
+                    self.save()?;
+                    return self.say(&address, &format!("没有 {name} 这个 agent，没按"), false);
+                }
+                Some(name)
+            }
+            _ => None,
+        };
+        if let Some(name) = stop {
+            return self.stop_message(&address, &name, &m, corral, at, offline);
+        }
         if offline && at - m.at > 12. * 3600. {
             self.save()?;
             self.post(
@@ -314,13 +349,11 @@ impl Engine {
             )?;
             return Ok(());
         }
-        let text = m.text.trim_start();
         if text.is_empty() && m.attachments {
             self.save()?;
             self.say(&address, "附件没送，只收文字", false)?;
             return Ok(());
         }
-        let agents = corral.list().map_err(corral_error)?;
         if matches!(text.trim_end(), "?" | "？") {
             let summary = self.summary(kind, &binding.repo, &agents, corral, at)?;
             self.save()?;
@@ -426,6 +459,49 @@ impl Engine {
         let reopened = known
             .as_ref()
             .is_some_and(|t| !t.instance.is_empty() && t.instance != status.instance);
+        let mut question = known.as_ref().and_then(|t| t.question.clone());
+        // A handled prompt only covers answers still queued (or its pending Esc).
+        // A completed, withdrawn or failed answer must not turn later chat into answers.
+        if question.as_ref().is_some_and(|q| q.handled)
+            && !self
+                .state
+                .pending
+                .iter()
+                .any(|p| p.address == address && p.question_answer && p.phase == Phase::Queued)
+            && !self.state.interrupts.iter().any(|i| i.agent == name)
+        {
+            question = None;
+        }
+        let question_reason = question.as_ref().and_then(|q| {
+            if offline {
+                Some("离线期间发的回答，没按 Esc")
+            } else if q.handled {
+                Some("这条提问已处理过，没再按 Esc")
+            } else if q.instance != status.instance {
+                Some("它重开过，没按 Esc")
+            } else if status.paused {
+                Some("暂停中，没按 Esc")
+            } else if status.state != "blocked" {
+                Some("提问框已经不在了，没按 Esc")
+            } else if status.kind.as_deref() != Some("claude")
+                || status.last_tool.as_deref() != Some("AskUserQuestion")
+                || q.state_started.is_none()
+                || q.state_started != status.state_started
+            {
+                Some("提问框已换或无法核对，没按 Esc")
+            } else if human_active(&status, at) {
+                Some("你刚在电脑上操作过，没按 Esc")
+            } else if self.state.interrupts.iter().any(|i| i.agent == name) {
+                Some("已经按过 Esc，正在等它停下，没再按")
+            } else {
+                None
+            }
+        });
+        let answer = question.is_some();
+        let close_question = answer && question_reason.is_none();
+        if let Some(q) = &mut question {
+            q.handled = true;
+        }
         let immediate_head = !status.paused
             && matches!(status.state.as_str(), "idle" | "unknown")
             && self
@@ -447,11 +523,16 @@ impl Engine {
             .count()
             + 1
             - usize::from(immediate_head);
-        let queued = status.paused
+        let queued = answer
+            || status.paused
             || !matches!(status.state.as_str(), "idle" | "unknown")
             || self.state.pending.iter().any(|p| p.agent == name);
         let explanation = if status.paused {
             "（暂停中，恢复后再送）".into()
+        } else if answer
+            && (close_question || self.state.interrupts.iter().any(|i| i.agent == name))
+        {
+            "（关掉提问框后就送）".into()
         } else if status.state == "blocked" {
             "（在等你处理对话框，处理完再送）".into()
         } else if queued {
@@ -468,6 +549,7 @@ impl Engine {
             instance: status.instance.clone(),
             created: known.as_ref().map_or(at, |t| t.created),
             used: at,
+            question,
         });
         let message_id = m.id.clone();
         let announcement = format!(
@@ -484,11 +566,16 @@ impl Engine {
             attachments: m.attachments,
             rejection_reported: false,
             verification: None,
+            question_answer: answer,
             address: address.clone(),
             message: m.id,
             agent: name.clone(),
-            instance: status.instance,
-            text: body,
+            instance: status.instance.clone(),
+            text: if answer {
+                format!("（这是对刚才提问的回答）\n{body}")
+            } else {
+                body.clone()
+            },
             at,
             queued,
             retry_at: at,
@@ -496,6 +583,19 @@ impl Engine {
             phase: Phase::Queued,
         });
         self.save()?;
+        if close_question {
+            if self.start_interrupt(&address, &status, corral, at, true)? {
+                self.state.pending.last_mut().expect("just queued").text =
+                    format!("（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n{body}");
+                self.save()?;
+            }
+        } else if let Some(reason) = question_reason {
+            self.say(
+                &address,
+                &format!("{reason}；回答排着，等空下来再送"),
+                false,
+            )?;
+        }
         self.log.push(format!(
             "route {} {} {}",
             identifier(&name),
@@ -511,6 +611,185 @@ impl Engine {
         self.save()?;
         self.report_attachments(self.state.pending.len() - 1)
     }
+    fn stop_message(
+        &mut self,
+        address: &Address,
+        name: &str,
+        message: &Message,
+        corral: &mut dyn Corral,
+        at: f64,
+        offline: bool,
+    ) -> Result<()> {
+        // Commit the input ID before any key, including errors and refused requests.
+        self.save()?;
+        if !name
+            .split_once('/')
+            .is_some_and(|(repo, _)| self.bound(&address.kind, repo))
+        {
+            return self.say(address, &self.unbound_message(&address.kind), false);
+        }
+        if offline {
+            return self.say(address, "离线期间发的「停」没执行，没按 Esc", false);
+        }
+        let status = match corral.status(name) {
+            Ok(status) => status,
+            Err(_) => return self.say(address, "读不出 agent 状态，没按 Esc", false),
+        };
+        let known = self
+            .state
+            .threads
+            .iter()
+            .find(|t| t.address == *address)
+            .cloned();
+        self.state.threads.retain(|t| t.address != *address);
+        self.state.threads.push(Thread {
+            address: address.clone(),
+            agent: name.into(),
+            instance: status.instance.clone(),
+            created: known.as_ref().map_or(at, |t| t.created),
+            used: at,
+            question: known.as_ref().and_then(|t| t.question.clone()),
+        });
+        let reason = if known
+            .as_ref()
+            .is_some_and(|t| !t.instance.is_empty() && t.instance != status.instance)
+        {
+            Some("它重开过，没按 Esc")
+        } else if status.kind.as_deref() == Some("agy") {
+            Some("agy 被打断后 corral 认不出，打断不了，没按；请回电脑")
+        } else if status.paused {
+            Some("暂停中，没按 Esc")
+        } else if status.state == "idle" {
+            Some("已经空闲，没按 Esc")
+        } else if status.state == "starting" {
+            Some("启动中，没按 Esc")
+        } else if !matches!(status.state.as_str(), "working" | "blocked") {
+            Some("读不出 agent 当前是否在干活，没按 Esc")
+        } else if status.turn_started.is_some_and(|t| t > message.at) {
+            Some("它已经开了新的一轮，没按 Esc")
+        } else if human_active(&status, at) {
+            Some("你刚在电脑上操作过，没按 Esc")
+        } else if self.state.interrupts.iter().any(|i| i.agent == name) {
+            Some("已经按过 Esc，正在等它停下，没再按")
+        } else {
+            None
+        };
+        self.save()?;
+        if let Some(reason) = reason {
+            self.say(address, reason, false)
+        } else {
+            self.start_interrupt(address, &status, corral, at, false)
+                .map(|_| ())
+        }
+    }
+
+    fn start_interrupt(
+        &mut self,
+        address: &Address,
+        status: &Status,
+        corral: &mut dyn Corral,
+        at: f64,
+        question_answer: bool,
+    ) -> Result<bool> {
+        for thread in &mut self.state.threads {
+            if thread.agent == status.name
+                && let Some(q) = &mut thread.question
+                && q.instance == status.instance
+                && q.state_started == status.state_started
+            {
+                q.handled = true;
+            }
+        }
+        self.state.interrupts.push(Interrupt {
+            address: address.clone(),
+            agent: status.name.clone(),
+            instance: status.instance.clone(),
+            turn: status.turn_started,
+            blocked: status.state == "blocked",
+            question_answer,
+            started: at,
+            poll_at: at + 1.,
+        });
+        // Persist before keys: a crash can lose a key, but must never repeat it.
+        self.save()?;
+        if let Err(error) = corral.escape(&status.name, status.kind.as_deref() == Some("amp")) {
+            self.log.push(format!("corral {}", safe_code(&error.code)));
+            self.say(
+                address,
+                "Esc 发送失败或结果不明，没重按；继续核对状态",
+                false,
+            )?;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn poll_interrupts(&mut self, corral: &mut dyn Corral, at: f64) -> Result<()> {
+        let mut i = 0;
+        while i < self.state.interrupts.len() {
+            let action = self.state.interrupts[i].clone();
+            if !self.connected.contains(&action.address.kind) || at < action.poll_at {
+                i += 1;
+                continue;
+            }
+            let status = corral.status(&action.agent);
+            let mut stopped = false;
+            let result = match &status {
+                Ok(s) if s.instance != action.instance => {
+                    Some("它重开过，没继续按，也没确认原来那轮停下")
+                }
+                Ok(s) if s.turn_started != action.turn => {
+                    Some("它已经开了新的一轮，没继续按，也没确认原来那轮停下")
+                }
+                Ok(s) if !s.paused && s.state == "idle" && (s.interrupted || action.blocked) => {
+                    stopped = true;
+                    Some(if action.question_answer {
+                        "提问框已关，回答这就送过去"
+                    } else if action.blocked {
+                        "框已拒绝，会话还在，在这个线程接着说就行"
+                    } else {
+                        "停下了，会话还在，在这个线程接着说就行"
+                    })
+                }
+                _ if at - action.started < 15. => None,
+                Ok(s) if s.paused => Some("按了 Esc，15 秒后仍暂停中，没确认停下，没再按"),
+                Ok(s) if s.state == "working" => {
+                    Some("按了 Esc，15 秒后还在干活，没再按；排着的话继续等空下来再送")
+                }
+                Ok(s) if s.state == "blocked" => {
+                    Some("按了 Esc，15 秒后还在等你，没再按；排着的话继续等空下来再送")
+                }
+                _ => Some("按了 Esc，15 秒内没确认停下，没再按；排着的话继续等空下来再送"),
+            };
+            let Some(result) = result else {
+                self.state.interrupts[i].poll_at = at + 1.;
+                i += 1;
+                continue;
+            };
+            let mut result = result.to_owned();
+            if stopped {
+                let before = self.state.pending.len();
+                self.state.pending.retain(|p| {
+                    !(p.agent == action.agent
+                        && p.instance == action.instance
+                        && p.address == action.address
+                        && p.phase == Phase::Waiting
+                        && p.baseline != action.turn)
+                });
+                if self.state.pending.len() < before {
+                    result.push_str("；这一轮被打断了，没有回复");
+                }
+                if let Some(watch) = self.state.watches.get_mut(&action.agent) {
+                    watch.turn = action.turn;
+                }
+            }
+            self.state.interrupts.remove(i);
+            self.save()?;
+            self.say(&action.address, &format!("{} {result}", action.agent), true)?;
+        }
+        self.save()
+    }
+
     fn report_attachments(&mut self, i: usize) -> Result<()> {
         if self.state.pending[i].attachments {
             self.state.pending[i].attachments = false;
@@ -601,6 +880,7 @@ impl Engine {
                         instance,
                         created: at,
                         used: at,
+                        question: None,
                     });
                     self.save()?;
                 }
@@ -835,6 +1115,15 @@ impl Engine {
             })
         };
         self.state.pending.retain(permitted);
+        self.state.interrupts.retain(|i| {
+            self.configs.iter().any(|c| {
+                c.kind == i.address.kind
+                    && c.channels.iter().any(|b| b.id == i.address.channel)
+                    && i.agent
+                        .split_once('/')
+                        .is_some_and(|(repo, _)| c.channels.iter().any(|b| b.repo == repo))
+            })
+        });
         self.state.backfills.retain(|b| {
             self.configs.iter().any(|c| {
                 c.kind == b.address.kind
@@ -953,6 +1242,7 @@ impl Engine {
             }
         }
         self.verify_queue(at)?;
+        self.poll_interrupts(corral, at)?;
         for i in 0..self.state.pending.len() {
             let pending = self.state.pending[i].clone();
             if self.connected.contains(&pending.address.kind)
@@ -1062,7 +1352,10 @@ impl Engine {
             });
             let mut response = None;
             let mut notices = Vec::new();
-            if stable && !status.paused && (waiting.is_some() || status.turn_started != watch.turn)
+            if stable
+                && !status.paused
+                && (waiting.is_some() || status.turn_started != watch.turn)
+                && !self.state.interrupts.iter().any(|i| i.agent == agent.name)
             {
                 let offline = self.recovering.contains(&agent.name);
                 match corral.reply(&agent.name) {
@@ -1085,14 +1378,17 @@ impl Engine {
                         } else if agent.name.ends_with("/main")
                             && watch.reply.is_none_or(|old| reply.at > old)
                         {
-                            notices.push(format!(
-                                "{}{} 新回复\n{text}",
-                                if offline {
-                                    "（pony 不在线时）"
-                                } else {
-                                    ""
-                                },
-                                agent.name
+                            notices.push((
+                                format!(
+                                    "{}{} 新回复\n{text}",
+                                    if offline {
+                                        "（pony 不在线时）"
+                                    } else {
+                                        ""
+                                    },
+                                    agent.name
+                                ),
+                                None,
                             ));
                         }
                         watch.reply = Some(reply.at);
@@ -1125,7 +1421,12 @@ impl Engine {
                 p.instance == status.instance && p.state == "blocked" && status.state == "blocked"
             });
             if blocked && watch.blocked != Some(status.state_started.unwrap_or(0.)) {
-                notices.push(needs_you(&status, corral));
+                let question = is_question(&status).then(|| QuestionContext {
+                    instance: status.instance.clone(),
+                    state_started: status.state_started,
+                    handled: false,
+                });
+                notices.push((needs_you(&status, corral), question));
                 watch.blocked = Some(status.state_started.unwrap_or(0.));
             }
             if status.state != "blocked" {
@@ -1143,8 +1444,8 @@ impl Engine {
             if let Some((address, text)) = response {
                 self.say(&address, &text, true)?;
             }
-            for text in notices {
-                self.notice(&agent.name, &status.instance, &text, at)?;
+            for (text, question) in notices {
+                self.notice(&agent.name, &status.instance, &text, question, at)?;
             }
         }
         let mut i = 0;
@@ -1161,6 +1462,7 @@ impl Engine {
                 || p.retry_at > at
                 || attempted.contains(&p.agent)
                 || unavailable.contains(&p.agent)
+                || self.state.interrupts.iter().any(|i| i.agent == p.agent)
                 || self.state.pending.iter().any(|w| {
                     w.agent == p.agent
                         && matches!(w.phase, Phase::Waiting | Phase::Sending | Phase::Uncertain)
@@ -1190,6 +1492,10 @@ impl Engine {
                 i += 1;
                 continue;
             }
+            if p.question_answer && status.state != "idle" {
+                i += 1;
+                continue;
+            }
             if p.queued && status.state != "unknown" && !settled.contains(&p.agent) {
                 i += 1;
                 continue;
@@ -1204,6 +1510,20 @@ impl Engine {
                     } else {
                         self.state.pending[i].phase = Phase::Waiting;
                         i += 1;
+                    }
+                    if p.question_answer
+                        && !self.state.pending.iter().any(|queued| {
+                            queued.address == p.address
+                                && queued.question_answer
+                                && queued.phase == Phase::Queued
+                        })
+                        && let Some(thread) = self
+                            .state
+                            .threads
+                            .iter_mut()
+                            .find(|t| t.address == p.address)
+                    {
+                        thread.question = None;
                     }
                     self.save()?;
                     if p.queued {
@@ -1303,7 +1623,14 @@ impl Engine {
         }
         Ok(())
     }
-    fn notice(&mut self, name: &str, instance: &str, text: &str, at: f64) -> Result<()> {
+    fn notice(
+        &mut self,
+        name: &str,
+        instance: &str,
+        text: &str,
+        question: Option<QuestionContext>,
+        at: f64,
+    ) -> Result<()> {
         let repo = name.split_once('/').expect("bound agent").0;
         let addresses: Vec<_> = self
             .configs
@@ -1334,6 +1661,7 @@ impl Engine {
                 instance: instance.into(),
                 created: at,
                 used: at,
+                question: question.clone(),
             });
             self.save()?;
         }
@@ -1552,6 +1880,16 @@ impl Engine {
         )
     }
 }
+fn human_active(status: &Status, at: f64) -> bool {
+    status.last_human_input.is_some_and(|t| at - t < 30.)
+}
+
+fn is_question(status: &Status) -> bool {
+    status.kind.as_deref() == Some("claude")
+        && status.last_tool.as_deref() == Some("AskUserQuestion")
+        && status.questions.is_some()
+}
+
 fn summary_title(status: &Status) -> Option<String> {
     let title = status
         .title
@@ -1579,7 +1917,11 @@ fn summary_title(status: &Status) -> Option<String> {
 }
 
 fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
-    const FOOTER: &str = "要回电脑上处理；在这里回的话，等它处理完再送。";
+    let footer = if status.kind.as_deref() == Some("agy") {
+        "要回电脑上处理；在这里回的话，等它处理完再送。"
+    } else {
+        "要拒绝：在这个线程回『停』；要允许：回电脑处理。在这里回别的话，等它处理完再送。"
+    };
     if status.kind.as_deref() == Some("claude")
         && status.last_tool.as_deref() == Some("AskUserQuestion")
         && let Some(questions) = &status.questions
@@ -1607,7 +1949,7 @@ fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
         if questions.truncated {
             text.push_str("\n题目不完整，请回电脑看");
         }
-        return format!("{text}\n{FOOTER}");
+        return format!("{text}\n在这个线程写答案（例如『1 选 B；2 选 A、C』），会直接送过去。");
     }
     let heading = format!(
         "⚠ {} 在等你（权限框或提问）{}{}。",
@@ -1643,11 +1985,11 @@ fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
                 .max(3),
         );
         return format!(
-            "{heading}\n屏幕末尾：\n{fence}\n{}\n{fence}\n{FOOTER}",
+            "{heading}\n屏幕末尾：\n{fence}\n{}\n{fence}\n{footer}",
             tail.join("\n")
         );
     }
-    format!("{heading}{FOOTER}")
+    format!("{heading}{footer}")
 }
 
 fn option_letter(mut index: usize) -> String {

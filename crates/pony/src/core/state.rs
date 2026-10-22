@@ -27,6 +27,15 @@ pub struct Thread {
     pub instance: String,
     pub created: f64,
     pub used: f64,
+    #[serde(default)]
+    pub question: Option<QuestionContext>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct QuestionContext {
+    pub instance: String,
+    pub state_started: Option<f64>,
+    pub handled: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -46,6 +55,8 @@ pub struct Pending {
     pub rejection_reported: bool,
     #[serde(default)]
     pub verification: Option<Verification>,
+    #[serde(default)]
+    pub question_answer: bool,
     pub address: Address,
     pub message: String,
     pub agent: String,
@@ -71,6 +82,19 @@ pub struct Watch {
     pub turn: Option<f64>,
     pub reply: Option<f64>,
     pub blocked: Option<f64>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Interrupt {
+    pub address: Address,
+    pub agent: String,
+    pub instance: String,
+    pub turn: Option<f64>,
+    pub blocked: bool,
+    #[serde(default)]
+    pub question_answer: bool,
+    pub started: f64,
+    pub poll_at: f64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -148,6 +172,8 @@ pub struct State {
     pub online: BTreeMap<String, f64>,
     #[serde(default)]
     pub backfills: Vec<Backfill>,
+    #[serde(default)]
+    pub interrupts: Vec<Interrupt>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

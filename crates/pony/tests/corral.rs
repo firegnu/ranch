@@ -37,6 +37,11 @@ fn exercise_protocol_in_child() {
     let mut process = Process::discover(binary.to_str(), None, &root).unwrap();
     let body = "--force literal `$(nothing)`\n中文  ";
     process.send("repo/main", body).unwrap();
+    process.escape("repo/main", false).unwrap();
+    process.escape("repo/amp", true).unwrap();
+    let calls = fs::read_to_string(root.join("calls")).unwrap();
+    assert!(calls.contains("4:keys9:repo/main3:esc\n"));
+    assert!(calls.contains("4:keys8:repo/amp3:esc3:esc\n"));
     assert!(
         fs::read_to_string(root.join("calls"))
             .unwrap()
