@@ -91,6 +91,8 @@ pub struct Interrupt {
     pub instance: String,
     pub turn: Option<f64>,
     pub blocked: bool,
+    #[serde(default)]
+    pub question_answer: bool,
     pub started: f64,
     pub poll_at: f64,
 }

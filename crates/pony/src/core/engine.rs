@@ -313,13 +313,26 @@ impl Engine {
                     .as_ref()
                     .map_or_else(|| format!("{}/main", binding.repo), |t| t.agent.clone()),
             ),
-            ["停" | "打断", target] if known.is_none() => {
+            ["停" | "打断", target]
+                if known.is_none() && (target.contains('/') || name_segment(target)) =>
+            {
+                if target
+                    .split_once('/')
+                    .is_some_and(|(repo, _)| repo != binding.repo)
+                {
+                    self.save()?;
+                    return self.say(&address, "只能停本频道仓库的 agent，没按", false);
+                }
                 let name = if target.contains('/') {
                     (*target).to_owned()
                 } else {
                     format!("{}/{target}", binding.repo)
                 };
-                agents.iter().any(|a| a.name == name).then_some(name)
+                if !agents.iter().any(|a| a.name == name) {
+                    self.save()?;
+                    return self.say(&address, &format!("没有 {name} 这个 agent，没按"), false);
+                }
+                Some(name)
             }
             _ => None,
         };
@@ -447,6 +460,18 @@ impl Engine {
             .as_ref()
             .is_some_and(|t| !t.instance.is_empty() && t.instance != status.instance);
         let mut question = known.as_ref().and_then(|t| t.question.clone());
+        // A handled prompt only covers answers still queued (or its pending Esc).
+        // A completed, withdrawn or failed answer must not turn later chat into answers.
+        if question.as_ref().is_some_and(|q| q.handled)
+            && !self
+                .state
+                .pending
+                .iter()
+                .any(|p| p.address == address && p.question_answer && p.phase == Phase::Queued)
+            && !self.state.interrupts.iter().any(|i| i.agent == name)
+        {
+            question = None;
+        }
         let question_reason = question.as_ref().and_then(|q| {
             if offline {
                 Some("离线期间发的回答，没按 Esc")
@@ -476,7 +501,6 @@ impl Engine {
         let close_question = answer && question_reason.is_none();
         if let Some(q) = &mut question {
             q.handled = true;
-            body = format!("（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n{body}");
         }
         let immediate_head = !status.paused
             && matches!(status.state.as_str(), "idle" | "unknown")
@@ -505,6 +529,10 @@ impl Engine {
             || self.state.pending.iter().any(|p| p.agent == name);
         let explanation = if status.paused {
             "（暂停中，恢复后再送）".into()
+        } else if answer
+            && (close_question || self.state.interrupts.iter().any(|i| i.agent == name))
+        {
+            "（关掉提问框后就送）".into()
         } else if status.state == "blocked" {
             "（在等你处理对话框，处理完再送）".into()
         } else if queued {
@@ -543,7 +571,11 @@ impl Engine {
             message: m.id,
             agent: name.clone(),
             instance: status.instance.clone(),
-            text: body,
+            text: if answer {
+                format!("（这是对刚才提问的回答）\n{body}")
+            } else {
+                body.clone()
+            },
             at,
             queued,
             retry_at: at,
@@ -552,7 +584,11 @@ impl Engine {
         });
         self.save()?;
         if close_question {
-            self.start_interrupt(&address, &status, corral, at)?;
+            if self.start_interrupt(&address, &status, corral, at, true)? {
+                self.state.pending.last_mut().expect("just queued").text =
+                    format!("（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n{body}");
+                self.save()?;
+            }
         } else if let Some(reason) = question_reason {
             self.say(
                 &address,
@@ -642,7 +678,8 @@ impl Engine {
         if let Some(reason) = reason {
             self.say(address, reason, false)
         } else {
-            self.start_interrupt(address, &status, corral, at)
+            self.start_interrupt(address, &status, corral, at, false)
+                .map(|_| ())
         }
     }
 
@@ -652,7 +689,8 @@ impl Engine {
         status: &Status,
         corral: &mut dyn Corral,
         at: f64,
-    ) -> Result<()> {
+        question_answer: bool,
+    ) -> Result<bool> {
         for thread in &mut self.state.threads {
             if thread.agent == status.name
                 && let Some(q) = &mut thread.question
@@ -668,6 +706,7 @@ impl Engine {
             instance: status.instance.clone(),
             turn: status.turn_started,
             blocked: status.state == "blocked",
+            question_answer,
             started: at,
             poll_at: at + 1.,
         });
@@ -680,8 +719,9 @@ impl Engine {
                 "Esc 发送失败或结果不明，没重按；继续核对状态",
                 false,
             )?;
+            return Ok(false);
         }
-        Ok(())
+        Ok(true)
     }
 
     fn poll_interrupts(&mut self, corral: &mut dyn Corral, at: f64) -> Result<()> {
@@ -703,7 +743,9 @@ impl Engine {
                 }
                 Ok(s) if !s.paused && s.state == "idle" && (s.interrupted || action.blocked) => {
                     stopped = true;
-                    Some(if action.blocked {
+                    Some(if action.question_answer {
+                        "提问框已关，回答这就送过去"
+                    } else if action.blocked {
                         "框已拒绝，会话还在，在这个线程接着说就行"
                     } else {
                         "停下了，会话还在，在这个线程接着说就行"
@@ -730,6 +772,7 @@ impl Engine {
                 self.state.pending.retain(|p| {
                     !(p.agent == action.agent
                         && p.instance == action.instance
+                        && p.address == action.address
                         && p.phase == Phase::Waiting
                         && p.baseline != action.turn)
                 });
@@ -1467,6 +1510,20 @@ impl Engine {
                     } else {
                         self.state.pending[i].phase = Phase::Waiting;
                         i += 1;
+                    }
+                    if p.question_answer
+                        && !self.state.pending.iter().any(|queued| {
+                            queued.address == p.address
+                                && queued.question_answer
+                                && queued.phase == Phase::Queued
+                        })
+                        && let Some(thread) = self
+                            .state
+                            .threads
+                            .iter_mut()
+                            .find(|t| t.address == p.address)
+                    {
+                        thread.question = None;
                     }
                     self.save()?;
                     if p.queued {
