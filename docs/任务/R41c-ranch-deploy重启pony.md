@@ -58,3 +58,24 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-22，ranch/dev-r41c。
+
+- 做了什么：将 pony 纳入 deploy 的计划、确认、执行、核对和部署记录。按真实进程路径与目标程序的 sha256 判断重启；plist 为 replace 时调用目标版本的 service install，same 且程序有变时 kickstart。重启后每半秒检查，最多等 30 秒，要求 running、新 pid 和目标程序；连接状态照实打印。失败先报 pony 当前状态与日志位置，保留已完成步骤和退回办法。续跑重新检查进程，不依赖已切换的链接。deploys.jsonl 改为按字节分行解析，坏 UTF-8／JSON 只影响该行；更新了 DESIGN §3 和 pony README 的部署与退回说明。对 paddock 无影响。
+- 验证了什么：先确认中文截断测试因 UTF-8 读取失败，pony 重启、plist 替换、停止／手动运行等用例也在实现对应行为前出现目标失败，再逐项实现。部署相关测试共 22 个通过（含测试子进程入口）；覆盖判断表每行、相同内容不同路径、重启等待三个条件、Slack connecting、完整 30 秒超时汇报、续跑和中文截断。测试清空继承环境，使用隔离 HOME／CORRAL_HOME／PONY_HOME、合成程序及假的 launchctl／进程查询，不调用真实 launchctl。`cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各跑一次，均通过；全量测试保留原有 ignored 用例，没有开启额外验证。命令均等待前台完成，编译目录为 `.target/r41c`。
+- 拿主意的地方：遵循任务明确的「没在跑／父进程不是 launchd 都不重启」，即使 plist 为 replace，也不替换这两类服务。旧版 c3a0b86 的 status 固定报 not_installed，因此额外检查 plist 是否存在，避免漏掉「服务装着、目标不认 service」的拒绝条件。系统调用通过函数注入给测试替换，生产程序没有测试环境变量开关。service install 自身可能等 bootout 30 秒，外层命令限 45 秒，完成后再开始规定的 30 秒启动核对。部署记录只保留进程、退出与连接状态，不复制频道／工作区资料。没有需要主控决定的事项。
+- 没做的事：没有修改 corral、pony/src、fence、依赖或 Cargo.lock；没有操作真实服务、用户 agent、共用 helper 或真实安装目录；没有部署、合并、推送、更新 HANDOFF，也没有开其他 agent。交叉审查和合并留给主控。
+- 踩过的坑：集成测试通过 `#[path]` 复用 deploy 命令入口时，Rust 查找子模块的相对位置与主程序编译时不同，最初报 E0583；改为显式指定 deploy/command.rs、deploy/pony.rs 后解决。该编译失败没有当作行为测试的 RED 证据。
+
+### 返工（第 1 次）
+
+2026-10-22，按主仓库 `R41c-审查.md` 末尾主控决定执行；该审查文件只读，未修改。
+
+- 改了什么：采纳必须改 1 的两部分。服务安装失败后，汇报及「接着做」都明确提示定义可能已卸下、先运行目标版本的 `pony service install --yes`。沿用同一目标的未完成记录时，若 `pony_service` 失败且 `pony.before.running` 为 true，即使当前已停、plist 已是 same，也列出服务恢复，确认后执行并等待核对；连续失败仍保留最初在跑的事实和 pid。执行前仍用当前状态复查，手动运行和原本就停止的服务继续不动。
+- 改了什么：采纳建议改 1–3。跳过 replace 时说明定义没换、给出会启动 pony 的安装命令，手动运行时加上先停止的提醒；计划显示真实运行程序所属版本或外部路径；`Home::command` 加断言，真实二进制测试入口拒绝临时 HOME 内已有 pony plist，服务用例必须走注入替身的 `pony_run`。
+- 改了什么：采纳可以不改 3、4 的指定部分。追加部署记录前检查末字节、按需补换行，避免新的 started 粘进旧半行；只有实际尝试 pony 操作后才在失败汇报中查询状态、给日志位置，不再凭 plist 存在声称 launchd 会重试，正常退出也不这样提示。同步 DESIGN §3 和 pony 部署说明；对 paddock 无影响。
+- 验证了什么：先用假的 service install 复现「旧服务已卸、新 plist 已写、bootstrap 失败」，两个用例分别因错误恢复提示和续跑「没有要做的」失败，修复后通过；其中续跑用例连续失败两次再成功，验证恢复依据保留。记录补换行用例先复现三行而非四行，修复后确认旧半行保留、started／done 各自可解析。版本／路径提示、两类跳过 replace 的提示也先确认缺失再补齐；原有用例增加了未动 pony 不报状态日志、正常退出不声称重试的断言。
+- 验证了什么：只运行本次相关用例和 `cargo test -p ranch --all-targets`（部署 26 个、dispatch 11 个，全通过）；`cargo clippy -p ranch --all-targets -- -D warnings`、`cargo fmt --check -p ranch` 各一次通过。沿用 `.target/r41c`，命令均等待前台完成。没有运行本轮范围外的全仓测试，没有真实 launchctl 或真实服务操作。
+- 拿主意／没做／坑：只落实主控采纳项；未改 PONY_HOME 继承或父进程识别方式，未改 corral、pony/src、fence、依赖和 Cargo.lock，未部署、合并或推送。没有新的主控待决定事项。本轮没有额外的工具或环境问题。
