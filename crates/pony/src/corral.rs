@@ -26,6 +26,7 @@ pub struct Status {
     pub kind: Option<String>,
     pub questions: Option<Questions>,
     pub paused_at: Option<f64>,
+    pub last_human_input: Option<f64>,
     #[serde(default)]
     pub paused: bool,
     #[serde(default)]
@@ -92,6 +93,7 @@ pub trait Corral {
     fn reply(&mut self, name: &str) -> Result<Reply>;
     fn read(&mut self, name: &str) -> Result<String>;
     fn send(&mut self, name: &str, text: &str) -> Result<Sent>;
+    fn escape(&mut self, name: &str, twice: bool) -> Result<()>;
 }
 
 pub struct Process {
@@ -192,6 +194,14 @@ impl Corral for Process {
     }
     fn send(&mut self, name: &str, text: &str) -> Result<Sent> {
         self.call(&["send", name, "--", text])
+    }
+    fn escape(&mut self, name: &str, twice: bool) -> Result<()> {
+        let args = if twice {
+            vec!["keys", name, "esc", "esc"]
+        } else {
+            vec!["keys", name, "esc"]
+        };
+        self.call::<serde_json::Value>(&args).map(|_| ())
     }
 }
 

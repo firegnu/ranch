@@ -27,6 +27,7 @@ fn main() {
         Some("--version") => println!(r#"{{"ok":true,"contract":"1","version":"test"}}"#),
         Some("ls") => println!(r#"{{"ok":true,"agents":[]}}"#),
         Some("send") => println!(r#"{{"ok":true,"confirmed":true,"merged_with_draft":false}}"#),
+        Some("keys") => println!(r#"{{"ok":true}}"#),
         _ => {
             println!(r#"{{"ok":false,"error":"not_found","message":"not found"}}"#);
             std::process::exit(2);

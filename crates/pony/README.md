@@ -27,7 +27,8 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
 配置及 `pony status` 格式不变，旧版 pony 能读新增绑定，paddock 不用动。
 
 - `corral.rs` 只调用公开命令。按配置、PATH、`~/.local/bin/corral` 找程序，
-  启动检查 `--version` 的 contract 1；只用 ls、status、reply、send、read。
+  启动检查 `--version` 的 contract 1；只用 ls、status、reply、send、read、keys。
+  keys 只按 Esc，amp 连发两个 Esc，不批准任何框。
   发送参数是 `send NAME -- 正文`，不加 force，也不读 corral 的状态文件。
 - `core/engine.rs` 统一处理 owner、频道绑定、路由、线程、队列、每轮回复、
   主控新回复和 Needs you 提醒、`?`、离线补收；每 2 秒轮询，空闲须连续
@@ -36,8 +37,20 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   提问框有 `status.questions` 时，列出所有题目、单选或可多选、字母编号的
   选项和说明；题目被截断时提示「题目不完整，请回电脑看」。其他情况附
   `corral read NAME --bytes 4000` 的末尾 20 行，连续空行并成一行，放进
-  代码块、不遮盖；读不到仍发原提醒。仍须回电脑处理对话框，线程里的回答
-  等它处理完再送；不远程按键、不支持「停」，这些由 R45 另做。去重规则不变。
+  代码块、不遮盖；读不到仍发原提醒。R45 起，提问提醒的线程里一回答，
+  核对同实例、同一 blocked/AskUserQuestion/state_started 且 30 秒内无人输入，
+  按一次 Esc 关框，连续两次空闲后按原队列送话，前面说明是对刚才提问的回答。
+  框已换、已处理、刚有人操作或离线补收时不按，回答仍排着并说明原因。
+  升级前的提醒没有提问框标记，仍走原来的排队规则，可回「停」拒绝当前框。
+  权限框仍要回电脑批准；回「停」可拒绝。agy 的框仍回电脑处理。
+- R45：已知线程里整句「停」或「打断」打断对应 agent；顶层 `@pony 停`
+  停主控，`@pony 停 dev-x` 停指定 agent。「停一下，先别提交」仍当普通话。
+  只在 working/blocked 时按，暂停、启动中、空闲、状态读不到、已换实例或
+  消息发出后另开新轮都不按；30 秒内有人在窗口输入、离线补收也不按。
+  amp 一次命令发两个 Esc，agy 不按。按前存盘，每秒检查，最多 15 秒，
+  重启只继续确认、不重按；同线程连答、回答和「停」连发共用这次确认。
+  空闲后说明「停下了」或「框已拒绝」，合并 pony 原轮的打断提醒；超时照实
+  说明，话继续排着。只改 pony 内部状态和行为，paddock 不用动。
 - `@pony ?` 的干活、等你、空闲、暂停都带时长：分别用 `turn_started`、
   `state_started`（没有则用 pony 本次运行首次看到这次 blocked 的时间）、
   `reply.at`（没有则用 `state_started`）、`paused_at`；时间缺失不猜。

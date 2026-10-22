@@ -154,6 +154,7 @@ struct FakeCorral {
     status_reads: Vec<String>,
     outcomes: Vec<Result<Sent, corral::Failure>>,
     status_errors: BTreeMap<String, corral::Failure>,
+    escapes: Vec<(String, bool)>,
 }
 impl Corral for FakeCorral {
     fn list(&mut self) -> corral::Result<Vec<Agent>> {
@@ -198,6 +199,10 @@ impl Corral for FakeCorral {
             .cloned()
             .unwrap_or_else(|| Err(failure(1, "io")))
     }
+    fn escape(&mut self, name: &str, twice: bool) -> corral::Result<()> {
+        self.escapes.push((name.into(), twice));
+        Ok(())
+    }
 }
 fn failure(exit: i32, code: &str) -> corral::Failure {
     corral::Failure {
@@ -221,6 +226,7 @@ fn status(name: &str, state: &str) -> Status {
         kind: None,
         questions: None,
         paused_at: None,
+        last_human_input: None,
         paused: false,
         interrupted: false,
     }
@@ -257,7 +263,7 @@ fn needs_you_lists_single_choice_question() {
     f.step(4.);
     assert_eq!(
         f.texts(),
-        "⚠ paddock/dev 在问你（1 道题）\n1. 颜色（单选）：选哪种颜色？\n   A 红色 — 暖色\n   B 蓝色 — 冷色\n要回电脑上处理；在这里回的话，等它处理完再送。"
+        "⚠ paddock/dev 在问你（1 道题）\n1. 颜色（单选）：选哪种颜色？\n   A 红色 — 暖色\n   B 蓝色 — 冷色\n在这个线程写答案（例如『1 选 B；2 选 A、C』），会直接送过去。"
     );
     f.step(6.);
     let memory = f.memory.borrow();
@@ -362,7 +368,7 @@ fn needs_you_without_questions_shows_last_twenty_screen_lines() {
         let text = f.texts();
         assert!(
             text.contains(&format!(
-                "屏幕末尾：\n{fence}\n{lines}\n\nRun command?\n{fence}\n要回电脑上处理"
+                "屏幕末尾：\n{fence}\n{lines}\n\nRun command?\n{fence}\n要拒绝：在这个线程回『停』；要允许：回电脑处理。在这里回别的话，等它处理完再送。"
             )),
             "{text}"
         );
@@ -386,7 +392,7 @@ fn needs_you_read_failure_still_sends_original_notice() {
     assert_eq!(f.corral.screen_reads, ["paddock/dev"]);
     assert_eq!(
         f.texts(),
-        "⚠ paddock/dev 在等你（权限框或提问） · 最后的工具 Bash · 标题「任务」。要回电脑上处理；在这里回的话，等它处理完再送。"
+        "⚠ paddock/dev 在等你（权限框或提问） · 最后的工具 Bash · 标题「任务」。要拒绝：在这个线程回『停』；要允许：回电脑处理。在这里回别的话，等它处理完再送。"
     );
 }
 
@@ -582,6 +588,292 @@ struct Fixture {
     corral: FakeCorral,
     memory: Rc<RefCell<Memory>>,
     events: Events,
+}
+
+#[test]
+fn stop_working_turn_keeps_session_and_confirms_in_its_thread() {
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/main").unwrap().state = "working".into();
+    f.message("stop", None, "停", true);
+    f.step(10.);
+    assert!(f.engine.state.pending.is_empty(), "停不能作为普通话排队");
+    assert!(f.corral.sent.is_empty());
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.state = "idle".into();
+    s.interrupted = true;
+    assert_eq!(f.corral.escapes, [("paddock/main".into(), false)]);
+    f.step(11.);
+    assert!(f.texts().contains("停下了，会话还在，在这个线程接着说就行"));
+    assert_eq!(
+        f.memory.borrow().posted.last().unwrap().thread.as_deref(),
+        Some("stop")
+    );
+}
+
+#[test]
+fn stop_refuses_idle_paused_starting_new_turn_human_input_unknown_and_agy() {
+    for (fields, reason) in [
+        (serde_json::json!({"state":"idle"}), "已经空闲"),
+        (serde_json::json!({"paused":true}), "暂停中"),
+        (serde_json::json!({"state":"starting"}), "启动中"),
+        (serde_json::json!({"turn_started":11.}), "新的一轮"),
+        (
+            serde_json::json!({"last_human_input":9.}),
+            "刚在电脑上操作过",
+        ),
+        (serde_json::json!({"state":"unknown"}), "读不出"),
+        (
+            serde_json::json!({"kind":"agy"}),
+            "agy 被打断后 corral 认不出",
+        ),
+    ] {
+        let mut f = Fixture::new();
+        let s = f.corral.agents.get_mut("paddock/main").unwrap();
+        s.state = "working".into();
+        status_fields(s, fields);
+        f.message("stop", None, "打断", true);
+        f.step(10.);
+        assert!(f.corral.escapes.is_empty(), "{reason}");
+        assert!(f.engine.state.pending.is_empty());
+        assert!(f.texts().contains(reason), "{}", f.texts());
+    }
+    let mut f = Fixture::new();
+    f.corral
+        .status_errors
+        .insert("paddock/main".into(), failure(1, "corral_unavailable"));
+    f.message("stop", None, "停", true);
+    f.step(10.);
+    assert!(f.corral.escapes.is_empty());
+    assert!(f.texts().contains("读不出 agent 状态，没按"));
+}
+
+#[test]
+fn stop_amp_uses_two_escapes_once_and_times_out_after_fifteen_seconds() {
+    let mut f = Fixture::new();
+    let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+    s.state = "working".into();
+    s.kind = Some("amp".into());
+    f.message("stop", None, "停 dev", true);
+    f.step(10.);
+    for at in 11..25 {
+        f.step(f64::from(at));
+        assert!(!f.texts().contains("15 秒后"));
+    }
+    f.step(25.);
+    f.step(26.);
+    assert_eq!(f.corral.escapes, [("paddock/dev".into(), true)]);
+    assert_eq!(f.texts().matches("15 秒后还在干活").count(), 1);
+}
+
+#[test]
+fn stop_on_dialog_rejects_and_followup_waits_for_idle() {
+    let mut f = Fixture::new();
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "blocked".into();
+    f.step(2.);
+    f.step(4.);
+    f.message("stop", Some("bot-0"), "停", false);
+    f.message("follow", Some("bot-0"), "换个做法", false);
+    f.step(10.);
+    assert_eq!(f.corral.escapes, [("paddock/dev".into(), false)]);
+    f.step(11.);
+    assert!(f.corral.sent.is_empty());
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(12.);
+    assert!(f.texts().contains("框已拒绝"));
+    assert!(f.corral.sent.is_empty());
+    f.step(13.);
+    assert_eq!(f.corral.sent, [("paddock/dev".into(), "换个做法".into())]);
+}
+
+#[test]
+fn stop_only_matches_whole_command_and_offline_stop_never_presses() {
+    let mut f = Fixture::new();
+    f.message("ordinary", None, "停一下，先别提交", true);
+    f.step(10.);
+    assert_eq!(f.corral.sent[0].1, "停一下，先别提交");
+    assert!(f.corral.escapes.is_empty());
+    f.corral.agents.get_mut("paddock/main").unwrap().state = "working".into();
+    f.memory
+        .borrow_mut()
+        .history
+        .push(incoming("C1", "stop", None, "停", 20.));
+    f.restart();
+    f.step(30.);
+    assert!(f.corral.escapes.is_empty());
+    assert!(f.texts().contains("离线期间发的「停」没执行"));
+}
+
+impl Fixture {
+    fn question_thread() -> Self {
+        let mut f = Self::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+                "state":"blocked", "kind":"claude", "last_tool":"AskUserQuestion",
+                "questions":{"items":[{"header":"颜色", "question":"选哪种？",
+                    "multi_select":false, "options":[{"label":"红", "description":""},
+                        {"label":"蓝", "description":""}]}], "truncated":false}
+            }),
+        );
+        f.step(2.);
+        f.step(4.);
+        f
+    }
+}
+
+#[test]
+fn question_answer_closes_matching_dialog_then_sends_only_after_idle() {
+    let mut f = Fixture::question_thread();
+    f.message("answer", Some("bot-0"), "1 选 B；2 选 A、C", false);
+    f.step(10.);
+    assert_eq!(f.corral.escapes, [("paddock/dev".into(), false)]);
+    f.step(11.);
+    assert!(f.corral.sent.is_empty());
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(12.);
+    assert!(f.corral.sent.is_empty());
+    f.step(13.);
+    assert_eq!(
+        f.corral.sent,
+        [(
+            "paddock/dev".into(),
+            "（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n1 选 B；2 选 A、C".into()
+        )]
+    );
+}
+
+#[test]
+fn question_answer_stale_or_human_operated_dialog_only_queues() {
+    for (fields, reason) in [
+        (serde_json::json!({"state_started":8.}), "提问框已换"),
+        (serde_json::json!({"last_tool":"Bash"}), "提问框已换"),
+        (serde_json::json!({"state":"idle"}), "提问框已经不在了"),
+        (
+            serde_json::json!({"last_human_input":9.}),
+            "刚在电脑上操作过",
+        ),
+        (serde_json::json!({"instance":"instance-2"}), "它重开过"),
+    ] {
+        let mut f = Fixture::question_thread();
+        status_fields(f.corral.agents.get_mut("paddock/dev").unwrap(), fields);
+        f.message("answer", Some("bot-0"), "1 选 B", false);
+        f.step(10.);
+        assert!(f.corral.escapes.is_empty(), "{reason}");
+        assert!(f.corral.sent.is_empty());
+        assert!(f.texts().contains(reason), "{}", f.texts());
+        let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+        s.state = "idle".into();
+        s.last_human_input = None;
+        f.step(40.);
+        f.step(41.);
+        assert_eq!(f.corral.sent.len(), 1);
+        assert!(f.corral.sent[0].1.ends_with("\n1 选 B"));
+    }
+}
+
+#[test]
+fn question_answer_timeout_keeps_queue_and_never_sends_into_unknown_state() {
+    let mut f = Fixture::question_thread();
+    f.message("answer", Some("bot-0"), "1 选 B", false);
+    f.step(10.);
+    f.step(24.);
+    assert!(!f.texts().contains("15 秒后"));
+    f.step(25.);
+    assert!(f.texts().contains("15 秒后还在等你"));
+    assert!(f.corral.sent.is_empty());
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "unknown".into();
+    f.step(26.);
+    assert!(f.corral.sent.is_empty());
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(27.);
+    f.step(28.);
+    assert_eq!(f.corral.escapes.len(), 1);
+    assert_eq!(f.corral.sent.len(), 1);
+}
+
+#[test]
+fn question_answers_and_stop_in_either_order_press_only_once_even_after_restart() {
+    for messages in [["1 选 B", "2 选 A、C"], ["1 选 B", "停"], ["停", "1 选 B"]] {
+        let mut f = Fixture::question_thread();
+        f.message("first", Some("bot-0"), messages[0], false);
+        f.message("second", Some("bot-0"), messages[1], false);
+        f.step(10.);
+        assert_eq!(f.corral.escapes, [("paddock/dev".into(), false)]);
+        f.restart();
+        f.message("first", Some("bot-0"), messages[0], false);
+        f.step(11.);
+        assert!(f.corral.sent.is_empty());
+        f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+        f.step(12.);
+        f.step(13.);
+        assert_eq!(f.corral.sent.len(), 1);
+        let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+        s.turn_started = Some(14.);
+        s.last_event_at = Some(15.);
+        f.step(15.);
+        f.step(16.);
+        let answers: Vec<_> = messages.iter().filter(|m| **m != "停").collect();
+        assert_eq!(f.corral.sent.len(), answers.len());
+        for ((name, text), answer) in f.corral.sent.iter().zip(answers) {
+            assert_eq!(name, "paddock/dev");
+            assert!(text.ends_with(&format!("\n{answer}")), "{text}");
+        }
+        assert_eq!(f.corral.escapes.len(), 1);
+    }
+}
+
+#[test]
+fn stop_merges_confirmation_with_pony_turn_interrupted_reply() {
+    let mut f = Fixture::new();
+    f.step(2.);
+    f.message("work", None, "做点事", true);
+    f.step(10.);
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.state = "working".into();
+    s.turn_started = Some(10.5);
+    f.events
+        .emit(Event::Message(incoming(
+            "C1",
+            "stop",
+            Some("work"),
+            "停",
+            12.,
+        )))
+        .unwrap();
+    f.step(12.);
+    let s = f.corral.agents.get_mut("paddock/main").unwrap();
+    s.state = "idle".into();
+    s.interrupted = true;
+    let mut error = failure(1, "no_reply");
+    error.interrupted = true;
+    f.corral.replies.insert("paddock/main".into(), Err(error));
+    f.step(13.);
+    f.step(14.);
+    assert_eq!(f.texts().matches("这一轮被打断了，没有回复").count(), 1);
+    let memory = f.memory.borrow();
+    let confirmation = memory
+        .posted
+        .iter()
+        .find(|p| p.text.contains("停下了"))
+        .unwrap();
+    assert!(confirmation.text.contains("这一轮被打断了，没有回复"));
+    assert_eq!(confirmation.thread.as_deref(), Some("work"));
+}
+
+#[test]
+fn needs_you_agy_still_requires_computer() {
+    let mut f = Fixture::new();
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({"state":"blocked", "kind":"agy"}),
+    );
+    f.step(2.);
+    f.step(4.);
+    assert!(
+        f.texts()
+            .ends_with("要回电脑上处理；在这里回的话，等它处理完再送。")
+    );
+    assert!(!f.texts().contains("回『停』"));
 }
 impl Fixture {
     fn new() -> Self {
