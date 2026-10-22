@@ -30,6 +30,8 @@ struct Memory {
     fail_over: Option<usize>,
     fail_after: Option<usize>,
     channel_errors: BTreeSet<String>,
+    channel_info: BTreeMap<String, ChannelInfo>,
+    channel_reads: Vec<String>,
     history_errors: BTreeSet<String>,
     deleted: BTreeSet<String>,
     exists_errors: BTreeSet<String>,
@@ -72,6 +74,7 @@ impl Connection for MemoryConnection {
         Ok(id)
     }
     fn channel(&mut self, id: &str) -> core::Result<ChannelInfo> {
+        self.0.borrow_mut().channel_reads.push(id.into());
         if self.0.borrow().channel_errors.contains(id) {
             return Err(core::Error::new(
                 self.0
@@ -81,6 +84,9 @@ impl Connection for MemoryConnection {
                     .unwrap_or("not_member"),
                 "not a member",
             ));
+        }
+        if let Some(info) = self.0.borrow().channel_info.get(id) {
+            return Ok(info.clone());
         }
         Ok(ChannelInfo {
             id: id.into(),
@@ -276,6 +282,334 @@ impl Fixture {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    fn binding() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let mut f = Self::new();
+        std::fs::set_permissions(f._dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        // Use the registered configuration parser with the in-memory transport only.
+        let kind = CHATS[0].kind();
+        std::fs::write(
+            f._dir.path().join("config.toml"),
+            format!("# keep this comment\n[{kind}]\nowner = 'UOWNER'\nchannels = [] # bindings\n"),
+        )
+        .unwrap();
+        let (config, file) = core::config::load_with_source(f._dir.path())
+            .unwrap()
+            .unwrap();
+        let store = Store::open(f._dir.path()).unwrap();
+        f.events = store.events(kind, "UOWNER");
+        f.engine = Engine::new(
+            store,
+            config.chats,
+            BTreeMap::from([(
+                kind.into(),
+                Box::new(MemoryConnection(f.memory.clone(), 10_000, true)) as Box<dyn Connection>,
+            )]),
+        );
+        f.engine.config_file = Some(file);
+        f.connected();
+        f
+    }
+
+    fn binding_message(&self, id: &str, text: &str) {
+        self.events
+            .emit(Event::Message(Message {
+                channel: "CNEW".into(),
+                id: id.into(),
+                thread: None,
+                sender: "UOWNER".into(),
+                mentioned: true,
+                text: text.into(),
+                attachments: false,
+                at: 10.,
+            }))
+            .unwrap();
+    }
+
+    fn reload_binding_config(&mut self) {
+        let (config, file) = core::config::load_with_source(self._dir.path())
+            .unwrap()
+            .unwrap();
+        self.engine.configs = config.chats;
+        self.engine.config_file = Some(file);
+    }
+}
+
+#[test]
+fn binding_writes_config_then_reload_routes_the_next_message() {
+    let mut f = Fixture::binding();
+    f.step(2.);
+    f.binding_message("bind", "绑 ranch");
+    f.step(10.);
+    assert_eq!(f.texts(), "已绑 ranch\n• main — 空闲");
+    {
+        let memory = f.memory.borrow();
+        let posted = &memory.posted[0];
+        assert_eq!(posted.channel, "CNEW");
+        assert_eq!(posted.thread.as_deref(), Some("bind"));
+    }
+    assert!(f.corral.sent.is_empty());
+    assert!(f.engine.configs[0].channels.is_empty());
+
+    let config = core::config::load(f._dir.path()).unwrap().unwrap();
+    assert_eq!(config.chats[0].channels[0].id, "CNEW");
+    assert_eq!(config.chats[0].channels[0].repo, "ranch");
+    f.engine.disconnect(CHATS[0].kind());
+    f.reload_binding_config();
+    f.connected();
+    f.step(12.);
+    f.binding_message("next", "请检查代码");
+    f.step(14.);
+    assert_eq!(
+        f.corral.sent,
+        vec![("ranch/main".into(), "请检查代码".into())]
+    );
+}
+
+#[test]
+fn binding_requires_a_confirmed_private_channel() {
+    for (private, error, expected) in [
+        (
+            Some(false),
+            false,
+            "这是公开频道，没绑：主控的回复会带仓库代码和路径，整个工作区都看得到。请建私有频道再绑",
+        ),
+        (None, false, "查不到这个频道是不是私有的，没绑"),
+        (Some(true), true, "查不到这个频道是不是私有的，没绑"),
+    ] {
+        let mut f = Fixture::binding();
+        let path = f._dir.path().join("config.toml");
+        let before = std::fs::read(&path).unwrap();
+        f.memory.borrow_mut().channel_info.insert(
+            "CNEW".into(),
+            ChannelInfo {
+                id: "CNEW".into(),
+                name: Some("new".into()),
+                private,
+                problem: None,
+            },
+        );
+        if error {
+            f.memory.borrow_mut().channel_errors.insert("CNEW".into());
+            f.memory.borrow_mut().adapter_error_code = Some("io".into());
+        }
+        f.binding_message("bind", "绑 ranch");
+        f.step(10.);
+        assert!(f.texts().contains(expected), "{}", f.texts());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert!(f.corral.sent.is_empty());
+        assert!(f.corral.status_reads.is_empty());
+        assert_eq!(f.memory.borrow().posted[0].thread.as_deref(), Some("bind"));
+    }
+}
+
+#[test]
+fn binding_rejects_invalid_repository_names_without_writing() {
+    for repo in [".hidden", "-repo", "repo/child", "仓库", "r!", "r🦄"] {
+        let mut f = Fixture::binding();
+        let path = f._dir.path().join("config.toml");
+        let before = std::fs::read(&path).unwrap();
+        f.binding_message("bind", &format!("绑 {repo}"));
+        f.step(10.);
+        assert!(f.texts().contains("仓库名不合规则"), "{}", f.texts());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert!(f.corral.status_reads.is_empty());
+    }
+}
+
+#[test]
+fn binding_reports_the_existing_channel_name_or_id() {
+    for lookup_fails in [false, true] {
+        let mut f = Fixture::binding();
+        let path = f._dir.path().join("config.toml");
+        let source = std::fs::read_to_string(&path).unwrap().replace(
+            "channels = []",
+            "channels = [{id = 'COLD', repo = 'ranch'}]",
+        );
+        std::fs::write(&path, &source).unwrap();
+        f.reload_binding_config();
+        if lookup_fails {
+            f.memory.borrow_mut().channel_errors.insert("COLD".into());
+        }
+        f.binding_message("bind", "绑 ranch");
+        f.step(10.);
+        assert_eq!(
+            f.texts(),
+            if lookup_fails {
+                "ranch 已经绑在 #COLD，没绑"
+            } else {
+                "ranch 已经绑在 #cold，没绑"
+            }
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), source);
+        assert!(f.corral.sent.is_empty());
+    }
+}
+
+#[test]
+fn binding_usage_is_shown_for_other_unbound_mentions() {
+    for text in ["?", "绑", "绑 ranch extra", "bind ranch", "绑ranch", ""] {
+        let mut f = Fixture::binding();
+        let path = f._dir.path().join("config.toml");
+        let before = std::fs::read(&path).unwrap();
+        f.binding_message("help", text);
+        f.step(10.);
+        assert_eq!(f.texts(), "这个频道没绑仓库。要绑，发 `@pony 绑 <仓库名>`");
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert!(f.memory.borrow().channel_reads.is_empty());
+        assert!(f.corral.status_reads.is_empty());
+    }
+}
+
+#[test]
+fn binding_refuses_invalid_or_changed_config_without_overwriting() {
+    for (replacement, expected) in [
+        ("owner = [", "配置现在有错"),
+        ("# someone edited a comment\n", "配置刚被改过，请再说一次"),
+    ] {
+        let mut f = Fixture::binding();
+        let path = f._dir.path().join("config.toml");
+        let source = if replacement.starts_with('#') {
+            format!("{replacement}{}", std::fs::read_to_string(&path).unwrap())
+        } else {
+            replacement.into()
+        };
+        std::fs::write(&path, &source).unwrap();
+        f.binding_message("bind", "绑 ranch");
+        f.step(10.);
+        assert!(f.texts().contains(expected), "{}", f.texts());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), source);
+        assert!(f.corral.status_reads.is_empty());
+        assert_eq!(f.memory.borrow().posted[0].thread.as_deref(), Some("bind"));
+        if replacement.starts_with('#') {
+            f.reload_binding_config();
+            f.binding_message("retry", "绑 ranch");
+            f.step(12.);
+            assert!(f.texts().contains("已绑 ranch"));
+        }
+    }
+}
+
+#[test]
+fn binding_reports_non_utf8_config_as_invalid() {
+    let mut f = Fixture::binding();
+    let path = f._dir.path().join("config.toml");
+    std::fs::write(&path, [0xff]).unwrap();
+    f.binding_message("bind", "绑 ranch");
+    f.step(10.);
+    assert!(f.texts().contains("配置现在有错"), "{}", f.texts());
+    assert_eq!(std::fs::read(path).unwrap(), vec![0xff]);
+}
+
+#[test]
+fn binding_write_failure_reports_only_the_code_and_preserves_config() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::binding();
+    // Keep the state store writable while making the config directory read-only.
+    let home = f._dir.path().join("readonly-config");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let source = std::fs::read(f._dir.path().join("config.toml")).unwrap();
+    std::fs::write(home.join("config.toml"), &source).unwrap();
+    f.engine.config_file = Some(core::config::load_with_source(&home).unwrap().unwrap().1);
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o500)).unwrap();
+    f.binding_message("bind", "绑 ranch");
+    let result = f.engine.step(&mut f.corral, 10.);
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    result.unwrap();
+    assert_eq!(f.texts(), "写配置失败，没绑：io");
+    assert_eq!(std::fs::read(home.join("config.toml")).unwrap(), source);
+    assert_eq!(std::fs::read_dir(&home).unwrap().count(), 1);
+    assert!(f.corral.status_reads.is_empty());
+}
+
+#[test]
+fn binding_is_owner_only_and_requires_a_mention() {
+    for (sender, mentioned) in [("intruder", true), ("UOWNER", false)] {
+        let mut f = Fixture::binding();
+        let path = f._dir.path().join("config.toml");
+        let before = std::fs::read(&path).unwrap();
+        f.events
+            .emit(Event::Message(Message {
+                channel: "CNEW".into(),
+                id: "bind".into(),
+                thread: None,
+                sender: sender.into(),
+                mentioned,
+                text: "绑 ranch".into(),
+                attachments: false,
+                at: 10.,
+            }))
+            .unwrap();
+        f.step(10.);
+        assert!(f.memory.borrow().posted.is_empty());
+        assert!(f.memory.borrow().channel_reads.is_empty());
+        assert!(f.corral.sent.is_empty());
+        assert!(f.corral.status_reads.is_empty());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+}
+
+#[test]
+fn binding_in_an_already_bound_channel_keeps_normal_routing() {
+    let mut f = Fixture::binding();
+    f.binding_message("bind", "绑 ranch");
+    f.step(10.);
+    f.reload_binding_config();
+    let path = f._dir.path().join("config.toml");
+    let before = std::fs::read(&path).unwrap();
+    f.binding_message("ordinary", "绑 paddock");
+    f.step(12.);
+    assert_eq!(
+        f.corral.sent,
+        vec![("ranch/main".into(), "绑 paddock".into())]
+    );
+    assert_eq!(std::fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn binding_succeeds_without_a_main_and_reports_status_like_summary() {
+    for (state, paused, expected) in [
+        ("missing", false, "ranch/main 没在跑"),
+        ("working", false, "• main — 干活中，2 分钟"),
+        ("idle", true, "• main — 暂停中"),
+        ("blocked", false, "• main — 等你（对话框）"),
+        ("starting", false, "• main — 启动中"),
+        ("unknown", false, "• main — 读不出"),
+    ] {
+        let mut f = Fixture::binding();
+        if state == "missing" {
+            f.corral.agents.remove("ranch/main");
+        } else {
+            let agent = f.corral.agents.get_mut("ranch/main").unwrap();
+            agent.state = state.into();
+            agent.paused = paused;
+        }
+        f.events
+            .emit(Event::Message(Message {
+                channel: "CNEW".into(),
+                id: "bind".into(),
+                thread: Some("parent".into()),
+                sender: "UOWNER".into(),
+                mentioned: true,
+                text: "  绑\t ranch  ".into(),
+                attachments: false,
+                at: 10.,
+            }))
+            .unwrap();
+        f.step(130.);
+        assert_eq!(f.texts(), format!("已绑 ranch\n{expected}"));
+        assert_eq!(
+            f.memory.borrow().posted[0].thread.as_deref(),
+            Some("parent")
+        );
+        assert_eq!(
+            core::config::load(f._dir.path()).unwrap().unwrap().chats[0].channels[0].repo,
+            "ranch"
+        );
+        assert_eq!(f.corral.status_reads, vec!["ranch/main"]);
+    }
 }
 #[test]
 fn owner_message_and_thread_followup_reach_agent_and_reply_returns_to_thread() {
@@ -395,7 +729,7 @@ fn routing_table_privacy_and_status() {
         }))
         .unwrap();
     f.step(12.);
-    assert_eq!(f.texts(), "这个频道没绑仓库");
+    assert_eq!(f.texts(), "这个频道没绑仓库。要绑，发 `@pony 绑 <仓库名>`");
     f.message("s", None, "？", true);
     f.step(14.);
     assert!(f.corral.sent.is_empty());

@@ -1,6 +1,6 @@
 use super::{
     Error, Result,
-    config::ChatConfig,
+    config::{ChatConfig, ConfigFile, name_segment},
     state::{
         Address, Backfill, Cursor, Expired, Pending, Phase, Seen, State, Store, Thread,
         Verification, Watch,
@@ -16,6 +16,7 @@ pub struct Engine {
     pub state: State,
     pub store: Store,
     pub configs: Vec<ChatConfig>,
+    pub config_file: Option<ConfigFile>,
     pub connections: BTreeMap<String, Box<dyn Connection>>,
     pub reports: BTreeMap<String, ConnectionInfo>,
     pub channels: BTreeMap<(String, String), ChannelInfo>,
@@ -42,6 +43,7 @@ impl Engine {
             state,
             store,
             configs,
+            config_file: None,
             connections,
             log: Vec::new(),
             reports: BTreeMap::new(),
@@ -272,7 +274,17 @@ impl Engine {
         let Some(binding) = config.channels.iter().find(|c| c.id == m.channel) else {
             self.save()?;
             if m.mentioned {
-                self.post(&address, "这个频道没绑仓库", false, false)?;
+                let words: Vec<_> = m.text.split_whitespace().collect();
+                if let ["绑", repo] = words.as_slice() {
+                    self.bind_channel(&address, repo, corral, at)?;
+                } else {
+                    self.post(
+                        &address,
+                        "这个频道没绑仓库。要绑，发 `@pony 绑 <仓库名>`",
+                        false,
+                        false,
+                    )?;
+                }
             }
             return Ok(());
         };
@@ -501,6 +513,126 @@ impl Engine {
         }
         Ok(())
     }
+
+    fn bind_channel(
+        &mut self,
+        address: &Address,
+        repo: &str,
+        corral: &mut dyn Corral,
+        at: f64,
+    ) -> Result<()> {
+        if !name_segment(repo) {
+            self.post(address, "仓库名不合规则，没绑：须以 ASCII 字母或数字开头，只能含字母、数字、点、下划线和连字符", false, false)?;
+            return Ok(());
+        }
+        let channel = self
+            .connections
+            .get_mut(&address.kind)
+            .ok_or_else(|| Error::new("disconnected", "adapter is not connected"))?
+            .channel(&address.channel);
+        match channel.map(|channel| channel.private) {
+            Ok(Some(true)) => {}
+            Ok(Some(false)) => {
+                self.post(address, "这是公开频道，没绑：主控的回复会带仓库代码和路径，整个工作区都看得到。请建私有频道再绑", false, false)?;
+                return Ok(());
+            }
+            Ok(None) | Err(_) => {
+                self.post(
+                    address,
+                    "查不到这个频道是不是私有的，没绑；请稍后再试",
+                    false,
+                    false,
+                )?;
+                return Ok(());
+            }
+        }
+        if let Some(binding) = self
+            .configs
+            .iter()
+            .find(|config| config.kind == address.kind)
+            .and_then(|config| config.channels.iter().find(|channel| channel.repo == repo))
+        {
+            let display = self
+                .connections
+                .get_mut(&address.kind)
+                .unwrap()
+                .channel(&binding.id)
+                .ok()
+                .and_then(|channel| channel.name)
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| binding.id.clone());
+            self.post(
+                address,
+                &format!("{repo} 已经绑在 #{display}，没绑"),
+                false,
+                false,
+            )?;
+            return Ok(());
+        }
+        let result = self
+            .config_file
+            .as_ref()
+            .ok_or_else(|| Error::new("config_invalid", "no active configuration file"))
+            .and_then(|file| file.bind(&address.kind, &address.channel, repo));
+        let text = match result {
+            Ok(()) => {
+                let name = format!("{repo}/main");
+                let status = self
+                    .agent_summary(&name, corral, at)
+                    .unwrap_or_else(|| format!("{name} 没在跑"));
+                format!("已绑 {repo}\n{status}")
+            }
+            Err(error) => match error.code.as_str() {
+                "config_invalid" => "配置现在有错，没绑；请先修好配置".into(),
+                "changed" => "配置刚被改过，请再说一次".into(),
+                _ => format!("写配置失败，没绑：{}", safe_code(&error.code)),
+            },
+        };
+        self.post(address, &text, false, false)?;
+        Ok(())
+    }
+
+    fn agent_summary(&self, name: &str, corral: &mut dyn Corral, at: f64) -> Option<String> {
+        let s = match corral.status(name) {
+            Ok(s) => Some(s),
+            Err(e) if e.exit == Some(2) => return None,
+            Err(_) => None,
+        };
+        let label = match s {
+            None => "读不出".into(),
+            Some(s) if s.paused => "暂停中".into(),
+            Some(s) => match s.state.as_str() {
+                "working" => format!(
+                    "干活中，{} 分钟",
+                    minutes(at - s.turn_started.unwrap_or(at))
+                ),
+                "idle" => if s.interrupted {
+                    "空闲（上一轮被打断）"
+                } else {
+                    "空闲"
+                }
+                .into(),
+                "blocked" => "等你（对话框）".into(),
+                "starting" => "启动中".into(),
+                _ => "读不出".into(),
+            },
+        };
+        let count = self
+            .state
+            .pending
+            .iter()
+            .filter(|p| p.agent == name && p.phase == Phase::Queued)
+            .count();
+        Some(format!(
+            "• {} — {label}{}",
+            name.split_once('/').unwrap().1,
+            if count > 0 {
+                format!("，排着 {count} 句")
+            } else {
+                String::new()
+            }
+        ))
+    }
     fn summary(
         &self,
         kind: &str,
@@ -529,45 +661,9 @@ impl Engine {
                     .split_once('/')
                     .is_some_and(|(r, _)| r == channel.repo)
             }) {
-                let s = match corral.status(&agent.name) {
-                    Ok(s) => Some(s),
-                    Err(e) if e.exit == Some(2) => continue,
-                    Err(_) => None,
-                };
-                let label = match s {
-                    None => "读不出".into(),
-                    Some(s) if s.paused => "暂停中".into(),
-                    Some(s) => match s.state.as_str() {
-                        "working" => format!(
-                            "干活中，{} 分钟",
-                            minutes(at - s.turn_started.unwrap_or(at))
-                        ),
-                        "idle" => if s.interrupted {
-                            "空闲（上一轮被打断）"
-                        } else {
-                            "空闲"
-                        }
-                        .into(),
-                        "blocked" => "等你（对话框）".into(),
-                        "starting" => "启动中".into(),
-                        _ => "读不出".into(),
-                    },
-                };
-                let count = self
-                    .state
-                    .pending
-                    .iter()
-                    .filter(|p| p.agent == agent.name && p.phase == Phase::Queued)
-                    .count();
-                lines.push(format!(
-                    "• {} — {label}{}",
-                    agent.name.split_once('/').unwrap().1,
-                    if count > 0 {
-                        format!("，排着 {count} 句")
-                    } else {
-                        String::new()
-                    }
-                ));
+                if let Some(line) = self.agent_summary(&agent.name, corral, at) {
+                    lines.push(line);
+                }
             }
         }
         Ok(lines.join("\n"))
@@ -1354,11 +1450,6 @@ impl Engine {
             self.connections.get(kind).map_or("聊天", |c| c.name())
         )
     }
-}
-fn name_segment(s: &str) -> bool {
-    s.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
 fn corral_error(e: crate::corral::Failure) -> Error {
     Error::new(&e.code, e.message)

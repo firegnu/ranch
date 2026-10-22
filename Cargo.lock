@@ -383,6 +383,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+ "toml_edit",
  "tungstenite",
  "ureq",
 ]

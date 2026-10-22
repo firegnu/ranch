@@ -80,7 +80,7 @@ fn missing(log: &Log, snapshot: &mut Snapshot) -> Result<()> {
 }
 
 fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
-    let Some(mut active) = config::load(home)? else {
+    let Some((mut active, config_file)) = config::load_with_source(home)? else {
         return missing(log, snapshot);
     };
     snapshot.chats = status::chats(&active, "off", None);
@@ -93,6 +93,7 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
         active.chats.clone(),
         connect(home, &active, &store)?,
     );
+    engine.config_file = Some(config_file);
     snapshot.chats = status::chats(&active, "connecting", Some(now()));
     snapshot.save(home)?;
     log.event("run_started")?;
@@ -101,10 +102,19 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
         if STOP.load(Ordering::Relaxed) != 0 {
             break;
         }
-        let next = match config::load(home) {
+        let next = match config::load_with_source(home) {
             Ok(None) => return missing(log, snapshot),
-            Ok(Some(next)) if next == active && snapshot.config_error.is_none() => Ok(next),
-            Ok(Some(next)) => validate_credentials(home, &next).map(|()| next),
+            Ok(Some((next, file))) => {
+                let validation = if next == active && snapshot.config_error.is_none() {
+                    Ok(())
+                } else {
+                    validate_credentials(home, &next)
+                };
+                validation.map(|()| {
+                    engine.config_file = Some(file);
+                    next
+                })
+            }
             Err(error) => Err(error),
         };
         match next {
