@@ -560,6 +560,9 @@ fn only_other_human_messages_in_bound_channels_are_logged_as_ignored() {
         fn reply(&mut self, _: &str) -> corral::Result<corral::Reply> {
             panic!("ignored events must not call corral")
         }
+        fn read(&mut self, _: &str) -> corral::Result<String> {
+            panic!("ignored events must not call corral")
+        }
         fn send(&mut self, _: &str, _: &str) -> corral::Result<corral::Sent> {
             panic!("ignored events must not call corral")
         }

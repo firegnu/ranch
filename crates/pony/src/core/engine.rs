@@ -22,6 +22,7 @@ pub struct Engine {
     pub channels: BTreeMap<(String, String), ChannelInfo>,
     pub log: Vec<String>,
     previous: BTreeMap<String, Status>,
+    blocked_since: BTreeMap<String, (String, f64)>,
     recovering: BTreeSet<String>,
     connected: BTreeSet<String>,
     last_step: Option<f64>,
@@ -49,6 +50,7 @@ impl Engine {
             reports: BTreeMap::new(),
             channels: BTreeMap::new(),
             previous: BTreeMap::new(),
+            blocked_since: BTreeMap::new(),
             recovering,
             connected: BTreeSet::new(),
             last_step: None,
@@ -589,7 +591,7 @@ impl Engine {
                     .map(|s| s.instance.clone())
                     .unwrap_or_default();
                 let summary = self
-                    .agent_summary(&name, status, at)
+                    .agent_summary(&name, status, true, corral, at)
                     .unwrap_or_else(|| format!("{name} 没在跑"));
                 if self.connections[&address.kind].limits().threads {
                     self.state.threads.retain(|t| t.address != *address);
@@ -630,7 +632,28 @@ impl Engine {
         self.post(address, text, false, false).map(|_| ())
     }
 
-    fn agent_summary(&self, name: &str, status: corral::Result<Status>, at: f64) -> Option<String> {
+    fn observe_blocked(&mut self, status: &Status, at: f64) {
+        if status.state != "blocked" {
+            self.blocked_since.remove(&status.name);
+        } else {
+            let entry = self
+                .blocked_since
+                .entry(status.name.clone())
+                .or_insert_with(|| (status.instance.clone(), at));
+            if entry.0 != status.instance {
+                *entry = (status.instance.clone(), at);
+            }
+        }
+    }
+
+    fn agent_summary(
+        &mut self,
+        name: &str,
+        status: corral::Result<Status>,
+        local: bool,
+        corral: &mut dyn Corral,
+        at: f64,
+    ) -> Option<String> {
         let s = match status {
             Ok(s) => Some(s),
             Err(e) if e.exit == Some(2) => return None,
@@ -638,22 +661,70 @@ impl Engine {
         };
         let label = match s {
             None => "读不出".into(),
-            Some(s) if s.paused => "暂停中".into(),
-            Some(s) => match s.state.as_str() {
-                "working" => format!(
-                    "干活中，{} 分钟",
-                    minutes(at - s.turn_started.unwrap_or(at))
-                ),
-                "idle" => if s.interrupted {
-                    "空闲（上一轮被打断）"
+            Some(s) => {
+                self.observe_blocked(&s, at);
+                let reply = (local && !s.paused && s.state == "idle").then(|| corral.reply(name));
+                let interrupted = s.interrupted
+                    || reply.as_ref().is_some_and(
+                        |r| matches!(r, Err(e) if e.code == "no_reply" && e.interrupted),
+                    );
+                let last_reply = reply
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .filter(|r| r.instance == s.instance && !interrupted);
+                let known_reply = self
+                    .state
+                    .watches
+                    .get(name)
+                    .filter(|w| w.status.instance == s.instance && !interrupted)
+                    .and_then(|w| w.reply);
+                let (label, since) = if s.paused {
+                    ("暂停中", s.paused_at)
                 } else {
-                    "空闲"
+                    match s.state.as_str() {
+                        "working" => ("干活中", s.turn_started),
+                        "idle" => (
+                            "空闲",
+                            last_reply
+                                .map(|r| r.at)
+                                .or(if local { None } else { known_reply })
+                                .or(s.state_started),
+                        ),
+                        "blocked" => (
+                            "等你（对话框）",
+                            s.state_started
+                                .or_else(|| self.blocked_since.get(name).map(|(_, at)| *at)),
+                        ),
+                        "starting" => ("启动中", None),
+                        _ => ("读不出", None),
+                    }
+                };
+                let mut label = match since {
+                    Some(since) => format!("{label}，{} 分钟", minutes(at - since)),
+                    None => label.into(),
+                };
+                if local {
+                    if let Some(title) = summary_title(&s) {
+                        label.push_str(&format!(" · 「{title}」"));
+                    }
+                    if let Some(tool) = s.last_tool.as_deref().filter(|t| !t.is_empty()) {
+                        label.push_str(&format!(" · 在用 {tool}"));
+                    }
+                    if !s.paused && s.state == "idle" {
+                        if interrupted {
+                            label.push_str(" · 上一轮被打断");
+                        } else if let Some(line) = last_reply.and_then(|r| {
+                            r.text.lines().map(str::trim).find(|line| !line.is_empty())
+                        }) {
+                            label.push_str(&format!(
+                                " · 上一句「{}」",
+                                line.chars().take(60).collect::<String>()
+                            ));
+                        }
+                    }
                 }
-                .into(),
-                "blocked" => "等你（对话框）".into(),
-                "starting" => "启动中".into(),
-                _ => "读不出".into(),
-            },
+                label
+            }
         };
         let count = self
             .state
@@ -672,7 +743,7 @@ impl Engine {
         ))
     }
     fn summary(
-        &self,
+        &mut self,
         kind: &str,
         local: &str,
         agents: &[Agent],
@@ -699,7 +770,9 @@ impl Engine {
                     .split_once('/')
                     .is_some_and(|(r, _)| r == channel.repo)
             }) {
-                if let Some(line) = self.agent_summary(&agent.name, corral.status(&agent.name), at)
+                let status = corral.status(&agent.name);
+                if let Some(line) =
+                    self.agent_summary(&agent.name, status, channel.repo == local, corral, at)
                 {
                     lines.push(line);
                 }
@@ -919,6 +992,8 @@ impl Engine {
             .retain(|name, _| agents.iter().any(|a| a.name == *name));
         self.previous
             .retain(|name, _| agents.iter().any(|a| a.name == *name));
+        self.blocked_since
+            .retain(|name, _| agents.iter().any(|a| a.name == *name));
         let mut settled = BTreeSet::new();
         let mut unavailable = BTreeSet::new();
         for agent in agents {
@@ -942,6 +1017,7 @@ impl Engine {
                     continue;
                 }
             };
+            self.observe_blocked(&status, at);
             self.cancel(&agent.name, Some(&status.instance))?;
             let stable = self.previous.get(&agent.name).is_some_and(|p| {
                 p.instance == status.instance
@@ -1049,21 +1125,7 @@ impl Engine {
                 p.instance == status.instance && p.state == "blocked" && status.state == "blocked"
             });
             if blocked && watch.blocked != Some(status.state_started.unwrap_or(0.)) {
-                let text = format!(
-                    "⚠ {} 在等你（权限框或提问）{}{}。要回电脑上处理；在这里回的话，等它处理完再送。",
-                    agent.name,
-                    status
-                        .last_tool
-                        .as_ref()
-                        .map(|s| format!(" · 最后的工具 {s}"))
-                        .unwrap_or_default(),
-                    status
-                        .title
-                        .as_ref()
-                        .map(|s| format!(" · 标题「{s}」"))
-                        .unwrap_or_default()
-                );
-                notices.push(text);
+                notices.push(needs_you(&status, corral));
                 watch.blocked = Some(status.state_started.unwrap_or(0.));
             }
             if status.state != "blocked" {
@@ -1490,6 +1552,116 @@ impl Engine {
         )
     }
 }
+fn summary_title(status: &Status) -> Option<String> {
+    let title = status
+        .title
+        .as_deref()?
+        .trim()
+        .trim_start_matches(|c: char| {
+            c.is_whitespace()
+                || ('\u{2800}'..='\u{28ff}').contains(&c)
+                || "◐◑◒◓◴◵◶◷✻✽✶✳✢·\u{fe0e}\u{fe0f}".contains(c)
+        });
+    if title.is_empty()
+        || status
+            .kind
+            .as_deref()
+            .is_some_and(|k| title.eq_ignore_ascii_case(k))
+        || matches!(
+            title.to_ascii_lowercase().as_str(),
+            "claude" | "claude code" | "codex" | "pi" | "omp" | "amp" | "agy"
+        )
+    {
+        None
+    } else {
+        Some(title.chars().take(40).collect())
+    }
+}
+
+fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
+    const FOOTER: &str = "要回电脑上处理；在这里回的话，等它处理完再送。";
+    if status.kind.as_deref() == Some("claude")
+        && status.last_tool.as_deref() == Some("AskUserQuestion")
+        && let Some(questions) = &status.questions
+    {
+        let mut text = format!("⚠ {} 在问你（{} 道题）", status.name, questions.items.len());
+        for (i, question) in questions.items.iter().enumerate() {
+            text.push_str(&format!(
+                "\n{}. {}（{}）：{}",
+                i + 1,
+                question.header,
+                if question.multi_select {
+                    "可多选"
+                } else {
+                    "单选"
+                },
+                question.question,
+            ));
+            for (j, option) in question.options.iter().enumerate() {
+                text.push_str(&format!("\n   {} {}", option_letter(j), option.label));
+                if !option.description.is_empty() {
+                    text.push_str(&format!(" — {}", option.description));
+                }
+            }
+        }
+        if questions.truncated {
+            text.push_str("\n题目不完整，请回电脑看");
+        }
+        return format!("{text}\n{FOOTER}");
+    }
+    let heading = format!(
+        "⚠ {} 在等你（权限框或提问）{}{}。",
+        status.name,
+        status
+            .last_tool
+            .as_ref()
+            .map(|s| format!(" · 最后的工具 {s}"))
+            .unwrap_or_default(),
+        status
+            .title
+            .as_ref()
+            .map(|s| format!(" · 标题「{s}」"))
+            .unwrap_or_default(),
+    );
+    if let Ok(screen) = corral.read(&status.name) {
+        let lines: Vec<_> = screen.lines().collect();
+        let mut tail = Vec::new();
+        for line in &lines[lines.len().saturating_sub(20)..] {
+            if line.trim().is_empty() {
+                if tail.last() != Some(&"") {
+                    tail.push("");
+                }
+            } else {
+                tail.push(*line);
+            }
+        }
+        let fence = "~".repeat(
+            tail.iter()
+                .map(|line| line.trim_start().chars().take_while(|c| *c == '~').count() + 1)
+                .max()
+                .unwrap_or(3)
+                .max(3),
+        );
+        return format!(
+            "{heading}\n屏幕末尾：\n{fence}\n{}\n{fence}\n{FOOTER}",
+            tail.join("\n")
+        );
+    }
+    format!("{heading}{FOOTER}")
+}
+
+fn option_letter(mut index: usize) -> String {
+    let mut letters = Vec::new();
+    loop {
+        letters.push((b'A' + (index % 26) as u8) as char);
+        if index < 26 {
+            break;
+        }
+        index = index / 26 - 1;
+    }
+    letters.into_iter().rev().collect()
+}
+
 fn corral_error(e: crate::corral::Failure) -> Error {
     Error::new(&e.code, e.message)
 }

@@ -147,6 +147,9 @@ static TEST_CHATS: &[&dyn Chat] = &[&MemoryChat];
 struct FakeCorral {
     agents: BTreeMap<String, Status>,
     replies: BTreeMap<String, Result<Reply, corral::Failure>>,
+    screens: BTreeMap<String, Result<String, corral::Failure>>,
+    screen_reads: Vec<String>,
+    reply_reads: Vec<String>,
     sent: Vec<(String, String)>,
     status_reads: Vec<String>,
     outcomes: Vec<Result<Sent, corral::Failure>>,
@@ -174,6 +177,7 @@ impl Corral for FakeCorral {
             .ok_or_else(|| failure(2, "not_found"))
     }
     fn reply(&mut self, name: &str) -> corral::Result<Reply> {
+        self.reply_reads.push(name.into());
         self.replies
             .get(name)
             .cloned()
@@ -186,6 +190,13 @@ impl Corral for FakeCorral {
         } else {
             self.outcomes.remove(0)
         }
+    }
+    fn read(&mut self, name: &str) -> corral::Result<String> {
+        self.screen_reads.push(name.into());
+        self.screens
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Err(failure(1, "io")))
     }
 }
 fn failure(exit: i32, code: &str) -> corral::Failure {
@@ -207,9 +218,363 @@ fn status(name: &str, state: &str) -> Status {
         last_event_at: Some(1.),
         last_tool: None,
         title: None,
+        kind: None,
+        questions: None,
+        paused_at: None,
         paused: false,
         interrupted: false,
     }
+}
+
+fn status_fields(status: &mut Status, fields: serde_json::Value) {
+    let mut value = serde_json::to_value(&*status).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    *status = serde_json::from_value(value).unwrap();
+}
+
+#[test]
+fn needs_you_lists_single_choice_question() {
+    let mut f = Fixture::new();
+    let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+    s.state = "blocked".into();
+    s.last_tool = Some("AskUserQuestion".into());
+    status_fields(
+        s,
+        serde_json::json!({
+            "kind": "claude",
+            "questions": {"items": [{
+                "header": "颜色", "question": "选哪种颜色？", "multi_select": false,
+                "options": [{"label": "红色", "description": "暖色"},
+                            {"label": "蓝色", "description": "冷色"}]
+            }], "truncated": false}
+        }),
+    );
+    f.step(2.);
+    assert!(f.memory.borrow().posted.is_empty());
+    f.step(4.);
+    assert_eq!(
+        f.texts(),
+        "⚠ paddock/dev 在问你（1 道题）\n1. 颜色（单选）：选哪种颜色？\n   A 红色 — 暖色\n   B 蓝色 — 冷色\n要回电脑上处理；在这里回的话，等它处理完再送。"
+    );
+    f.step(6.);
+    let memory = f.memory.borrow();
+    assert_eq!(memory.posted.len(), 1);
+    assert_eq!(memory.posted[0].channel, "C1");
+    assert!(memory.posted[0].notify);
+    assert!(f.corral.sent.is_empty());
+    assert!(f.corral.screen_reads.is_empty());
+}
+
+fn question_notice(items: serde_json::Value, truncated: bool) -> String {
+    let mut f = Fixture::new();
+    let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+    s.state = "blocked".into();
+    s.last_tool = Some("AskUserQuestion".into());
+    status_fields(
+        s,
+        serde_json::json!({"kind": "claude",
+        "questions": {"items": items, "truncated": truncated}}),
+    );
+    f.step(2.);
+    f.step(4.);
+    assert!(f.corral.screen_reads.is_empty());
+    f.texts()
+}
+
+#[test]
+fn needs_you_lists_multiple_choice_question() {
+    let text = question_notice(
+        serde_json::json!([{
+            "header": "水果", "question": "选哪些水果？", "multi_select": true,
+            "options": [{"label": "苹果", "description": "脆"},
+                        {"label": "香蕉", "description": "软"},
+                        {"label": "橙子", "description": ""}]
+        }]),
+        false,
+    );
+    assert!(
+        text.contains(
+            "1. 水果（可多选）：选哪些水果？\n   A 苹果 — 脆\n   B 香蕉 — 软\n   C 橙子\n"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn needs_you_lists_every_question_in_order() {
+    let text = question_notice(
+        serde_json::json!([
+            {"header": "颜色", "question": "选颜色？", "multi_select": false,
+             "options": [{"label": "红色", "description": "暖色"}]},
+            {"header": "水果", "question": "选水果？", "multi_select": true,
+             "options": [{"label": "苹果", "description": "脆"},
+                         {"label": "香蕉", "description": "软"}]}
+        ]),
+        false,
+    );
+    assert!(text.contains("在问你（2 道题）\n1. 颜色（单选）：选颜色？\n   A 红色 — 暖色\n2. 水果（可多选）：选水果？\n   A 苹果 — 脆\n   B 香蕉 — 软"), "{text}");
+}
+
+#[test]
+fn needs_you_marks_truncated_questions() {
+    let text = question_notice(
+        serde_json::json!([{
+            "header": "颜色", "question": "选哪", "multi_select": false, "options": []
+        }]),
+        true,
+    );
+    assert!(
+        text.contains("1. 颜色（单选）：选哪\n题目不完整，请回电脑看\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn needs_you_without_questions_shows_last_twenty_screen_lines() {
+    for (kind, tool) in [
+        ("claude", "AskUserQuestion"),
+        ("claude", "Bash"),
+        ("codex", "shell"),
+    ] {
+        let mut f = Fixture::new();
+        let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+        s.state = "blocked".into();
+        s.last_tool = Some(tool.into());
+        status_fields(s, serde_json::json!({"kind": kind}));
+        let lines = (1..=16)
+            .map(|n| {
+                if kind == "codex" && n == 8 {
+                    "~~~".into()
+                } else {
+                    format!("line {n}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let fence = if kind == "codex" { "~~~~" } else { "~~~" };
+        let screen = format!("old line\n{lines}\n\n   \n\nRun command?\n");
+        f.corral.screens.insert("paddock/dev".into(), Ok(screen));
+        f.step(2.);
+        f.step(4.);
+        let text = f.texts();
+        assert!(
+            text.contains(&format!(
+                "屏幕末尾：\n{fence}\n{lines}\n\nRun command?\n{fence}\n要回电脑上处理"
+            )),
+            "{text}"
+        );
+        assert!(!text.contains("old line"));
+        f.step(6.);
+        assert_eq!(f.corral.screen_reads, ["paddock/dev"]);
+        assert_eq!(f.memory.borrow().posted.len(), 1);
+        assert_eq!(f.memory.borrow().posted[0].channel, "C1");
+    }
+}
+
+#[test]
+fn needs_you_read_failure_still_sends_original_notice() {
+    let mut f = Fixture::new();
+    let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+    s.state = "blocked".into();
+    s.last_tool = Some("Bash".into());
+    s.title = Some("任务".into());
+    f.step(2.);
+    f.step(4.);
+    assert_eq!(f.corral.screen_reads, ["paddock/dev"]);
+    assert_eq!(
+        f.texts(),
+        "⚠ paddock/dev 在等你（权限框或提问） · 最后的工具 Bash · 标题「任务」。要回电脑上处理；在这里回的话，等它处理完再送。"
+    );
+}
+
+#[test]
+fn summary_shows_local_details_and_state_durations_only_for_other_repositories() {
+    let mut f = Fixture::new();
+    for (name, state, start) in [
+        ("paddock/main", "working", 480.),
+        ("paddock/dev", "idle", 60.),
+        ("paddock/wait", "blocked", 420.),
+        ("paddock/frozen", "idle", 240.),
+        ("paddock/empty", "idle", 300.),
+        ("ranch/main", "idle", 60.),
+        ("ranch/work", "working", 480.),
+        ("ranch/wait", "blocked", 420.),
+        ("ranch/frozen", "idle", 240.),
+    ] {
+        let mut s = status(name, state);
+        s.state_started = Some(start);
+        s.turn_started = Some(start);
+        s.title = Some(
+            if name.starts_with("ranch/") {
+                "别的仓库的标题"
+            } else {
+                "⠋ 做任务"
+            }
+            .into(),
+        );
+        s.last_tool = Some(
+            if name.starts_with("ranch/") {
+                "别的仓库的工具"
+            } else {
+                "Bash"
+            }
+            .into(),
+        );
+        if name.ends_with("frozen") {
+            s.paused = true;
+            status_fields(&mut s, serde_json::json!({"paused_at": 360.}));
+        }
+        f.corral.agents.insert(name.into(), s);
+    }
+    for (name, text) in [
+        ("paddock/dev", "\n \n改好了，测试全过。\n下一行"),
+        ("ranch/main", "别的仓库的回复"),
+    ] {
+        f.corral.replies.insert(
+            name.into(),
+            Ok(Reply {
+                instance: "instance-1".into(),
+                text: text.into(),
+                at: 120.,
+            }),
+        );
+    }
+    f.step(590.);
+    f.corral.reply_reads.clear();
+    f.message("summary", None, "?", true);
+    f.step(600.);
+    let text = f
+        .memory
+        .borrow()
+        .posted
+        .iter()
+        .find(|p| p.thread.as_deref() == Some("summary"))
+        .unwrap()
+        .text
+        .clone();
+    for expected in [
+        "• main — 干活中，2 分钟 · 「做任务」 · 在用 Bash",
+        "• dev — 空闲，8 分钟 · 「做任务」 · 在用 Bash · 上一句「改好了，测试全过。」",
+        "• wait — 等你（对话框），3 分钟 · 「做任务」 · 在用 Bash",
+        "• frozen — 暂停中，4 分钟 · 「做任务」 · 在用 Bash",
+        "• empty — 空闲，5 分钟",
+        "ranch（#c2）\n• frozen — 暂停中，4 分钟\n• main — 空闲，8 分钟\n• wait — 等你（对话框），3 分钟\n• work — 干活中，2 分钟",
+    ] {
+        assert!(text.contains(expected), "missing {expected}: {text}");
+    }
+    assert!(!text.contains("别的仓库"));
+    assert!(!text.contains("下一行"));
+    assert_eq!(f.corral.reply_reads, ["paddock/dev", "paddock/empty"]);
+}
+
+#[test]
+fn summary_cleans_and_limits_titles_and_reply_previews() {
+    for (title, expected) in [
+        ("  ◐ ✳\u{fe0f} 做任务  ".into(), Some("做任务".into())),
+        (format!("⠋ {}尾", "题".repeat(40)), Some("题".repeat(40))),
+        (" \t ".into(), None),
+        ("⠋  ".into(), None),
+        ("◐ Claude Code".into(), None),
+        ("codex".into(), None),
+    ] {
+        let mut f = Fixture::new();
+        let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+        s.title = Some(title);
+        status_fields(s, serde_json::json!({"kind": "claude"}));
+        f.corral.replies.insert(
+            "paddock/dev".into(),
+            Ok(Reply {
+                instance: "instance-1".into(),
+                text: format!("\n \n{}尾\n下一行", "回".repeat(60)),
+                at: 120.,
+            }),
+        );
+        f.message("summary", None, "?", true);
+        f.step(600.);
+        let text = f.texts();
+        let line = text.lines().find(|l| l.starts_with("• dev —")).unwrap();
+        if let Some(expected) = expected {
+            assert!(line.contains(&format!(" · 「{expected}」")), "{line}");
+        } else {
+            assert!(!line.contains(" · 「"), "{line}");
+        }
+        assert!(
+            line.ends_with(&format!("上一句「{}」", "回".repeat(60))),
+            "{line}"
+        );
+        assert!(!text.contains("尾"));
+        assert!(!text.contains("下一行"));
+    }
+}
+
+#[test]
+fn summary_interrupted_turn_uses_state_time_and_no_previous_reply() {
+    for status_interrupted in [false, true] {
+        let mut f = Fixture::new();
+        let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+        s.state_started = Some(480.);
+        s.interrupted = status_interrupted;
+        let reply = if status_interrupted {
+            Ok(Reply {
+                instance: "instance-1".into(),
+                text: "旧回复".into(),
+                at: 120.,
+            })
+        } else {
+            let mut error = failure(1, "no_reply");
+            error.interrupted = true;
+            Err(error)
+        };
+        f.corral.replies.insert("paddock/dev".into(), reply);
+        f.message("summary", None, "?", true);
+        f.step(600.);
+        assert!(
+            f.texts().contains("• dev — 空闲，2 分钟 · 上一轮被打断"),
+            "{}",
+            f.texts()
+        );
+        assert!(!f.texts().contains("旧回复"));
+    }
+}
+
+#[test]
+fn summary_times_blocked_without_state_started_from_first_observation() {
+    let mut f = Fixture::new();
+    let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+    s.state = "blocked".into();
+    s.state_started = None;
+    f.step(120.);
+    f.message("first", None, "?", true);
+    f.step(300.);
+    assert!(
+        f.texts().contains("• dev — 等你（对话框），3 分钟"),
+        "{}",
+        f.texts()
+    );
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "working".into();
+    f.step(302.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "blocked".into();
+    f.step(360.);
+    f.memory.borrow_mut().posted.clear();
+    f.message("second", None, "?", true);
+    f.step(420.);
+    assert!(
+        f.texts().contains("• dev — 等你（对话框），1 分钟"),
+        "{}",
+        f.texts()
+    );
+    f.corral.agents.get_mut("paddock/dev").unwrap().instance = "instance-2".into();
+    f.memory.borrow_mut().posted.clear();
+    f.message("third", None, "?", true);
+    f.step(600.);
+    assert!(
+        f.texts().contains("• dev — 等你（对话框），0 分钟"),
+        "{}",
+        f.texts()
+    );
 }
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -357,7 +722,7 @@ fn binding_writes_config_then_reload_routes_the_next_message() {
     f.step(2.);
     f.binding_message("bind", "绑 ranch");
     f.step(10.);
-    assert_eq!(f.texts(), "已绑 ranch\n• main — 空闲");
+    assert_eq!(f.texts(), "已绑 ranch\n• main — 空闲，0 分钟");
     {
         let memory = f.memory.borrow();
         let posted = &memory.posted[0];
@@ -387,7 +752,7 @@ fn binding_thread_followup_without_mention_reaches_main_and_reply_returns() {
     let mut f = Fixture::binding();
     f.binding_message("bind", "绑 ranch");
     f.step(10.);
-    assert_eq!(f.texts(), "已绑 ranch\n• main — 空闲");
+    assert_eq!(f.texts(), "已绑 ranch\n• main — 空闲，0 分钟");
     f.reload_binding_config();
     f.binding_reply("bind", "回复 收到 即可");
     f.step(12.);
@@ -818,7 +1183,7 @@ fn binding_succeeds_without_a_main_and_reports_status_like_summary() {
         ("missing", false, "ranch/main 没在跑"),
         ("working", false, "• main — 干活中，2 分钟"),
         ("idle", true, "• main — 暂停中"),
-        ("blocked", false, "• main — 等你（对话框）"),
+        ("blocked", false, "• main — 等你（对话框），2 分钟"),
         ("starting", false, "• main — 启动中"),
         ("unknown", false, "• main — 读不出"),
     ] {
@@ -1421,7 +1786,7 @@ fn status_labels_queue_counts_and_current_repository_order() {
         .clone();
     for expected in [
         "干活中，2 分钟",
-        "空闲（上一轮被打断）",
+        "空闲，2 分钟 · 上一轮被打断",
         "等你（对话框）",
         "暂停中",
         "启动中",

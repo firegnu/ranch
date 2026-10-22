@@ -27,11 +27,24 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
 配置及 `pony status` 格式不变，旧版 pony 能读新增绑定，paddock 不用动。
 
 - `corral.rs` 只调用公开命令。按配置、PATH、`~/.local/bin/corral` 找程序，
-  启动检查 `--version` 的 contract 1；只用 ls、status、reply、send。
+  启动检查 `--version` 的 contract 1；只用 ls、status、reply、send、read。
   发送参数是 `send NAME -- 正文`，不加 force，也不读 corral 的状态文件。
 - `core/engine.rs` 统一处理 owner、频道绑定、路由、线程、队列、每轮回复、
   主控新回复和 Needs you 提醒、`?`、离线补收；每 2 秒轮询，空闲须连续
   两轮稳定。未接入仓库不调用 status，也不输出其存在与状态。
+- R44 的 Needs you 提醒只发进该 agent 所在仓库绑定的频道。Claude Code
+  提问框有 `status.questions` 时，列出所有题目、单选或可多选、字母编号的
+  选项和说明；题目被截断时提示「题目不完整，请回电脑看」。其他情况附
+  `corral read NAME --bytes 4000` 的末尾 20 行，连续空行并成一行，放进
+  代码块、不遮盖；读不到仍发原提醒。仍须回电脑处理对话框，线程里的回答
+  等它处理完再送；不远程按键、不支持「停」，这些由 R45 另做。去重规则不变。
+- `@pony ?` 的干活、等你、空闲、暂停都带时长：分别用 `turn_started`、
+  `state_started`（没有则用 pony 本次运行首次看到这次 blocked 的时间）、
+  `reply.at`（没有则用 `state_started`）、`paused_at`；时间缺失不猜。
+  本频道仓库再带标题（去空白和开头转圈符号，最多 40 字，空或只是程序名
+  不显示）、最后在用的工具；空闲时查回复，带第一行非空文字（最多 60 字），
+  被打断写「上一轮被打断」。其他仓库只带状态和时长，空闲用已知回复时间
+  或 `state_started`，不为摘要额外查回复。排队数照旧。
 - `core/state.rs` 把线程、待回复、队列原文、消息去重、补收游标和接收箱
   写入 0600 的 `state.json`：同目录临时文件同步后改名，再同步目录。
   只有拿运行锁的进程创建 Store。适配器工作线程调用 Events::emit，成功

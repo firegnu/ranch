@@ -54,7 +54,15 @@ fn exercise_protocol_in_child() {
     )
     .unwrap();
     assert_eq!(process.reply("repo/main").unwrap().text, "原样\n");
+    fs::write(&response, "permission?\n中文\n").unwrap();
+    assert_eq!(process.read("repo/main").unwrap(), "permission?\n中文\n");
+    assert!(
+        fs::read_to_string(root.join("calls"))
+            .unwrap()
+            .contains("4:read9:repo/main7:--bytes4:4000\n")
+    );
     fs::remove_file(&response).unwrap();
+    assert_eq!(process.read("repo/main").unwrap_err().code, "not_found");
     fs::copy(&binary, root.join("corral")).unwrap();
     Process::discover(None, Some(root.as_os_str()), &root).unwrap();
     fs::remove_file(root.join("corral")).unwrap();
