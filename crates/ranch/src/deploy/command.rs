@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Only starts target-version programs. Bound both process lifetime and pipe reads;
+/// Starts target-version programs or /bin/launchctl. Bound process lifetime and pipe reads;
 /// On failure, kill/reap its group only while the leader has not been reaped.
 pub(super) fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Output, String> {
     let mut child = Command::new(program)

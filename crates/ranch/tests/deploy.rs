@@ -10,6 +10,10 @@ use std::{
 };
 use tempfile::TempDir;
 
+#[allow(dead_code)]
+#[path = "../src/deploy.rs"]
+mod deploy;
+
 const PROGRAMS: [&str; 4] = ["corral", "ranch", "fence", "pony"];
 
 struct Home(TempDir);
@@ -93,6 +97,12 @@ impl Home {
 
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ranch"));
+        self.environment(&mut command);
+        command.args(["deploy"]).args(args);
+        command
+    }
+
+    fn environment(&self, command: &mut Command) {
         command
             .env_clear()
             .env("HOME", self.0.path())
@@ -107,10 +117,7 @@ impl Home {
             )
             .env("PATH", self.path(".local/bin"))
             .current_dir(self.0.path())
-            .stdin(Stdio::null())
-            .args(["deploy"])
-            .args(args);
-        command
+            .stdin(Stdio::null());
     }
 
     fn run(&self, args: &[&str], code: i32) -> String {
@@ -153,6 +160,304 @@ impl Home {
         visit(self.0.path(), &mut tree);
         tree
     }
+}
+
+// A child test process provides fake OS calls to the real deploy command entry.
+// No environment hooks or fake launchctl paths exist in the production binary.
+#[test]
+fn pony_cli_fixture() {
+    let Ok(args) = std::env::var("DEPLOY_PONY_ARGS") else {
+        return;
+    };
+    let system = deploy::pony::System {
+        macos: std::env::var_os("DEPLOY_NOT_MACOS").is_none(),
+        process: |pid| {
+            let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+            let after = home.join(format!("process-after-{pid}.json"));
+            let path = if home.join("pony-kickstarted").exists() && after.exists() {
+                after
+            } else {
+                home.join(format!("process-{pid}.json"))
+            };
+            let data: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            Ok(deploy::pony::Process {
+                parent: data["parent"].as_u64().unwrap() as u32,
+                program: PathBuf::from(data["program"].as_str().unwrap()),
+            })
+        },
+        launch: |args| {
+            assert_eq!(
+                args,
+                [
+                    "kickstart",
+                    "-k",
+                    &format!("gui/{}/local.ranch.pony", unsafe { libc::geteuid() })
+                ]
+            );
+            let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+            // Restart must follow the link switch.
+            assert!(
+                fs::read_link(home.join(".local/bin/pony"))
+                    .unwrap()
+                    .ends_with("new/bin/pony")
+            );
+            fs::rename(
+                home.join("pony-status-next.json"),
+                home.join("pony-status.json"),
+            )
+            .unwrap();
+            fs::write(home.join("pony-kickstarted"), "yes").unwrap();
+            Ok(())
+        },
+    };
+    std::process::exit(
+        deploy::run_with(&args.split_whitespace().collect::<Vec<_>>(), &system).into(),
+    );
+}
+
+impl Home {
+    fn pony_run(&self, args: &str, code: i32, macos: bool) -> String {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        self.environment(&mut command);
+        command
+            .args(["--exact", "pony_cli_fixture", "--nocapture"])
+            .env("DEPLOY_PONY_ARGS", args);
+        if !macos {
+            command.env("DEPLOY_NOT_MACOS", "1");
+        }
+        let output = command.output().unwrap();
+        let out = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{out}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        out
+    }
+
+    fn pony_status(&self, file: &str, service: &str, pid: Option<i32>) {
+        fs::write(self.path(file), serde_json::to_vec(&serde_json::json!({
+            "ok":true, "service":service, "running":pid.is_some(), "pid":pid,
+            "last_exit": if pid.is_none() { serde_json::json!({"code":"config_missing"}) } else { Value::Null },
+            "chats":[{"kind":"slack","connection":"connecting"}]
+        })).unwrap()).unwrap();
+    }
+
+    fn pony_process(&self, pid: i32, parent: u32, program: &Path) {
+        fs::write(
+            self.path(&format!("process-{pid}.json")),
+            serde_json::to_vec(&serde_json::json!({"parent":parent,"program":program})).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn running_pony() -> Self {
+        let home = Self::new();
+        home.package("old");
+        home.package("new");
+        // Different bytes, no actual running process.
+        fs::copy("/bin/cat", home.version("old").join("bin/pony")).unwrap();
+        home.manifest("old");
+        for name in PROGRAMS {
+            home.link(name, "old");
+        }
+        home.pony_status("pony-status.json", "installed", Some(101));
+        home.pony_process(101, 1, &home.version("old").join("bin/pony"));
+        home.pony_status("pony-status-next.json", "installed", Some(102));
+        home.pony_process(102, 1, &home.version("new").join("bin/pony"));
+        home
+    }
+}
+
+#[test]
+fn pony_changed_running_program_is_restarted_and_verified() {
+    let home = Home::running_pony();
+    // Neither the same pid with target bytes, a new pid with old bytes, nor
+    // running:false may satisfy the restart check.
+    fs::copy(
+        home.path("process-102.json"),
+        home.path("process-after-101.json"),
+    )
+    .unwrap();
+    home.pony_process(103, 1, &home.version("old").join("bin/pony"));
+    home.pony_status("pony-poll-0.json", "installed", Some(101));
+    home.pony_status("pony-poll-1.json", "installed", Some(103));
+    home.pony_status("pony-poll-2.json", "installed", None);
+    let before = home.snapshot();
+    let out = home.pony_run("new --dry-run", 0, true);
+    assert!(out.contains("重启 pony：launchctl kickstart"), "{out}");
+    assert_eq!(home.snapshot(), before);
+    let out = home.pony_run("new --yes", 0, true);
+    assert!(out.contains("pid 102"), "{out}");
+    assert!(out.contains("slack connecting"), "{out}");
+    assert!(out.contains("pony 跑的是目标程序"), "{out}");
+    assert!(home.path("pony-kickstarted").exists());
+    for n in 0..3 {
+        assert!(!home.path(&format!("pony-poll-{n}.json")).exists());
+    }
+    let records = home.records();
+    assert_eq!(records[0]["pony"]["action"], "pony_restart");
+    let step = records[1]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["step"] == "pony_restart")
+        .unwrap();
+    assert_eq!(step["result"], "done");
+    assert_eq!(step["pid"], 102);
+    assert!(!home.path(".pony").exists());
+}
+
+#[test]
+fn pony_old_target_without_service_is_refused_when_plist_exists() {
+    let home = Home::running_pony();
+    // R38f predecessors always said not_installed, even with a newer plist present.
+    home.pony_status("pony-status.json", "not_installed", Some(101));
+    fs::write(home.path("pony-no-service"), "unsupported").unwrap();
+    let plist = home.path("Library/LaunchAgents/local.ranch.pony.plist");
+    fs::create_dir_all(plist.parent().unwrap()).unwrap();
+    fs::write(plist, "installed service").unwrap();
+    let before = home.snapshot();
+    let out = home.pony_run("new --yes", 1, true);
+    assert!(out.contains("先用当前版本卸服务再部署"), "{out}");
+    assert_eq!(home.snapshot(), before);
+}
+
+#[test]
+fn pony_changed_plist_uses_target_service_install_without_kickstart() {
+    let home = Home::running_pony();
+    fs::write(home.path("pony-replace"), "replace").unwrap();
+    let before = home.snapshot();
+    let out = home.pony_run("new --dry-run", 0, true);
+    assert!(out.contains("pony service install --yes"), "{out}");
+    assert_eq!(home.snapshot(), before);
+    let out = home.pony_run("new --yes", 0, true);
+    assert!(out.contains("pid 102"), "{out}");
+    assert!(home.path("pony-installed").exists());
+    assert!(!home.path("pony-kickstarted").exists());
+    let records = home.records();
+    let step = records[1]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["step"] == "pony_service")
+        .unwrap();
+    assert_eq!(step["result"], "done");
+    assert_eq!(step["pid"], 102);
+}
+
+#[test]
+fn pony_stopped_service_is_not_started_even_if_plist_needs_replacing() {
+    let home = Home::running_pony();
+    home.pony_status("pony-status.json", "installed", None);
+    fs::write(home.path("pony-replace"), "replace").unwrap();
+    let out = home.pony_run("new --yes", 0, true);
+    assert!(out.contains("服务装着但没在跑，不重启"), "{out}");
+    assert!(out.contains("config_missing"), "{out}");
+    assert!(home.path("pony-replace").exists());
+    assert!(!home.path("pony-kickstarted").exists());
+    assert!(!home.path("pony-installed").exists());
+    assert_eq!(home.records()[1]["pony"]["action"], "skip");
+}
+
+#[test]
+fn pony_manual_process_is_left_running_even_if_plist_needs_replacing() {
+    let home = Home::running_pony();
+    home.pony_process(101, 88, &home.version("old").join("bin/pony"));
+    fs::write(home.path("pony-replace"), "replace").unwrap();
+    let out = home.pony_run("new --yes", 0, true);
+    assert!(
+        out.contains("父进程不是 launchd，不重启，请自行重启"),
+        "{out}"
+    );
+    assert!(home.path("pony-replace").exists());
+    assert!(!home.path("pony-kickstarted").exists());
+    assert!(!home.path("pony-installed").exists());
+    assert_eq!(home.records()[1]["pony"]["action"], "skip");
+}
+
+#[test]
+fn pony_identical_running_program_at_another_path_is_not_restarted() {
+    let home = Home::running_pony();
+    let running = home.path("running-pony");
+    fs::copy(home.version("new").join("bin/pony"), &running).unwrap();
+    home.pony_process(101, 1, &running);
+    let out = home.pony_run("new --yes", 0, true);
+    assert!(out.contains("正在跑的 pony 程序相同，不重启"), "{out}");
+    assert!(out.contains("pony 跑的是目标程序（pid 101"), "{out}");
+    assert!(!home.path("pony-kickstarted").exists());
+    assert!(!home.path("pony-installed").exists());
+}
+
+#[test]
+fn pony_unsupported_platform_only_switches_links() {
+    for macos in [false, true] {
+        let home = Home::running_pony();
+        home.pony_status("pony-status.json", "unsupported", Some(101));
+        let out = home.pony_run("new --yes", 0, macos);
+        assert!(out.contains("跳过重启"), "{out}");
+        assert!(!home.path("pony-kickstarted").exists());
+        assert!(!home.path("pony-installed").exists());
+        assert_eq!(home.records()[1]["after"]["pony"], "new");
+    }
+}
+
+#[test]
+fn pony_retry_still_restarts_old_process_after_links_already_changed() {
+    let home = Home::running_pony();
+    fs::copy(
+        home.version("new").join("bin/fence"),
+        home.version("new").join("bin/corral"),
+    )
+    .unwrap();
+    home.manifest("new");
+    fs::write(home.path("fail-install"), "fail").unwrap();
+    let out = home.pony_run("new --yes", 1, true);
+    assert!(out.contains("没做 重启 pony"), "{out}");
+    assert!(!home.path("pony-kickstarted").exists());
+    fs::remove_file(home.path("fail-install")).unwrap();
+    let before = home.snapshot();
+    let out = home.pony_run("new --dry-run", 0, true);
+    assert!(out.contains("接着上次未完成的部署"), "{out}");
+    assert!(out.contains("重启 pony：launchctl kickstart"), "{out}");
+    assert!(!out.contains("切链接（"), "{out}");
+    assert_eq!(home.snapshot(), before);
+    let out = home.pony_run("new --yes", 0, true);
+    assert!(out.contains("pid 102"), "{out}");
+    assert!(home.path("pony-kickstarted").exists());
+    assert_eq!(home.records()[3]["before_version"], "old");
+    assert_eq!(home.records()[3]["result"], "done");
+}
+
+#[test]
+fn pony_restart_timeout_reports_stopped_state_first_and_records_failure() {
+    let home = Home::running_pony();
+    home.pony_status("pony-status-next.json", "installed", None);
+    let started = std::time::Instant::now();
+    let out = home.pony_run("new --yes", 1, true);
+    assert!(started.elapsed() >= std::time::Duration::from_secs(30));
+    assert!(out.contains("30 秒内没等到新的 pony 起来"), "{out}");
+    assert!(
+        out.find("pony 现在没在跑").unwrap() < out.find("中途失败").unwrap(),
+        "{out}"
+    );
+    assert!(out.contains(".pony/logs/launchd.log"), "{out}");
+    assert!(out.contains(".pony/logs/pony.log"), "{out}");
+    assert!(out.contains("没做 核对"), "{out}");
+    assert!(out.contains("接着做："), "{out}");
+    assert!(out.contains("退回："), "{out}");
+    let records = home.records();
+    assert_eq!(records[1]["result"], "failed");
+    assert_eq!(records[1]["pony_after"]["running"], false);
+    let step = records[1]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["step"] == "pony_restart")
+        .unwrap();
+    assert_eq!(step["result"], "failed");
+    assert_eq!(records[1]["after"]["pony"], "new");
 }
 
 #[test]
@@ -500,12 +805,16 @@ fn rework_timeout_does_not_signal_the_group_after_its_leader_was_reaped() {
 }
 
 #[test]
-fn rework_pony_notice_distinguishes_first_install_and_platform() {
+fn pony_not_installed_only_switches_links_even_when_program_changes() {
     let home = Home::new();
     home.package("new");
     let out = home.run(&["new", "--dry-run"], 0);
     assert!(
-        out.contains("pony 第一次装，服务另装，deploy 不装"),
+        out.contains(if cfg!(target_os = "macos") {
+            "pony 服务没装，服务另装，deploy 不装"
+        } else {
+            "pony 非 macOS 平台，跳过重启"
+        }),
         "{out}"
     );
     assert!(!out.contains("launchctl kickstart"), "{out}");
@@ -515,12 +824,10 @@ fn rework_pony_notice_distinguishes_first_install_and_platform() {
     home.manifest("old");
     home.link("pony", "old");
     let out = home.run(&["new", "--dry-run"], 0);
-    assert!(!out.contains("pony 第一次装"), "{out}");
-    assert_eq!(
-        out.contains("要你手动重启 pony：launchctl kickstart"),
-        cfg!(target_os = "macos"),
-        "{out}"
-    );
+    assert!(!out.contains("launchctl kickstart"), "{out}");
+    let out = home.run(&["new", "--yes"], 0);
+    assert!(!out.contains("launchctl kickstart"), "{out}");
+    assert_eq!(home.records()[1]["pony"]["action"], "skip");
     assert!(!home.path(".pony").exists());
 }
 
@@ -537,4 +844,17 @@ fn rework_manifest_program_missing_from_bin_is_rejected() {
     home.manifest("new");
     let out = home.run(&["new", "--dry-run"], 0);
     assert!(out.contains("目标版本没有，不动这个链接"), "{out}");
+}
+
+#[test]
+fn history_truncated_in_a_chinese_character_still_allows_preview() {
+    let home = Home::new();
+    home.package("new");
+    let mut history = b"{\"to\":\"old\",\"result\":\"done\"}\n{\"title\":\"".to_vec();
+    history.extend_from_slice(&"切".as_bytes()[..2]);
+    fs::write(home.path(".local/share/ranch/deploys.jsonl"), history).unwrap();
+    let before = home.snapshot();
+    let out = home.run(&["new", "--dry-run"], 0);
+    assert!(out.contains("末行不完整（可能被中断）"), "{out}");
+    assert_eq!(home.snapshot(), before);
 }

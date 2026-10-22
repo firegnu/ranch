@@ -1,5 +1,8 @@
 //! Deployment orchestration; all runtime-specific work goes through target-version commands.
+#[path = "deploy/command.rs"]
 mod command;
+#[path = "deploy/pony.rs"]
+pub(crate) mod pony;
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -73,11 +76,15 @@ struct Plan {
     before_version: Option<String>,
     rollback: String,
     notes: Vec<String>,
-    pony: Option<String>,
+    pony: Option<pony::Plan>,
     history: Vec<Value>,
 }
 
 pub fn run(args: &[&str]) -> u8 {
+    run_with(args, &pony::System::native())
+}
+
+pub(crate) fn run_with(args: &[&str], system: &pony::System) -> u8 {
     let (mut version, mut dry, mut yes) = (None, false, false);
     for arg in args {
         match *arg {
@@ -94,7 +101,7 @@ pub fn run(args: &[&str]) -> u8 {
         println!("用法：ranch deploy <版本> [--dry-run] [--yes]");
         return 2;
     };
-    match plan(version).and_then(|plan| preview(&plan, dry, yes)) {
+    match plan(version, system).and_then(|plan| preview(&plan, dry, yes, system)) {
         Ok(()) => 0,
         Err(error) => {
             println!("部署停止：{error}");
@@ -429,7 +436,7 @@ fn installations(bundle: &Bundle) -> Result<Vec<Install>> {
     Ok(installs)
 }
 
-fn plan(name: &str) -> Result<Plan> {
+fn plan(name: &str, system: &pony::System) -> Result<Plan> {
     if unsafe { libc::geteuid() } == 0 || unsafe { libc::getuid() } == 0 {
         return Err("不能用 root / sudo 部署".into());
     }
@@ -508,26 +515,13 @@ fn plan(name: &str) -> Result<Plan> {
             .into(),
         );
     }
-    let pony_link = links.iter().find(|l| l.name == "pony").unwrap();
-    let pony = if pony_link.description == "新建" {
-        notes.push("pony 第一次装，服务另装，deploy 不装".into());
-        None
-    } else if cfg!(target_os = "macos") && pony_link.description == "程序变了" {
-        Some(format!(
-            "要你手动重启 pony：launchctl kickstart -k gui/{}/local.ranch.pony",
-            unsafe { libc::geteuid() }
-        ))
-    } else {
-        notes.push(
-            if cfg!(target_os = "macos") {
-                "pony 程序没变或目标版本没有，不重启"
-            } else {
-                "pony 非 macOS 平台，跳过重启"
-            }
-            .into(),
-        );
-        None
-    };
+    let pony = pony::plan(&bundle, &home, system)?;
+    notes.push(
+        pony.as_ref()
+            .map_or("目标版本没有 pony，不动服务".into(), |p| {
+                p.note.clone()
+            }),
+    );
     let helper = env::var_os("CORRAL_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".corral"))
@@ -549,7 +543,6 @@ fn plan(name: &str) -> Result<Plan> {
         "共用 helper {detail}；deploy 不切，要换见 HANDOFF「部署时要记得」"
     ));
     notes.push("在跑的 agent 不动，不 corral upgrade；新开的 agent 用新版".into());
-    notes.push("pony 进程和服务不查询；不执行 launchctl 或 pony service install".into());
     let installs = installations(&bundle)?;
     Ok(Plan {
         paths,
@@ -565,15 +558,15 @@ fn plan(name: &str) -> Result<Plan> {
 }
 
 fn read_history(path: &Path) -> Result<Vec<Value>> {
-    let text = match fs::read_to_string(path) {
+    let text = match fs::read(path) {
         Ok(text) => text,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(error(path, e)),
     };
     Ok(text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).unwrap_or(Value::Null))
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+        .map(|line| serde_json::from_slice(line).unwrap_or(Value::Null))
         .collect())
 }
 
@@ -628,7 +621,7 @@ fn last_record(history: &[Value]) -> String {
     )
 }
 
-fn preview(plan: &Plan, dry: bool, yes: bool) -> Result<()> {
+fn preview(plan: &Plan, dry: bool, yes: bool, system: &pony::System) -> Result<()> {
     let bundle = &plan.bundle;
     println!(
         "部署 {}（提交 {}，分支 {}，{}，工作区 {}）",
@@ -661,8 +654,11 @@ fn preview(plan: &Plan, dry: bool, yes: bool) -> Result<()> {
         count += 1;
         println!("  {count}. 重装{}", install.title);
     }
-    if let Some(pony) = &plan.pony {
-        println!("  {pony}");
+    if let Some(pony) = &plan.pony
+        && pony.action.is_some()
+    {
+        count += 1;
+        println!("  {count}. {}", pony.description());
     }
     println!("\n不做的：");
     for link in plan.links.iter().filter(|l| !l.changes()) {
@@ -727,7 +723,7 @@ fn preview(plan: &Plan, dry: bool, yes: bool) -> Result<()> {
             return Err("已取消，什么都没改".into());
         }
     }
-    apply(plan)
+    apply(plan, system)
 }
 
 fn unchanged(plan: &Plan) -> Result<()> {
@@ -827,7 +823,7 @@ fn install(install: &Install) -> Result<()> {
     Ok(())
 }
 
-fn verify(plan: &Plan) -> Result<()> {
+fn verify(plan: &Plan, system: &pony::System) -> Result<()> {
     for link in &plan.links {
         let expected = link.target.as_ref().or(link.before.as_ref());
         if read_link(&plan.paths.bin.join(link.name))?.as_ref() != expected {
@@ -854,6 +850,9 @@ fn verify(plan: &Plan) -> Result<()> {
                 install.title
             ));
         }
+    }
+    if let Some(pony) = &plan.pony {
+        pony.verify(system)?;
     }
     println!("核对：链接均符合计划；支持检查的技能、已装插件都是 same（foreign 保留）。");
     Ok(())
@@ -895,7 +894,7 @@ fn record(file: &mut fs::File, mut value: Value) -> Result<()> {
         .map_err(|e| format!("部署记录写入失败：{e}"))
 }
 
-fn apply(plan: &Plan) -> Result<()> {
+fn apply(plan: &Plan, system: &pony::System) -> Result<()> {
     let lock_path = plan.paths.state.join("deploy.lock");
     let lock = fs::OpenOptions::new()
         .read(true)
@@ -930,7 +929,7 @@ fn apply(plan: &Plan) -> Result<()> {
         .collect();
     record(
         &mut log,
-        json!({"by":plan.paths.caller,"to":plan.bundle.name,"before":before,"before_version":plan.before_version,"rollback":plan.rollback,"result":"started"}),
+        json!({"by":plan.paths.caller,"to":plan.bundle.name,"before":before,"before_version":plan.before_version,"rollback":plan.rollback,"pony":plan.pony.as_ref().map(pony::Plan::record),"result":"started"}),
     )?;
     let mut steps = Vec::new();
     if plan.links.iter().any(Link::changes) {
@@ -939,13 +938,24 @@ fn apply(plan: &Plan) -> Result<()> {
     for install in plan.installs.iter().filter(|i| i.changes()) {
         steps.push(json!({"step":install.id,"title":install.title,"result":"not_done"}));
     }
+    if let Some(pony) = &plan.pony
+        && let Some(action) = pony.action
+    {
+        steps.push(json!({"step":action,"title":pony.title(),"result":"not_done"}));
+    }
     steps.push(json!({"step":"verify","title":"核对","result":"not_done"}));
     let mut failure = None;
     for step in &mut steps {
         let id = step["step"].as_str().unwrap();
         let result = match id {
             "links" => switch_links(plan),
-            "verify" => verify(plan),
+            "verify" => verify(plan, system),
+            "pony_restart" | "pony_service" => {
+                plan.pony.as_ref().unwrap().execute(system).map(|value| {
+                    step["pid"] = value["pid"].clone();
+                    step["chats"] = value["chats"].clone();
+                })
+            }
             _ => install(plan.installs.iter().find(|i| i.id == id).unwrap()),
         };
         match result {
@@ -971,7 +981,11 @@ fn apply(plan: &Plan) -> Result<()> {
             (name, value)
         })
         .collect();
+    let mut pony_after = Value::Null;
     if failure.is_some() {
+        if let Some(pony) = &plan.pony {
+            pony_after = pony.failure_status(system);
+        }
         println!("\n中途失败，不自动撤回：");
         for step in &steps {
             let result = match step["result"].as_str().unwrap() {
@@ -992,7 +1006,6 @@ fn apply(plan: &Plan) -> Result<()> {
                 .unwrap_or("未安装");
             println!("  当前链接 {name}：{text}");
         }
-        println!("pony 运行状态未查询；本次没有重启或修改服务。");
         println!(
             "接着做：找到原因后重跑 {}，做过的会跳过",
             deploy_command(&plan.paths, &plan.bundle.name)
@@ -1000,9 +1013,6 @@ fn apply(plan: &Plan) -> Result<()> {
     }
     // Always print recovery instructions, including when the final record cannot be saved.
     println!("退回：{}", plan.rollback);
-    if let Some(pony) = &plan.pony {
-        println!("{pony}");
-    }
     if plan.bundle.hashes.contains_key("ranch") && !plan.bundle.has_deploy {
         println!(
             "PATH 上的 ranch 现在没有 deploy，再部署用 {}",
@@ -1011,7 +1021,7 @@ fn apply(plan: &Plan) -> Result<()> {
     }
     record(
         &mut log,
-        json!({"to":plan.bundle.name,"before_version":plan.before_version,"after":after,"steps":steps,"result":if failure.is_some() {"failed"} else {"done"},"rollback":plan.rollback}),
+        json!({"to":plan.bundle.name,"before_version":plan.before_version,"after":after,"steps":steps,"pony":plan.pony.as_ref().map(pony::Plan::record),"pony_after":pony_after,"result":if failure.is_some() {"failed"} else {"done"},"rollback":plan.rollback}),
     )?;
     println!("已记到 {}", log_path.display());
     failure.map_or(Ok(()), Err)

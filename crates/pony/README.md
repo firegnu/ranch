@@ -271,25 +271,24 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 
    macOS 可能通知「已添加后台项目」。`installed` 但 `running: false` 时，
    看配置、`last_exit` 和日志；只安装文件不能保证配置正确或 Slack 已连上。
-5. 后续用 `ranch deploy <版本>` 部署。当前 deploy 只提醒手动重启 pony，
-   不查询进程、不改服务；切链接以后，先 `pony service install --dry-run` 看 plist 定义是否有变；
-   若为 `replace`，用 `pony service install --yes` 卸下旧定义、写入并加载新定义。
-   定义相同、只换程序时，重启服务让它使用新程序：
-
-   ```sh
-   launchctl kickstart -k "gui/$(id -u)/local.ranch.pony"
-   pony status
-   ```
+5. 后续用 `ranch deploy <版本>` 部署。它会把 pony 这一步列入计划，确认后
+   自动执行：服务已装且由 launchd 运行时，plist 为 `replace` 就调用目标版本的
+   `pony service install --yes`；定义相同则比对正在运行的真实程序和目标的
+   sha256，内容不同才 kickstart。程序相同不重启；服务未装或非 macOS 只切链接；
+   服务装着但没在跑时说明 `last_exit`，手动运行时提醒自行重启，两种都不重启。
+   重启后最多等 30 秒，核对 running、新 pid 和目标程序；Slack 连接状态照实
+   显示，不要求已 connected。失败时先说明 pony 当前状态并给日志位置，不自动撤回。
 
    没配置时 pony 退出 0，launchd 不再重起。运行中删掉配置也一样；放回配置后
-   要执行上述 kickstart 或重新登录，单独放回文件不会触发启动。
+   要执行 `launchctl kickstart -k "gui/$(id -u)/local.ranch.pony"` 或重新登录，
+   单独放回文件不会触发启动，deploy 也不会启动原本没在跑的服务。
    这里的「删配置」只指 `config.toml`。要删除整个 `~/.pony`、`logs/` 或
    `~/.local/bin/pony` 链接，先 uninstall；否则 launchd 打不开日志路径或程序，
    pony 没机会正常退出，会因启动失败反复重试。
 6. 退回时，用户在场执行 deploy 打印的退回命令（用仍保留的 deploy 程序绝对
    路径运行 `ranch deploy <旧版本>`，链接和技能一起退回；记录在
-   `~/.local/share/ranch/deploys.jsonl`），再按第 5 步
-   处理 plist 定义变化或 kickstart，核对 status 和日志。
+   `~/.local/share/ranch/deploys.jsonl`），pony 的定义变化、重启和核对也由 deploy
+   按第 5 步处理；失败时按输出查看 status 和日志。
    不要覆盖、删除仍被进程或 hook 引用的不可变版本目录。
    若退回的 pony 版本还不支持 service 命令，先用当前版本卸服务再切链接。
    只想停止常驻时，使用：
