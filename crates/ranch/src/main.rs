@@ -1,9 +1,11 @@
-//! `ranch`: shared commands for the Saddle and paddock front ends. Every command prints JSON
-//! on stdout; usage errors exit 2.
+//! `ranch`: shared commands for front ends, plus the human-facing `deploy` command.
+//! Dispatch prints JSON; deploy prints a Chinese plan and results. Usage errors exit 2.
+mod deploy;
 use serde_json::{Value, json};
 use std::{io::Write, process::ExitCode};
 
 const USAGE: &str = "Usage:
+  ranch deploy <VERSION> [--dry-run] [--yes]
   ranch dispatch route < SUMMARY
   ranch dispatch cell <NAME>
   ranch dispatch table
@@ -19,6 +21,7 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
         }
+        ["deploy", rest @ ..] => return ExitCode::from(deploy::run(rest)),
         ["dispatch", "route"] => {
             let result = ranch_dispatch::route(&mut std::io::stdin().lock());
             (result.exit_code, result.stdout)

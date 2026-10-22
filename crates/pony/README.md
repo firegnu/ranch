@@ -256,8 +256,10 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
    `~/.pony/config.toml`：owner 成员 ID、频道 ID 与仓库绑定；私有频道要
    `/invite @pony`。先试直连，连不上再填 HTTP(S) `proxy`，不支持 SOCKS。
    不依赖 shell 的代理环境变量或 macOS 系统代理，launchd 的环境也不同于终端。
-3. 按 ranch 的全局部署流程生成新的不可变版本目录，用户在场切换
-   `~/.local/bin/{corral,ranch,fence,pony}`。服务只经 pony 的链接启动，
+3. 按 ranch 的全局部署流程生成新的不可变版本目录。用户在普通终端先用
+   `<新版本目录>/bin/ranch deploy <版本> --dry-run` 预览，再去掉 `--dry-run`
+   确认部署；它一起切换 `~/.local/bin/{corral,ranch,fence,pony}`，并按需重装
+   corral、corral-dispatch 技能及已装的全局插件。服务只经 pony 的链接启动，
    不用重新生成指向某个版本目录的 plist；corral 运行中的 agent 不在这里升级。
 4. 在当前用户的图形登录会话中预览、确认内容后安装，再看状态：
 
@@ -269,7 +271,8 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 
    macOS 可能通知「已添加后台项目」。`installed` 但 `running: false` 时，
    看配置、`last_exit` 和日志；只安装文件不能保证配置正确或 Slack 已连上。
-5. 后续部署切链接以后，先 `pony service install --dry-run` 看 plist 定义是否有变；
+5. 后续用 `ranch deploy <版本>` 部署。当前 deploy 只提醒手动重启 pony，
+   不查询进程、不改服务；切链接以后，先 `pony service install --dry-run` 看 plist 定义是否有变；
    若为 `replace`，用 `pony service install --yes` 卸下旧定义、写入并加载新定义。
    定义相同、只换程序时，重启服务让它使用新程序：
 
@@ -283,7 +286,9 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
    这里的「删配置」只指 `config.toml`。要删除整个 `~/.pony`、`logs/` 或
    `~/.local/bin/pony` 链接，先 uninstall；否则 launchd 打不开日志路径或程序，
    pony 没机会正常退出，会因启动失败反复重试。
-6. 退回时，用户在场按 ranch 部署记录把链接切回保留的上一版本，再按第 5 步
+6. 退回时，用户在场执行 deploy 打印的退回命令（用仍保留的 deploy 程序绝对
+   路径运行 `ranch deploy <旧版本>`，链接和技能一起退回；记录在
+   `~/.local/share/ranch/deploys.jsonl`），再按第 5 步
    处理 plist 定义变化或 kickstart，核对 status 和日志。
    不要覆盖、删除仍被进程或 hook 引用的不可变版本目录。
    若退回的 pony 版本还不支持 service 命令，先用当前版本卸服务再切链接。

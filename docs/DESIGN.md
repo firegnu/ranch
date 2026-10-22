@@ -26,6 +26,7 @@
 - R17b 起版本目录还有 `bin/fence`、`share/fence/`（`runner.mjs`、记着打包时 node 路径和版本的 `runtime.toml`）、`lib/srt/`（固定版本的 srt）；打包机器要有 node ≥ 22.12 和 npm，没有就打包失败。corral 用同一版本目录里的 fence，前端调 PATH 上的 `fence`，所以部署时 `~/.local/bin/fence` 和别的链接一起切。
 - R38 起版本目录还有 `bin/pony`。部署时 `~/.local/bin/corral`、`~/.local/bin/ranch`、`~/.local/bin/fence`、`~/.local/bin/pony` 一起切；装、换 pony 的常驻服务（`pony service install`，部署后用 `launchctl kickstart -k` 换到新程序）同样是用户在场时的部署操作。没有 `~/.pony/config.toml` 的机器上 pony 什么都不连（别的机器默认关着，见 §10）。
 - 切换 `~/.local/bin/corral`、`~/.local/bin/ranch` 和安装技能（`corral install-skills`、`ranch dispatch install-skills`）是单独的部署操作，用户在场时做。已在运行的 agent 由启动它的那份 corral 管理；要换过来用 `corral upgrade`（用户 10-05 定：第 1 步切换时不做）。
+- R41b 起部署用 `ranch deploy <版本> [--dry-run] [--yes]`：检查不可变版本目录的 `BUILD.txt`、程序校验和和可运行性，先打印计划，用户在普通终端确认后拿部署锁、复查链接，再一起切目标版本包含的程序链接；技能有变才重装，全局插件只重装本机已装且有变的。目标没有的程序链接、foreign 技能和插件保留；不打包、不删版本、不碰在跑的 agent、不 `corral upgrade`、不切共用 helper（只提醒）。本阶段 pony 只比较链接指向的程序，变了就打印手动 kickstart 提醒，不查进程、不改服务、不执行重启，后续 R41c 再接。`--dry-run` 只预览；非终端且没有 `--yes` 时退出 1、什么都不写。中途失败不自动撤回，列出完成、失败、未做的步骤，修好后重跑同一条命令会跳过已完成的部分。真部署开始、结束各记一行到 `~/.local/share/ranch/deploys.jsonl`，下次计划会显示上一条记录及中断提示；退回用打印出的当前 deploy 程序绝对路径运行 `ranch deploy <旧版本>`。混合链接按程序内容推算上一版，算不出来则打印逐个链接的恢复命令。只新增给人用的中文命令，不进 CONTRACT，paddock 不用动。
 
 ### 在另一台机器（Linux）上装和升级（R10，10-16）
 
