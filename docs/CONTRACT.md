@@ -79,7 +79,7 @@ ranch dispatch reset <名字> [--if-version <版本>]
 
 ## Claude Code 提问框与框上打断（R43）
 
-`corral status NAME` 兼容新增只读字段 `questions`。仅当前状态为 `blocked`、`last_tool` 为 `AskUserQuestion` 且收到题目时给出；其他情况字段缺省或为 `null`。结构如下（`ls` 的状态项同样适用）：
+`corral status NAME` 兼容新增只读字段 `questions`。仅当前状态为 `blocked`、`last_tool` 为 `AskUserQuestion` 且收到题目时给出；其他情况字段缺省或为 `null`。结构如下（`wait` 返回的状态对象及其超时报错同样带此字段）：
 
 ```json
 {"questions":{"items":[{"header":"颜色","question":"选哪种颜色？","multi_select":false,"options":[{"label":"红色","description":"暖色"},{"label":"蓝色","description":"冷色"}]}],"truncated":false}}
