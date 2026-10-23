@@ -1,6 +1,7 @@
 # 任务：R47c pony：Claude Code 权限框和计划批准给「允许这一次」按钮
 
-2026-10-23，ranch/main 起草，开工时补交给谁和路由。
+2026-10-23，ranch/main 交给 ranch/dev-r47c（Codex，碰要害：gpt-6-astra / xhigh）；交叉审查交 Claude Code（opus[1m] / xhigh）。
+路由：碰要害 / 交叉审查要 / 影响面：碰要害（路由：常规（置信 0.31）、要、碰要害）
 类型：功能变更
 依据：R42「第二步」的 R42e：「允许」只给 Claude Code 权限框「允许这一次」和计划批准「批准，之后的修改仍逐个问」，带确认框、点之前核对六样、点之后看反应。
 依赖：R47b
@@ -19,12 +20,15 @@
 
 - `docs/调研/R42-手机上回答确认框设计.md`：1.2–1.4、第 2 节全部（2.1 记什么、2.2 核对六样、2.3 点之后、2.4–2.6）、第 6 节（为什么只能靠 `read` 的尾部、按键前后的空隙）、「要实测的」、「用户的决定」。
 - `docs/调研/R42t-确认框和打断实测.md`：Claude Code 权限框、计划批准实测时屏幕和状态的样子。
-- `docs/任务/R47a-pony按钮底子和打断拒绝按钮.md`、`docs/任务/R47b-pony提问框选项按钮.md` 的完成记录和审查，以及上线实测时记下的情况。
+- `docs/任务/R47a-pony按钮底子和打断拒绝按钮.md`、`docs/任务/R47b-pony提问框选项按钮.md` 的完成记录和审查。
+- R47a、R47b 上线实测（10-23，a04f7dd，主控和用户在真 Slack 上做）：选项按钮、「拒绝」、「打断」都按预期工作。实测时踩到一处：测试用的 Claude Code 如果开在 auto 模式，命令直接执行、不弹权限框；要看到权限框，测试 agent 用 `claude --model sonnet --permission-mode manual` 开。
 - `docs/CONTRACT.md`：`corral read`、`keys`、`status`（`last_output`、`last_human_input`、`state_started`）。
 
 ## 在哪里干活
 
-开工时由主控建 worktree 和分支后补上。只动 `crates/pony/`、`docs/DESIGN.md` §10、`docs/调研/R38a-Slack机器人设计.md` 对应的说明、pony README，以及本任务文件末尾。
+- worktree：`/Users/firegnu/Developer/personal_projs/ranch-worktrees/r47c`，分支 `r47c`（已从 main 建好）。
+- 编译目录：命令前加 `CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r47c`。
+- 只动 `crates/pony/`、`docs/DESIGN.md` §10、`docs/调研/R38a-Slack机器人设计.md` 对应的说明、pony README，以及本任务文件末尾。
 
 ## 要做的
 
