@@ -1,6 +1,7 @@
 # 任务：R47b pony：Claude Code 提问框在 Slack 里给选项按钮
 
-2026-10-23，ranch/main 起草，开工时补交给谁和路由。
+2026-10-23，ranch/main 交给 ranch/dev-r47b（Codex，gpt-6-astra / xhigh）。
+路由：碰要害 / 交叉审查要 / 影响面：碰要害（路由：常规（置信 0.66）、拿不准、拿不准；推翻：网络进来的点击会触发按 Esc 和送话，和 R45、R47a 同类，按第 1 条碰要害，读 `critical-other`，审查读 `review-claude`：Claude Code opus[1m] xhigh）
 类型：功能变更
 依据：R42「用户的决定」第 2 条后半：提问框第二步给单选按钮、多选勾选框，用 corral 记下的结构化题目，不认屏幕。答案沿用 R45 的路（按 Esc 关框、等空下来、用文字送）。
 依赖：R47a
@@ -35,7 +36,9 @@
 
 ## 在哪里干活
 
-开工时由主控建 worktree 和分支后补上。只动 `crates/pony/`、`docs/DESIGN.md` §10、`docs/调研/R38a-Slack机器人设计.md` 对应的说明、pony README，以及本任务文件末尾。
+- worktree：`/Users/firegnu/Developer/personal_projs/ranch-worktrees/r47b`，分支 `r47b`（已从 main 建好）。
+- 编译目录：命令前加 `CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r47b`。
+- 只动 `crates/pony/`、`docs/DESIGN.md` §10、`docs/调研/R38a-Slack机器人设计.md` 对应的说明、pony README，以及本任务文件末尾。
 
 ## 要做的
 
