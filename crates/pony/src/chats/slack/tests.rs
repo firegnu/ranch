@@ -474,6 +474,29 @@ fn sends_buttons_and_updates_the_message_without_buttons() {
 }
 
 #[test]
+fn update_preserves_permanent_message_error_codes() {
+    for code in ["message_not_found", "cant_update_message"] {
+        let http = Http::new(move |r| {
+            assert_eq!(r.method, "chat.update");
+            json!({"ok": false, "error": code}).into()
+        });
+        let error = http_connection(&http)
+            .update(
+                "123.001",
+                Outgoing {
+                    channel: "C1",
+                    thread: None,
+                    markdown: "已按",
+                    notify: false,
+                    buttons: &[],
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code, code);
+    }
+}
+
+#[test]
 fn channel_metadata_and_errors_are_mapped_without_raw_error_text() {
     let http = Http::new(|r| {
         if r.verb != "GET" {

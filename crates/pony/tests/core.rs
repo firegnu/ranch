@@ -28,7 +28,8 @@ struct Memory {
     posted: Vec<Posted>,
     buttons: bool,
     updates: Vec<String>,
-    update_error: bool,
+    update_error: Option<&'static str>,
+    update_attempts: usize,
     history: Vec<Message>,
     history_reads: Vec<(String, HistoryAfter)>,
     fail_over: Option<usize>,
@@ -81,8 +82,9 @@ impl Connection for MemoryConnection {
     }
     fn update(&mut self, id: &str, m: Outgoing<'_>) -> core::Result<()> {
         let mut data = self.0.borrow_mut();
-        if data.update_error {
-            return Err(core::Error::new("network", "cannot update"));
+        data.update_attempts += 1;
+        if let Some(code) = data.update_error {
+            return Err(core::Error::new(code, "cannot update"));
         }
         if data
             .fail_over
@@ -638,7 +640,9 @@ impl Fixture {
             .borrow()
             .posted
             .iter()
-            .find(|p| p.text.contains("paddock/dev 在等你"))
+            .find(|p| {
+                p.text.contains("paddock/dev 在等你") || p.text.contains("paddock/dev 在问你")
+            })
             .unwrap()
             .clone()
     }
@@ -735,11 +739,86 @@ fn buttons_are_removed_when_the_wait_ends_without_a_click() {
             "{change}: {}",
             updated.text
         );
+        assert!(
+            !updated.text.contains("没按 Esc"),
+            "{change}: {}",
+            updated.text
+        );
         drop(memory);
         f.click(&posted, 41.);
         f.step(41.);
         assert!(f.corral.escapes.is_empty(), "{change}");
         assert!(f.texts().contains("已过期"));
+    }
+}
+
+#[test]
+fn shared_interrupt_removes_sibling_buttons_with_a_factual_result() {
+    for source in ["stop", "answer", "button", "failed_stop"] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+                "last_tool": "AskUserQuestion",
+                "questions": {"items": [{"header": "颜色", "question": "选哪种？", "multi_select": false,
+                    "options": [{"label": "红", "description": ""}, {"label": "蓝", "description": ""}]}], "truncated": false}
+            }),
+        );
+        let posted = f.button_notice();
+        f.corral.agents.get_mut("paddock/main").unwrap().state = "working".into();
+        f.message("query", None, "?", true);
+        f.step(6.);
+        let sibling = f
+            .memory
+            .borrow()
+            .posted
+            .iter()
+            .find(|p| p.id != posted.id && !p.buttons.is_empty() && p.text.contains("paddock/dev"))
+            .unwrap()
+            .clone();
+        match source {
+            "button" => f.click(&sibling, 10.),
+            "answer" => f.message("answer", Some(&posted.id), "选 B", false),
+            _ => {
+                if source == "failed_stop" {
+                    f.corral.escape_error = Some(failure(1, "network"));
+                }
+                f.message("stop", Some(&posted.id), "停", false);
+            }
+        }
+        f.step(10.);
+        assert_eq!(f.corral.escapes.len(), 1, "{source}");
+        let memory = f.memory.borrow();
+        let reminder = memory.posted.iter().find(|p| p.id == posted.id).unwrap();
+        assert!(reminder.buttons.is_empty(), "{source}");
+        assert!(
+            reminder.text.contains(if source == "failed_stop" {
+                "Esc 发送失败或结果不明"
+            } else {
+                "已在线程里按了 Esc"
+            }),
+            "{source}: {}",
+            reminder.text
+        );
+        assert!(!reminder.text.contains("没按 Esc"), "{source}");
+        assert!(
+            memory
+                .posted
+                .iter()
+                .filter(|p| p.text.contains("paddock/main"))
+                .any(|p| !p.buttons.is_empty()),
+            "unrelated agent keeps its button"
+        );
+        drop(memory);
+        f.restart();
+        f.click(&posted, 12.);
+        f.click(&sibling, 12.);
+        f.step(12.);
+        assert_eq!(
+            f.corral.escapes.len(),
+            1,
+            "{source}: old buttons must not press again"
+        );
     }
 }
 
@@ -783,6 +862,47 @@ fn summary_interrupt_button_only_targets_local_supported_agents() {
     f.message("continue", Some(&posted.id), "接着做", false);
     f.step(14.);
     assert_eq!(f.corral.sent, [("paddock/dev".into(), "接着做".into())]);
+}
+
+#[test]
+fn interrupt_button_rejects_a_later_block_in_the_same_turn() {
+    for kind in ["claude", "codex", "amp"] {
+        let mut f = Fixture::new();
+        f.memory.borrow_mut().buttons = true;
+        let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+        s.state = "working".into();
+        s.kind = Some(kind.into());
+        f.message("query", None, "?", true);
+        f.step(10.);
+        let posted = f
+            .memory
+            .borrow()
+            .posted
+            .iter()
+            .find(|p| !p.buttons.is_empty())
+            .unwrap()
+            .clone();
+        let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+        s.state = "blocked".into();
+        s.state_started = Some(11.);
+        f.click(&posted, 12.);
+        f.step(12.);
+        assert_eq!(
+            f.corral.escapes,
+            [("paddock/dev".into(), kind == "amp")],
+            "{kind}"
+        );
+        assert!(
+            f.corral.screen_reads.is_empty(),
+            "working button has no screen baseline"
+        );
+        f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+        f.step(13.);
+        assert!(f.texts().contains("框已拒绝，会话还在"), "{kind}");
+        f.click(&posted, 14.);
+        f.step(14.);
+        assert_eq!(f.corral.escapes.len(), 1);
+    }
 }
 
 #[test]
@@ -959,17 +1079,89 @@ fn buttonless_adapters_fall_back_to_stop_and_agy_never_gets_buttons() {
 }
 
 #[test]
+fn completed_button_keeps_only_the_receipt_across_restarts() {
+    let mut f = Fixture::new();
+    let posted = f.button_notice();
+    // Simulate a record written before value and update_retry were added.
+    let path = f._dir.path().join("state.json");
+    let mut disk: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let old = disk["state"]["buttons"][0].as_object_mut().unwrap();
+    old.remove("value");
+    old.remove("update_retry");
+    std::fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
+    f.restart();
+    f.click(&posted, 10.);
+    f.step(10.);
+    let disk: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let receipt = disk["state"]["buttons"][0].as_object().unwrap();
+    for field in [
+        "text",
+        "screen",
+        "status",
+        "button",
+        "notify",
+        "update_retry",
+    ] {
+        assert!(
+            !receipt.contains_key(field),
+            "completed button still retains {field}"
+        );
+    }
+    assert_eq!(receipt["value"], posted.buttons[0].value);
+    assert_eq!(receipt["message"], posted.id);
+    assert_eq!(receipt["used"], true);
+    assert!(receipt["outcome"].as_str().unwrap().contains("已按：拒绝"));
+    f.restart();
+    f.click(&posted, 12.);
+    f.step(12.);
+    assert_eq!(f.corral.escapes.len(), 1);
+    assert!(f.texts().contains("这个按钮已经按过了"));
+}
+
+#[test]
+fn button_update_permanent_errors_are_abandoned_across_restarts() {
+    for code in [
+        "not_found",
+        "archived",
+        "not_member",
+        "message_not_found",
+        "cant_update_message",
+    ] {
+        let mut f = Fixture::new();
+        let posted = f.button_notice();
+        f.memory.borrow_mut().update_error = Some(code);
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert_eq!(f.memory.borrow().update_attempts, 1, "{code}");
+        f.restart();
+        f.click(&posted, 12.);
+        f.step(12.);
+        f.step(400.);
+        assert_eq!(f.memory.borrow().update_attempts, 1, "{code}");
+        assert_eq!(f.corral.escapes.len(), 1, "{code}");
+    }
+}
+
+#[test]
 fn button_update_failure_is_retried_after_restart_without_repeating_esc() {
     let mut f = Fixture::new();
     let posted = f.button_notice();
-    f.memory.borrow_mut().update_error = true;
+    f.memory.borrow_mut().update_error = Some("network");
     f.click(&posted, 10.);
     f.step(10.);
     assert_eq!(f.corral.escapes.len(), 1);
+    assert_eq!(f.memory.borrow().update_attempts, 1);
     f.restart();
-    f.memory.borrow_mut().update_error = false;
+    f.memory.borrow_mut().update_error = None;
     f.click(&posted, 11.);
     f.step(11.);
+    assert_eq!(
+        f.memory.borrow().update_attempts,
+        1,
+        "restart must preserve backoff"
+    );
+    f.step(12.);
     assert_eq!(f.corral.escapes.len(), 1);
     assert!(f.texts().contains("已按：拒绝"));
     assert!(
@@ -982,6 +1174,119 @@ fn button_update_failure_is_retried_after_restart_without_repeating_esc() {
             .buttons
             .is_empty()
     );
+}
+
+#[test]
+fn button_update_backoff_is_capped_and_stops_after_a_day() {
+    let mut f = Fixture::new();
+    let posted = f.button_notice();
+    f.memory.borrow_mut().update_error = Some("network");
+    f.click(&posted, 10.);
+    f.step(10.);
+    assert_eq!(f.memory.borrow().update_attempts, 1);
+    for (n, at) in [12., 16., 24., 40., 72., 136., 264., 520., 820., 1120.]
+        .into_iter()
+        .enumerate()
+    {
+        f.step(at - 1.);
+        assert_eq!(f.memory.borrow().update_attempts, n + 1, "before {at}");
+        f.step(at);
+        assert_eq!(f.memory.borrow().update_attempts, n + 2, "at {at}");
+    }
+    f.restart();
+    f.step(86411.);
+    f.step(87000.);
+    assert_eq!(f.memory.borrow().update_attempts, 11, "give up after a day");
+    f.click(&posted, 87001.);
+    f.step(87001.);
+    assert_eq!(f.corral.escapes.len(), 1);
+}
+
+#[test]
+fn button_update_unfinished_records_expire_after_thirty_days_offline() {
+    let mut f = Fixture::new();
+    let posted = f.button_notice();
+    f.memory.borrow_mut().update_error = Some("network");
+    f.click(&posted, 10.);
+    f.step(10.);
+    f.events
+        .emit(Event::Connection(ConnectionInfo {
+            connection: "failed".into(),
+            reason: Some("network".into()),
+            message: None,
+            workspace: None,
+            bot: None,
+            other_connections: 0,
+        }))
+        .unwrap();
+    f.step(86411.);
+    let disk: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(f._dir.path().join("state.json")).unwrap()).unwrap();
+    assert_eq!(disk["state"]["buttons"][0]["updated"], true);
+    assert!(disk["state"]["buttons"][0].get("text").is_none());
+    f.step(40. * 86400.);
+    let disk: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(f._dir.path().join("state.json")).unwrap()).unwrap();
+    assert!(disk["state"]["buttons"].as_array().unwrap().is_empty());
+    assert_eq!(f.memory.borrow().update_attempts, 1);
+}
+
+#[test]
+fn unreadable_screen_omits_blocked_buttons_but_keeps_text_stop() {
+    let mut f = Fixture::new();
+    f.corral
+        .screens
+        .insert("paddock/dev".into(), Err(failure(1, "network")));
+    let posted = f.button_notice();
+    assert!(
+        posted.buttons.is_empty(),
+        "no reject button without a screen baseline"
+    );
+    assert!(posted.text.contains("回『停』"));
+    f.message("query", None, "?", true);
+    f.step(6.);
+    assert!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .all(|p| p.buttons.is_empty())
+    );
+    f.message("stop", Some(&posted.id), "停", false);
+    f.step(10.);
+    assert_eq!(f.corral.escapes, [("paddock/dev".into(), false)]);
+}
+
+#[test]
+fn reject_screen_mismatch_reports_the_fallback_only_after_status_checks() {
+    for human in [false, true] {
+        let mut f = Fixture::new();
+        let posted = f.button_notice();
+        f.corral
+            .screens
+            .insert("paddock/dev".into(), Ok("extra output, same dialog".into()));
+        if human {
+            let mut changed = f.corral.agents["paddock/dev"].clone();
+            changed.last_human_input = Some(10.);
+            f.corral.read_changes.insert("paddock/dev".into(), changed);
+        }
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert!(f.corral.escapes.is_empty());
+        let memory = f.memory.borrow();
+        let updated = memory.posted.iter().find(|p| p.id == posted.id).unwrap();
+        assert!(updated.buttons.is_empty());
+        if human {
+            assert!(updated.text.contains("你刚在电脑上操作过，没按 Esc"));
+            assert!(!updated.text.contains("画面和发提醒时不一样"));
+        } else {
+            assert!(
+                updated
+                    .text
+                    .contains("画面和发提醒时不一样，没按；要拒绝请在线程回『停』")
+            );
+        }
+    }
 }
 
 #[test]

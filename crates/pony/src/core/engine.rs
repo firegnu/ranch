@@ -2,8 +2,8 @@ use super::{
     Error, Result,
     config::{ChatConfig, ConfigFile, name_segment},
     state::{
-        Address, Backfill, ButtonMessage, Cursor, Expired, Interrupt, Pending, Phase,
-        QuestionContext, Seen, State, Store, Thread, Verification, Watch,
+        Address, Backfill, ButtonContent, ButtonMessage, Cursor, Expired, Interrupt, Pending,
+        Phase, QuestionContext, Seen, State, Store, Thread, Verification, Watch,
     },
 };
 use crate::{
@@ -170,15 +170,19 @@ impl Engine {
                         self.state.buttons.push(ButtonMessage {
                             address: reply_to,
                             message: id.clone(),
-                            text: rendered,
-                            notify,
-                            button: offer.button.clone(),
-                            status: offer.status.clone(),
-                            screen: offer.screen.clone(),
+                            value: offer.button.value.clone(),
+                            content: Some(ButtonContent {
+                                text: rendered,
+                                notify,
+                                button: offer.button.clone(),
+                                status: offer.status.clone(),
+                                screen: offer.screen.clone(),
+                            }),
                             created: offer.at,
                             outcome: None,
                             used: false,
                             updated: false,
+                            update_retry: None,
                         });
                         self.store.save(&self.state, None)?;
                     }
@@ -784,9 +788,38 @@ impl Engine {
             started: at,
             poll_at: at + 1.,
         });
+        let buttons: Vec<_> = self
+            .state
+            .buttons
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| {
+                (b.outcome.is_none()
+                    && b.content.as_ref().is_some_and(|c| {
+                        c.status.name == status.name && c.status.instance == status.instance
+                    })
+                    && buttons::stale(b, status).is_none())
+                .then_some(i)
+            })
+            .collect();
+        for &i in &buttons {
+            self.state.buttons[i].outcome = Some("已接收，Esc 是否送达待确认；没重按".into());
+        }
         // Persist before keys: a crash can lose a key, but must never repeat it.
         self.save()?;
-        if let Err(error) = corral.escape(&status.name, status.kind.as_deref() == Some("amp")) {
+        let result = corral.escape(&status.name, status.kind.as_deref() == Some("amp"));
+        for i in buttons {
+            self.state.buttons[i].outcome = Some(
+                if result.is_ok() {
+                    "已在线程里按了 Esc"
+                } else {
+                    "Esc 发送失败或结果不明，没重按"
+                }
+                .into(),
+            );
+        }
+        self.save()?;
+        if let Err(error) = result {
             self.log.push(format!("corral {}", safe_code(&error.code)));
             self.say(
                 address,
@@ -1176,6 +1209,20 @@ impl Engine {
                     b.address.kind == s.kind && b.address.channel == s.channel && s.at > b.after.at
                 })
         });
+        // Also expire unfinished button updates while every adapter is offline.
+        self.state
+            .buttons
+            .retain(|b| at - b.created <= 30. * 86400.);
+        for button in &mut self.state.buttons {
+            if button.updated
+                || button
+                    .update_retry
+                    .as_ref()
+                    .is_some_and(|r| at - r.started >= 86400.)
+            {
+                button.finish_update();
+            }
+        }
         self.state.expired.retain(|e| at - e.at <= 90. * 86400.);
         self.state.cursors.retain(|c| {
             if c.address.thread.is_empty() {

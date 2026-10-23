@@ -354,6 +354,8 @@ fn api_code(raw: &str) -> &'static str {
         "invalid_blocks" | "invalid_blocks_format" | "msg_blocks_too_long" => "invalid_blocks",
         "missing_scope" => "missing_scope",
         "thread_not_found" => "thread_not_found",
+        "message_not_found" => "message_not_found",
+        "cant_update_message" => "cant_update_message",
         "ratelimited" | "rate_limited" => "rate_limited",
         "not_allowed_token_type" => "auth_failed",
         "socket_mode_disabled" => "socket_mode_off",

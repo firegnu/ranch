@@ -52,26 +52,28 @@ impl Engine {
             if !self.connected.contains(&b.address.kind) {
                 continue;
             }
-            if b.outcome.is_none() {
+            if b.outcome.is_none()
+                && let Some(content) = &b.content
+            {
                 let permitted = self.configs.iter().any(|c| {
                     c.kind == b.address.kind
                         && c.channels
                             .iter()
                             .any(|channel| channel.id == b.address.channel)
-                }) && b
+                }) && content
                     .status
                     .name
                     .split_once('/')
                     .is_some_and(|(repo, _)| self.bound(&b.address.kind, repo));
                 let reason = if !permitted {
-                    Some("频道绑定已变，按钮已过期，没按 Esc")
+                    Some("频道绑定已变，按钮已过期")
                 } else {
                     let current = statuses
-                        .entry(b.status.name.clone())
-                        .or_insert_with(|| corral.status(&b.status.name));
+                        .entry(content.status.name.clone())
+                        .or_insert_with(|| corral.status(&content.status.name));
                     match current {
                         Ok(s) => stale(b, s),
-                        Err(e) if e.exit == Some(2) => Some("agent 已退出，框没了，没按 Esc"),
+                        Err(e) if e.exit == Some(2) => Some("agent 已退出，框没了"),
                         Err(_) => None,
                     }
                 };
@@ -80,12 +82,8 @@ impl Engine {
                     self.save()?;
                 }
             }
-            self.update_button(i)?;
+            self.update_button(i, at)?;
         }
-        // Match thread retention. Unknown older tokens remain unable to press keys.
-        self.state
-            .buttons
-            .retain(|b| !b.updated || at - b.created <= 30. * 86400.);
         self.save()
     }
 
@@ -107,6 +105,14 @@ impl Engine {
         {
             return Ok(None);
         }
+        let screen = if status.state == "blocked" {
+            match corral.read(&status.name) {
+                Ok(screen) => Some(screen),
+                Err(_) => return Ok(None),
+            }
+        } else {
+            None
+        };
         let mut bytes = [0u8; 16];
         std::fs::File::open("/dev/urandom")
             .and_then(|mut file| file.read_exact(&mut bytes))
@@ -119,9 +125,7 @@ impl Engine {
                 confirm: None,
             },
             status: status.clone(),
-            screen: (status.state == "blocked")
-                .then(|| corral.read(&status.name).ok())
-                .flatten(),
+            screen,
             at,
         }))
     }
@@ -137,7 +141,7 @@ impl Engine {
             .state
             .buttons
             .iter()
-            .position(|b| b.address.kind == kind && b.button.value == action.value)
+            .position(|b| b.address.kind == kind && b.value() == action.value)
         else {
             if action.own_message
                 && self.configs.iter().any(|c| {
@@ -164,11 +168,13 @@ impl Engine {
             return Ok(());
         };
         if !config.channels.iter().any(|b| b.id == address.channel)
-            || !button
-                .status
-                .name
-                .split_once('/')
-                .is_some_and(|(repo, _)| self.bound(kind, repo))
+            || button.content.as_ref().is_some_and(|content| {
+                !content
+                    .status
+                    .name
+                    .split_once('/')
+                    .is_some_and(|(repo, _)| self.bound(kind, repo))
+            })
         {
             return Ok(());
         }
@@ -189,31 +195,41 @@ impl Engine {
         if let Some(reason) = reason {
             return self.say(address, reason, false);
         }
-        let mut status = match corral.status(&button.status.name) {
+        let content = button.content.as_ref().expect("active button content");
+        let mut status = match corral.status(&content.status.name) {
             Ok(s) => s,
-            Err(_) => return self.finish_button(i, "读不出 agent 状态，没按 Esc", false),
+            Err(_) => return self.finish_button(i, "读不出 agent 状态，没按 Esc", false, at),
         };
         if let Some(reason) = self
-            .stop_reason(&status, Some(&button.status.instance), action.at, at)
-            .or_else(|| stale(&button, &status))
+            .stop_reason(&status, Some(&content.status.instance), action.at, at)
+            .map(str::to_owned)
+            .or_else(|| stale(&button, &status).map(|reason| format!("{reason}，没按 Esc")))
         {
-            return self.finish_button(i, reason, false);
+            return self.finish_button(i, &reason, false, at);
         }
-        if status.state == "blocked" {
-            match corral.read(&status.name) {
-                Ok(screen) if button.screen.as_ref() == Some(&screen) => {}
-                Ok(_) => return self.finish_button(i, "框没了或画面变了，没按 Esc", false),
-                Err(_) => return self.finish_button(i, "读不出屏幕，没按 Esc", false),
-            }
-            status = match corral.status(&button.status.name) {
+        if content.status.state == "blocked" {
+            let screen = match corral.read(&status.name) {
+                Ok(screen) => screen,
+                Err(_) => return self.finish_button(i, "读不出屏幕，没按 Esc", false, at),
+            };
+            status = match corral.status(&content.status.name) {
                 Ok(s) => s,
-                Err(_) => return self.finish_button(i, "读不出 agent 状态，没按 Esc", false),
+                Err(_) => return self.finish_button(i, "读不出 agent 状态，没按 Esc", false, at),
             };
             if let Some(reason) = self
-                .stop_reason(&status, Some(&button.status.instance), action.at, at)
-                .or_else(|| stale(&button, &status))
+                .stop_reason(&status, Some(&content.status.instance), action.at, at)
+                .map(str::to_owned)
+                .or_else(|| stale(&button, &status).map(|reason| format!("{reason}，没按 Esc")))
             {
-                return self.finish_button(i, reason, false);
+                return self.finish_button(i, &reason, false, at);
+            }
+            if content.screen.as_ref() != Some(&screen) {
+                return self.finish_button(
+                    i,
+                    "画面和发提醒时不一样，没按；要拒绝请在线程回『停』",
+                    false,
+                    at,
+                );
             }
         }
         // Mark the whole message before the shared interrupt path persists and presses Esc.
@@ -221,21 +237,21 @@ impl Engine {
         self.state.buttons[i].outcome = Some("已接收，Esc 是否送达待确认；没重按".into());
         let pressed = self.start_interrupt(address, &status, corral, at, false)?;
         let text = if pressed {
-            format!("已按：{}（{}）", button.button.label, clock_time(at))
+            format!("已按：{}（{}）", content.button.label, clock_time(at))
         } else {
             "Esc 发送失败或结果不明，没重按".into()
         };
-        self.finish_button(i, &text, true)
+        self.finish_button(i, &text, true, at)
     }
 
-    fn finish_button(&mut self, i: usize, text: &str, used: bool) -> Result<()> {
+    fn finish_button(&mut self, i: usize, text: &str, used: bool, at: f64) -> Result<()> {
         self.state.buttons[i].outcome = Some(text.into());
         self.state.buttons[i].used = used;
         self.save()?;
-        self.update_button(i)
+        self.update_button(i, at)
     }
 
-    fn update_button(&mut self, i: usize) -> Result<()> {
+    fn update_button(&mut self, i: usize, at: f64) -> Result<()> {
         let b = &self.state.buttons[i];
         let Some(outcome) = &b.outcome else {
             return Ok(());
@@ -243,7 +259,14 @@ impl Engine {
         if b.updated || !self.connected.contains(&b.address.kind) {
             return Ok(());
         }
-        let text = format!("{}\n{outcome}", b.text);
+        if b.update_retry
+            .as_ref()
+            .is_some_and(|retry| at < retry.retry_at)
+        {
+            return Ok(());
+        }
+        let content = b.content.as_ref().expect("pending button update content");
+        let text = format!("{}\n{outcome}", content.text);
         let result = self
             .connections
             .get_mut(&b.address.kind)
@@ -254,39 +277,62 @@ impl Engine {
                     channel: &b.address.channel,
                     thread: Some(&b.address.thread),
                     markdown: &text,
-                    notify: b.notify,
+                    notify: content.notify,
                     buttons: &[],
                 },
             );
         match result {
             Ok(()) => self.state.buttons[i].updated = true,
-            Err(error) => self.record_adapter_error("button_update_failed", &error),
+            Err(error) => {
+                if matches!(
+                    error.code.as_str(),
+                    "not_found"
+                        | "archived"
+                        | "not_member"
+                        | "message_not_found"
+                        | "cant_update_message"
+                ) {
+                    self.state.buttons[i].updated = true;
+                } else {
+                    let retry = &mut self.state.buttons[i].update_retry;
+                    let delay = retry.as_ref().map_or(2., |r| (r.delay * 2.).min(300.));
+                    *retry = Some(Verification {
+                        started: retry.as_ref().map_or(at, |r| r.started),
+                        retry_at: at + delay,
+                        delay,
+                    });
+                }
+                self.record_adapter_error("button_update_failed", &error);
+            }
+        }
+        if self.state.buttons[i].updated {
+            self.state.buttons[i].finish_update();
         }
         self.save()
     }
 }
 
-fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static str> {
-    let old = &button.status;
+pub(super) fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static str> {
+    let old = &button.content.as_ref()?.status;
     if status.instance != old.instance {
-        Some("它重开过，框没了，没按 Esc")
+        Some("它重开过，框没了")
     } else if status.turn_started != old.turn_started {
-        Some("它已经开了新的一轮，没按 Esc")
+        Some("这一轮已结束，它已经开了新的一轮")
     } else if status.last_human_input != old.last_human_input
         || (old.state == "blocked"
             && status
                 .last_human_input
                 .is_some_and(|t| t > old.state_started.unwrap_or(button.created)))
     {
-        Some("已在电脑上处理，没按 Esc")
+        Some("已在电脑上处理")
     } else if old.state == "blocked"
         && (status.state != "blocked"
             || status.state_started != old.state_started
             || status.last_tool != old.last_tool)
     {
-        Some("框没了或换了一个框，没按 Esc")
+        Some("框没了或换了一个框")
     } else if !matches!(status.state.as_str(), "working" | "blocked") {
-        Some("这一轮已经结束，没按 Esc")
+        Some("这一轮已结束")
     } else {
         None
     }

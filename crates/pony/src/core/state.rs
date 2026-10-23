@@ -105,16 +105,44 @@ pub struct Interrupt {
 pub struct ButtonMessage {
     pub address: Address,
     pub message: String,
+    #[serde(default)]
+    pub value: String,
+    // Flatten keeps active records written by the first R47a version readable.
+    #[serde(flatten)]
+    pub content: Option<ButtonContent>,
+    pub created: f64,
+    /// Set and persisted before keys, shared by all clicks on this message.
+    pub outcome: Option<String>,
+    pub used: bool,
+    /// Update finished or abandoned; created is still needed for receipt retention.
+    pub updated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_retry: Option<Verification>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ButtonContent {
     pub text: String,
     pub notify: bool,
     pub button: Button,
     pub status: Status,
     pub screen: Option<String>,
-    pub created: f64,
-    /// Set and persisted before keys, shared by all clicks on this message.
-    pub outcome: Option<String>,
-    pub used: bool,
-    pub updated: bool,
+}
+
+impl ButtonMessage {
+    pub(super) fn value(&self) -> &str {
+        self.content
+            .as_ref()
+            .map_or(&self.value, |c| &c.button.value)
+    }
+
+    pub(super) fn finish_update(&mut self) {
+        self.updated = true;
+        self.update_retry = None;
+        if let Some(content) = self.content.take() {
+            self.value = content.button.value;
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
