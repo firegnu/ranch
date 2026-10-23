@@ -25,12 +25,20 @@ pub struct Status {
     pub title: Option<String>,
     pub kind: Option<String>,
     pub questions: Option<Questions>,
+    pub command: Option<PermissionCommand>,
     pub paused_at: Option<f64>,
     pub last_human_input: Option<f64>,
+    pub last_output: Option<f64>,
     #[serde(default)]
     pub paused: bool,
     #[serde(default)]
     pub interrupted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct PermissionCommand {
+    pub text: String,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -94,6 +102,7 @@ pub trait Corral {
     fn read(&mut self, name: &str) -> Result<String>;
     fn send(&mut self, name: &str, text: &str) -> Result<Sent>;
     fn escape(&mut self, name: &str, twice: bool) -> Result<()>;
+    fn approve(&mut self, name: &str, option: u8) -> Result<()>;
 }
 
 pub struct Process {
@@ -202,6 +211,13 @@ impl Corral for Process {
             vec!["keys", name, "esc"]
         };
         self.call::<serde_json::Value>(&args).map(|_| ())
+    }
+    fn approve(&mut self, name: &str, option: u8) -> Result<()> {
+        if !(1..=9).contains(&option) {
+            return Err(Failure::protocol());
+        }
+        self.call::<serde_json::Value>(&["keys", name, &format!("text:{option}")])
+            .map(|_| ())
     }
 }
 

@@ -39,9 +39,19 @@ fn exercise_protocol_in_child() {
     process.send("repo/main", body).unwrap();
     process.escape("repo/main", false).unwrap();
     process.escape("repo/amp", true).unwrap();
+    process.approve("repo/main", 1).unwrap();
+    process.approve("repo/main", 2).unwrap();
     let calls = fs::read_to_string(root.join("calls")).unwrap();
     assert!(calls.contains("4:keys9:repo/main3:esc\n"));
     assert!(calls.contains("4:keys8:repo/amp3:esc3:esc\n"));
+    assert!(calls.contains("4:keys9:repo/main6:text:1\n"));
+    assert!(calls.contains("4:keys9:repo/main6:text:2\n"));
+    assert!(
+        !calls.contains("5:enter"),
+        "numeric choices submit without Enter"
+    );
+    assert!(process.approve("repo/main", 0).is_err());
+    assert!(process.approve("repo/main", 10).is_err());
     assert!(
         fs::read_to_string(root.join("calls"))
             .unwrap()
@@ -53,6 +63,13 @@ fn exercise_protocol_in_child() {
     assert_eq!(agents[1].instance, None);
     fs::write(&response,r#"{"ok":true,"name":"repo/main","instance":"i","state":"idle","state_started":1.0,"turn_started":1.0,"last_event":"Stop","last_event_at":2.0,"last_tool":null,"title":null,"paused":false,"interrupted":true,"future":1}"#).unwrap();
     assert!(process.status("repo/main").unwrap().interrupted);
+    fs::write(&response, r#"{"ok":true,"name":"repo/main","instance":"i","state":"blocked","state_started":1.0,"last_output":2.5,"last_human_input":0.5}"#).unwrap();
+    assert_eq!(process.status("repo/main").unwrap().last_output, Some(2.5));
+    assert!(process.status("repo/main").unwrap().command.is_none());
+    fs::write(&response, r#"{"ok":true,"name":"repo/main","instance":"i","state":"blocked","last_tool":"Bash","command":{"text":"printf 'a  b'\n","truncated":false}}"#).unwrap();
+    let command = process.status("repo/main").unwrap().command.unwrap();
+    assert_eq!(command.text, "printf 'a  b'\n");
+    assert!(!command.truncated);
     fs::write(
         &response,
         r#"{"ok":true,"name":"repo/main","instance":"i","text":"原样\n","at":2.0}"#,

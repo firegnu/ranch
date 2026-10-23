@@ -94,6 +94,7 @@ impl Engine {
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Some(ButtonOffer {
+            approval: None,
             // Keep the old record shape, but never render its handle. Older readers
             // cannot mistake a choice token for an interrupt button.
             button: button(String::new())?,

@@ -109,6 +109,8 @@ pub struct ButtonMessage {
     pub message: String,
     #[serde(default)]
     pub value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_value: Option<String>,
     // Flatten keeps active records written by the first R47a version readable.
     #[serde(flatten)]
     pub content: Option<ButtonContent>,
@@ -125,12 +127,30 @@ pub struct ButtonMessage {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ButtonContent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ApprovalButton>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<QuestionForm>,
     pub text: String,
     pub notify: bool,
     pub button: Button,
     pub status: Status,
     pub screen: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ApprovalButton {
+    pub button: Button,
+    pub option: u8,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ApprovalCheck {
+    pub address: Address,
+    pub status: Status,
+    pub screen: String,
+    pub started: f64,
+    pub poll_at: f64,
+    pub sent: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -144,6 +164,7 @@ pub struct QuestionForm {
 impl ButtonMessage {
     pub(super) fn matches(&self, value: &str) -> bool {
         self.value() == value
+            || self.approval_value.as_deref() == Some(value)
             || self
                 .content
                 .as_ref()
@@ -235,6 +256,8 @@ fn read_seen<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct State {
+    #[serde(default)]
+    pub approvals: Vec<ApprovalCheck>,
     pub threads: Vec<Thread>,
     pub expired: Vec<Expired>,
     pub pending: Vec<Pending>,

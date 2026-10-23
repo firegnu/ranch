@@ -178,6 +178,13 @@ pub(crate) fn status(name: &str) -> Result<Status> {
         {
             public["questions"] = questions.clone();
         }
+        if kind == "claude"
+            && public["state"] == "blocked"
+            && snap["last_tool"] == "Bash"
+            && let Some(command) = snap.get("command").filter(|v| !v.is_null())
+        {
+            public["command"] = command.clone();
+        }
         for (a, b) in [
             ("last_tool", "last_tool"),
             ("turn_started", "turn_started"),
