@@ -1,7 +1,7 @@
 use super::{Error, Result, files, now};
 use crate::{
     chats::{Event, Events, HistoryAfter},
-    corral::Status,
+    corral::{Questions, Status},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -36,6 +36,8 @@ pub struct QuestionContext {
     pub instance: String,
     pub state_started: Option<f64>,
     pub handled: bool,
+    #[serde(default)]
+    pub questions: Option<Questions>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]

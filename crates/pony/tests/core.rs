@@ -743,14 +743,21 @@ fn stop_only_matches_whole_command_and_offline_stop_never_presses() {
 
 impl Fixture {
     fn question_thread() -> Self {
+        Self::question_thread_with(
+            serde_json::json!([{"header":"颜色", "question":"选哪种？",
+                    "multi_select":false, "options":[{"label":"红", "description":""},
+                        {"label":"蓝", "description":""}]}]),
+            false,
+        )
+    }
+
+    fn question_thread_with(items: serde_json::Value, truncated: bool) -> Self {
         let mut f = Self::new();
         status_fields(
             f.corral.agents.get_mut("paddock/dev").unwrap(),
             serde_json::json!({
                 "state":"blocked", "kind":"claude", "last_tool":"AskUserQuestion",
-                "questions":{"items":[{"header":"颜色", "question":"选哪种？",
-                    "multi_select":false, "options":[{"label":"红", "description":""},
-                        {"label":"蓝", "description":""}]}], "truncated":false}
+                "questions":{"items":items, "truncated":truncated}
             }),
         );
         f.step(2.);
@@ -775,7 +782,7 @@ fn question_answer_closes_matching_dialog_then_sends_only_after_idle() {
         f.corral.sent,
         [(
             "paddock/dev".into(),
-            "（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n1 选 B；2 选 A、C".into()
+            "（这是对刚才提问的回答；选项：A 红 B 蓝；关闭提问框不表示放弃作答）\n1 选 B；2 选 A、C".into()
         )]
     );
 }
@@ -862,7 +869,10 @@ fn question_answer_stale_or_human_operated_dialog_only_queues() {
         f.step(40.);
         f.step(41.);
         assert_eq!(f.corral.sent.len(), 1);
-        assert_eq!(f.corral.sent[0].1, "（这是对刚才提问的回答）\n1 选 B");
+        assert_eq!(
+            f.corral.sent[0].1,
+            "（这是对刚才提问的回答；选项：A 红 B 蓝）\n1 选 B"
+        );
     }
 }
 
@@ -920,8 +930,87 @@ fn rework_failed_escape_keeps_answer_prefix_factual() {
     f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
     f.step(11.);
     f.step(12.);
-    assert_eq!(f.corral.sent[0].1, "（这是对刚才提问的回答）\n1 选 B");
+    assert_eq!(
+        f.corral.sent[0].1,
+        "（这是对刚才提问的回答；选项：A 红 B 蓝）\n1 选 B"
+    );
     assert_eq!(f.corral.escapes.len(), 1);
+}
+
+#[test]
+fn question_answer_prefix_lists_multiple_choice_questions() {
+    let mut f = Fixture::question_thread_with(
+        serde_json::json!([
+            {"header":"主食", "question":"选主食？", "multi_select":false,
+             "options":[{"label":"面条", "description":""},
+                        {"label":"米饭", "description":""},
+                        {"label":"饺子", "description":""}]},
+            {"header":"配菜", "question":"选配菜？", "multi_select":true,
+             "options":[{"label":"鸡腿", "description":""},
+                        {"label":"凉菜", "description":""},
+                        {"label":"青菜", "description":""}]}
+        ]),
+        false,
+    );
+    f.message("answer", Some("bot-0"), "1 选 B；2 选 A、C", false);
+    f.step(10.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(11.);
+    f.step(12.);
+    assert_eq!(
+        f.corral.sent[0].1,
+        "（这是对刚才提问的回答；选项：1. A 面条 B 米饭 C 饺子；2. A 鸡腿 B 凉菜 C 青菜；关闭提问框不表示放弃作答）\n1 选 B；2 选 A、C"
+    );
+}
+
+#[test]
+fn question_answer_prefix_marks_truncated_questions() {
+    let mut f = Fixture::question_thread_with(
+        serde_json::json!([
+            {"header":"颜色", "question":"选哪", "multi_select":false,
+             "options":[{"label":"红", "description":""},
+                        {"label":"蓝", "description":""}]}
+        ]),
+        true,
+    );
+    f.message("answer", Some("bot-0"), "1 选 B", false);
+    f.step(10.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(11.);
+    f.step(12.);
+    assert_eq!(
+        f.corral.sent[0].1,
+        "（这是对刚才提问的回答；选项：A 红 B 蓝；题目不完整；关闭提问框不表示放弃作答）\n1 选 B"
+    );
+}
+
+#[test]
+fn question_answer_prefix_cuts_a_long_reference_and_keeps_the_answer() {
+    let long = "选项一选项一选项一选项一选项一";
+    let mut f = Fixture::question_thread_with(
+        serde_json::json!([
+            {"header":"一", "question":"题一", "multi_select":false,
+             "options":[{"label":long, "description":""},
+                        {"label":long, "description":""},
+                        {"label":long, "description":""}]},
+            {"header":"二", "question":"题二", "multi_select":false,
+             "options":[{"label":long, "description":""},
+                        {"label":long, "description":""},
+                        {"label":long, "description":""}]}
+        ]),
+        false,
+    );
+    f.message("answer", Some("bot-0"), "B", false);
+    f.step(10.);
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(11.);
+    f.step(12.);
+    assert_eq!(
+        f.corral.sent[0].1,
+        format!(
+            "（这是对刚才提问的回答；选项：1. A {long} B {long} C {long}；2. A {long}；对照太长，截断；关闭提问框不表示放弃作答）\nB"
+        )
+    );
 }
 
 #[test]
