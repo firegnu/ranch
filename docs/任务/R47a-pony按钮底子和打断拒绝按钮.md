@@ -1,6 +1,7 @@
 # 任务：R47a pony：Slack 按钮的底子，加「打断」「拒绝」按钮
 
-2026-10-23，ranch/main 起草，开工时补交给谁和路由。
+2026-10-23，ranch/main 交给 ranch/dev-r47a（Codex，gpt-6-astra / xhigh）。
+路由：碰要害 / 交叉审查要 / 影响面：碰要害（路由：重（置信 0.85）、要、碰要害；读 `critical-other`，审查读 `review-claude`：Claude Code opus[1m] xhigh）
 类型：功能变更
 依据：R42「第二步」的 R42d：按钮的底子和「打断」「拒绝」按钮。不做「允许」（R47c）、不做提问框选项按钮（R47b）。
 依赖：R46
@@ -24,7 +25,9 @@
 
 ## 在哪里干活
 
-开工时由主控建 worktree 和分支后补上。只动 `crates/pony/`、`docs/DESIGN.md` §10、`docs/调研/R38a-Slack机器人设计.md` 对应的说明、pony README，以及本任务文件末尾。
+- worktree：`/Users/firegnu/Developer/personal_projs/ranch-worktrees/r47a`，分支 `r47a`（已从 main 建好）。
+- 编译目录：命令前加 `CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r47a`。
+- 只动 `crates/pony/`、`docs/DESIGN.md` §10、`docs/调研/R38a-Slack机器人设计.md` 对应的说明、pony README，以及本任务文件末尾。
 
 ## 要做的
 
