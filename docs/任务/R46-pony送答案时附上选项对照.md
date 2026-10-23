@@ -1,6 +1,7 @@
 # 任务：R46 pony：送提问回答时附上选项字母对照
 
-2026-10-23，ranch/main 起草，开工时补交给谁和路由。
+2026-10-23，ranch/main 交给 ranch/dev-r46（pi，低档：默认模型）。
+路由：低 / 交叉审查不要 / 影响面：改行为（路由：轻（置信 0.39）、不要、拿不准；主控判：改动点能逐条列出、不碰要害，按第 4 条读 `low-other`；影响面拿不准按改行为）
 类型：功能变更
 依据：10-23 真机实测选择题（单题、一框三题含多选）时发现：Slack 提醒里的 A、B、C 是 pony 加的，agent 自己的提问框里没有字母，收到「B」只能按选项顺序去猜。
 执行：派出
@@ -20,7 +21,9 @@
 
 ## 在哪里干活
 
-开工时由主控建 worktree 和分支后补上。只动 `crates/pony/`、`docs/DESIGN.md` §10 对应的一句、pony README 对应的一句，以及本任务文件末尾。
+- worktree：`/Users/firegnu/Developer/personal_projs/ranch-worktrees/r46`，分支 `r46`（已从 main 建好）。
+- 编译目录：命令前加 `CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r46`。
+- 只动 `crates/pony/`、`docs/DESIGN.md` §10 对应的一句、pony README 对应的一句，以及本任务文件末尾。
 
 ## 要做的
 
