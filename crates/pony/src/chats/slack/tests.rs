@@ -263,6 +263,99 @@ fn http_connection(http: &Http) -> SlackConnection {
         problems: BTreeMap::new(),
     }
 }
+
+#[test]
+fn interactive_is_durable_before_ack() {
+    let (listener, url) = socket();
+    let http = Http::new(move |r| match r.method.as_str() {
+        "apps.connections.open" => json!({"ok":true,"url":url}).into(),
+        "auth.test" => auth().into(),
+        _ => panic!("unexpected method"),
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let mut connection = connect_at(options(store.events("slack", "UOWNER")), &http.url).unwrap();
+    let state_file = dir.path().join("state.json");
+    let worker = thread::spawn(move || {
+        let mut ws = accept(&listener);
+        write(&mut ws, json!({"type":"hello"}));
+        let start = Instant::now();
+        write(
+            &mut ws,
+            json!({"type":"interactive", "envelope_id":"click-1",
+            "payload":{"type":"block_actions", "user":{"id":"UOWNER"},
+                "channel":{"id":"C1"},
+                "container":{"type":"message", "channel_id":"C1", "message_ts":"123.001"},
+                "message":{"ts":"123.001", "user":"UBOT", "bot_id":"BBOT"},
+                "actions":[{"type":"button", "action_id":"pony-button", "value":"random-token", "action_ts":"125.001"}]}}),
+        );
+        let ack: Value = serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(ack, json!({"envelope_id":"click-1"}));
+        assert!(start.elapsed() < Duration::from_secs(3));
+        let disk: Value = serde_json::from_slice(&std::fs::read(state_file).unwrap()).unwrap();
+        assert!(
+            disk["inbox"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["action"]["value"] == "random-token"),
+            "click must already be durable at ACK"
+        );
+    });
+    let result = worker.join();
+    connection.close();
+    result.unwrap();
+}
+
+#[test]
+fn interactive_emit_failure_is_not_acknowledged_and_origin_is_checked() {
+    let (listener, url) = socket();
+    let http = Http::new(move |r| match r.method.as_str() {
+        "apps.connections.open" => json!({"ok":true,"url":url}).into(),
+        "auth.test" => auth().into(),
+        _ => panic!("unexpected method"),
+    });
+    let (tx, rx) = mpsc::channel();
+    let events = Events(Arc::new(move |event| {
+        if let Event::Action(action) = event {
+            if action.value == "fail" {
+                return Err(error("io"));
+            }
+            tx.send(action).unwrap();
+        }
+        Ok(())
+    }));
+    let mut connection = connect_at(options(events), &http.url).unwrap();
+    let worker = thread::spawn(move || {
+        let mut ws = accept(&listener);
+        write(&mut ws, json!({"type":"hello"}));
+        for (token, bot) in [("own", "BBOT"), ("foreign", "BOTHER"), ("fail", "BBOT")] {
+            write(
+                &mut ws,
+                json!({"type":"interactive", "envelope_id":token, "payload":{
+                "type":"block_actions", "user":{"id":"UOWNER"}, "channel":{"id":"C1"},
+                "container":{"type":"message", "channel_id":"C1", "message_ts":"1.001"},
+                "message":{"user":"UBOT", "bot_id":bot, "ts":"1.001"},
+                "actions":[{"type":"button", "value":token, "action_ts":"2.001"}]}}),
+            );
+            if token == "fail" {
+                assert!(
+                    ws.read().is_err(),
+                    "failed persistence must close without ACK"
+                );
+            } else {
+                let ack: Value =
+                    serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
+                assert_eq!(ack["envelope_id"], token);
+            }
+        }
+    });
+    assert!(rx.recv_timeout(Duration::from_secs(3)).unwrap().own_message);
+    assert!(!rx.recv_timeout(Duration::from_secs(3)).unwrap().own_message);
+    let result = worker.join();
+    connection.close();
+    result.unwrap();
+}
 #[test]
 fn sends_markdown_threads_safe_mentions_and_retries_same_body_after_429() {
     let (tx, rx) = mpsc::channel();
@@ -289,6 +382,7 @@ fn sends_markdown_threads_safe_mentions_and_retries_same_body_after_429() {
         thread: Some("1.001"),
         markdown,
         notify: true,
+        buttons: &[],
     };
     assert_eq!(connection.send(outgoing()).unwrap(), "2.001");
     assert_eq!(connection.send(outgoing()).unwrap(), "3.001");
@@ -315,6 +409,68 @@ fn sends_markdown_threads_safe_mentions_and_retries_same_body_after_429() {
     assert!(rendered.contains("&lt;@UOTHER&gt;"));
     assert!(rendered.contains("&amp;lt;@UOTHER&amp;gt;"));
     assert!(!body["text"].as_str().unwrap().contains('\n'));
+}
+
+#[test]
+fn sends_buttons_and_updates_the_message_without_buttons() {
+    let (tx, rx) = mpsc::channel();
+    let http = Http::new(move |r| {
+        assert_eq!(r.verb, "POST");
+        tx.send((r.method, r.body)).unwrap();
+        json!({"ok":true,"ts":"123.001"}).into()
+    });
+    let mut c = http_connection(&http);
+    let buttons = [crate::chats::Button {
+        value: "opaque-random".into(),
+        label: "拒绝".into(),
+        style: crate::chats::ButtonStyle::Danger,
+        confirm: Some(crate::chats::Confirmation {
+            title: "确认".into(),
+            text: "<文字>".into(),
+            confirm: "继续".into(),
+            cancel: "算了".into(),
+        }),
+    }];
+    let posted = c
+        .send(Outgoing {
+            channel: "C1",
+            thread: None,
+            markdown: "等你",
+            notify: true,
+            buttons: &buttons,
+        })
+        .unwrap();
+    let (method, body) = rx.recv().unwrap();
+    assert_eq!(method, "chat.postMessage");
+    let button = &body["blocks"][2]["elements"][0];
+    assert_eq!(button["type"], "button");
+    assert_eq!(button["text"]["text"], "拒绝");
+    assert_eq!(button["value"], "opaque-random");
+    assert_eq!(button["style"], "danger");
+    assert_eq!(button["confirm"]["title"]["text"], "确认");
+    assert_eq!(button["confirm"]["text"]["type"], "plain_text");
+    c.update(
+        &posted,
+        Outgoing {
+            channel: "C1",
+            thread: None,
+            markdown: "等你\n已按：拒绝（10:42）",
+            notify: true,
+            buttons: &[],
+        },
+    )
+    .unwrap();
+    let (method, body) = rx.recv().unwrap();
+    assert_eq!(method, "chat.update");
+    assert_eq!(body["ts"], "123.001");
+    assert_eq!(body["channel"], "C1");
+    assert_eq!(body["blocks"].as_array().unwrap().len(), 2);
+    assert!(
+        body["blocks"][1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("已按：拒绝")
+    );
 }
 
 #[test]
@@ -530,7 +686,8 @@ fn socket_receives_and_acks_while_send_waits_for_rate_limit() {
             channel: "C1",
             thread: None,
             markdown: "hi",
-            notify: false
+            notify: false,
+            buttons: &[],
         })
         .unwrap(),
         "456.001"
@@ -874,6 +1031,7 @@ fn size_errors_request_resize_and_membership_errors_are_remembered() {
                 thread: None,
                 markdown: "body",
                 notify: false,
+                buttons: &[],
             })
             .unwrap_err();
         assert_eq!(e.code, code);
@@ -951,6 +1109,7 @@ fn oversized_markdown_blocks_request_resize() {
             thread: None,
             markdown: "<>&",
             notify: false,
+            buttons: &[],
         })
         .unwrap_err();
     assert_eq!(e.code, "invalid_blocks");
@@ -1143,7 +1302,8 @@ fn send_retries_only_unsent_requests_and_close_interrupts_backoff() {
             channel: "C1",
             thread: None,
             markdown: "send once",
-            notify: false
+            notify: false,
+            buttons: &[],
         })
         .unwrap(),
         "123.001"
@@ -1190,6 +1350,7 @@ fn send_retries_only_unsent_requests_and_close_interrupts_backoff() {
             thread: None,
             markdown: "do not repeat",
             notify: false,
+            buttons: &[],
         })
         .unwrap_err();
     assert_eq!(e.code, "network");

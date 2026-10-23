@@ -19,6 +19,18 @@ pub struct Message {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Action {
+    pub channel: String,
+    pub message: String,
+    pub thread: Option<String>,
+    pub sender: String,
+    pub value: String,
+    pub at: f64,
+    /// Checked by the adapter against the authenticated bot identity.
+    pub own_message: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelInfo {
     pub id: String,
     pub name: Option<String>,
@@ -41,6 +53,7 @@ pub struct ConnectionInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Event {
     Message(Message),
+    Action(Action),
     Deleted { channel: String, id: String },
     Connection(ConnectionInfo),
     Ignored,
@@ -68,6 +81,30 @@ pub struct Connect {
 pub struct Limits {
     pub characters: usize,
     pub threads: bool,
+    pub buttons: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ButtonStyle {
+    Default,
+    Primary,
+    Danger,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Confirmation {
+    pub title: String,
+    pub text: String,
+    pub confirm: String,
+    pub cancel: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Button {
+    pub value: String,
+    pub label: String,
+    pub style: ButtonStyle,
+    pub confirm: Option<Confirmation>,
 }
 
 pub struct Outgoing<'a> {
@@ -75,6 +112,7 @@ pub struct Outgoing<'a> {
     pub thread: Option<&'a str>,
     pub markdown: &'a str,
     pub notify: bool,
+    pub buttons: &'a [Button],
 }
 
 #[derive(Debug)]
@@ -98,6 +136,13 @@ pub trait Connection {
     fn limits(&self) -> Limits;
     /// Return the posted message ID. Rate limits/retries/escaping belong to the adapter.
     fn send(&mut self, message: Outgoing<'_>) -> std::result::Result<String, SendError>;
+    /// Replace one of this bot's messages, including its buttons. Never append a new message.
+    fn update(&mut self, _id: &str, _message: Outgoing<'_>) -> Result<()> {
+        Err(crate::core::Error::new(
+            "unsupported",
+            "message updates are unsupported",
+        ))
+    }
     /// Connection operation errors are nonfatal, regardless of their public code.
     fn channel(&mut self, id: &str) -> Result<ChannelInfo>;
     /// Fetch ALL newer messages in this channel, INCLUDING replies in old and new threads.

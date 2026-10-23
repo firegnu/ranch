@@ -1,6 +1,6 @@
 use super::{Error, Result, files, now};
 use crate::{
-    chats::{Event, Events, HistoryAfter},
+    chats::{Action, Button, Event, Events, HistoryAfter},
     corral::{Questions, Status},
 };
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,8 @@ pub enum Phase {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Pending {
+    #[serde(default)]
+    pub interrupt_offered: bool,
     pub announcement: Option<String>,
     #[serde(default)]
     pub attachments: bool,
@@ -97,6 +99,22 @@ pub struct Interrupt {
     pub question_answer: bool,
     pub started: f64,
     pub poll_at: f64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ButtonMessage {
+    pub address: Address,
+    pub message: String,
+    pub text: String,
+    pub notify: bool,
+    pub button: Button,
+    pub status: Status,
+    pub screen: Option<String>,
+    pub created: f64,
+    /// Set and persisted before keys, shared by all clicks on this message.
+    pub outcome: Option<String>,
+    pub used: bool,
+    pub updated: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -176,13 +194,52 @@ pub struct State {
     pub backfills: Vec<Backfill>,
     #[serde(default)]
     pub interrupts: Vec<Interrupt>,
+    #[serde(default)]
+    pub buttons: Vec<ButtonMessage>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(from = "StoredReceived", into = "StoredReceived")]
 pub struct Received {
     pub sequence: u64,
     pub kind: String,
     pub event: Event,
+}
+
+// Older pony versions can ignore a pending click instead of rejecting state.json.
+// The optional field restores the action when read by a button-aware version.
+#[derive(Serialize, Deserialize)]
+struct StoredReceived {
+    sequence: u64,
+    kind: String,
+    event: Event,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    action: Option<Action>,
+}
+
+impl From<Received> for StoredReceived {
+    fn from(received: Received) -> Self {
+        let (event, action) = match received.event {
+            Event::Action(action) => (Event::Ignored, Some(action)),
+            event => (event, None),
+        };
+        Self {
+            sequence: received.sequence,
+            kind: received.kind,
+            event,
+            action,
+        }
+    }
+}
+
+impl From<StoredReceived> for Received {
+    fn from(stored: StoredReceived) -> Self {
+        Self {
+            sequence: stored.sequence,
+            kind: stored.kind,
+            event: stored.action.map(Event::Action).unwrap_or(stored.event),
+        }
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -281,6 +338,10 @@ impl Store {
         Events(Arc::new(move |event| {
             let event = match event {
                 Event::Message(m) if m.sender != owner => Event::Ignored,
+                Event::Action(mut action) if action.sender != owner => {
+                    action.sender.clear();
+                    Event::Action(action)
+                }
                 event => event,
             };
             let mut data = store.data.lock().unwrap();

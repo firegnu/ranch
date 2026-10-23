@@ -68,6 +68,19 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   不显示）、最后在用的工具；空闲时查回复，带第一行非空文字（最多 60 字），
   被打断写「上一轮被打断」。其他仓库只带状态和时长，空闲用已知回复时间
   或 `state_started`，不为摘要额外查回复。排队数照旧。
+- R47a：Needs you 第一段带「拒绝」；`?` 的摘要后，为本频道正在 working/blocked
+  的 agent 各发一条具名「打断」消息，线程单独绑定到它；pony 送话后观察到
+  新一轮在 working，原线程里给一次「打断」。agy、暂停中不给按钮；无按钮
+  平台提示回「停」。两种按钮均不弹确认框，复用「停」的核对、Esc 与按后确认。
+  随机号、原消息、实例、轮次、等待状态、屏幕快照和处理结果存进 state.json；
+  只认 owner 和 pony 自己发的确切那条消息。重复点、同条连点、过期不按并说明。
+  框上点击会重新读屏并与原文比对，再查一次状态；换框、换实例、换轮次、
+  等待中有人输入都不按。轮询主动撤掉已结束等待的按钮，写「框没了」或
+  「已在电脑上处理」；按后写「已按：打断／拒绝（时:分）」。修改失败保存
+  待更新记录并重试，重启也不会重按。已更新的记号保留 30 天。
+  接收箱里的点击以旧版认识的 Ignored 事件加可选 action 字段保存；新版恢复
+  点击，退回旧版时忽略点击，不会因为新事件读不懂 state.json。旧版存盘会
+  丢掉按钮记号，再升级后旧按钮不再执行，需要重新查状态获取按钮。
 - `core/state.rs` 把线程、待回复、队列原文、消息去重、补收游标和接收箱
   写入 0600 的 `state.json`：同目录临时文件同步后改名，再同步目录。
   只有拿运行锁的进程创建 Store。适配器工作线程调用 Events::emit，成功
@@ -129,12 +142,19 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   text、attachments、Unix 秒 at。只交付新消息，不交付机器人消息和编辑。
   Deleted 提供原消息的 channel、id；emit 成功才 ACK。核心去重与排队。
   核心在路由确认后说「附件没送」，只有附件时说「附件没送，只收文字」。
-- Connection::name 是用户提示中的平台名称；limits 给字数上限和线程能力。
-  Slack 填 Slack、10,000、有线程；无线程平台要求每句 @ 并点名 agent。
-- send(Outgoing) 接收频道、可选线程、Markdown、notify，返回实际消息 ID。
+- Connection::name 是用户提示中的平台名称；limits 给字数上限、线程和按钮能力。
+  Slack 填 Slack、10,000、有线程、有按钮；无线程平台要求每句 @ 并点名 agent。
+- send(Outgoing) 接收频道、可选线程、Markdown、notify、按钮列表，返回实际消息 ID。
   notify=true 让适配器提醒 owner；平台转义、屏蔽正文中的意外 @、通知
   文案、关闭链接预览、限频与网络重试由适配器处理。SendError 的 resize
   只用于确定未发送且可以缩小重试的长度／格式错误；code 必须是公开错误码。
+- Button 提供随机 value、label、style（Default／Primary／Danger）和可选的
+  Confirmation（title、text、confirm、cancel）。本件两种按钮均不带确认框。
+  update(id, Outgoing) 替换自己发的那条消息和按钮，不另发一条；不支持时默认
+  报 unsupported。声明有按钮的适配器须支持更新。
+  Action 提供 channel、message、可选 thread、sender、value、点击时间和 own_message，
+  由适配器按认证得到的机器人身份核对 own_message；先 emit 成功才回执。
+  非 owner 的点击在落盘前清掉 sender，只保留足以拒绝并说明的记号与消息位置。
 - channel(id) 返回名字、是否私有、problem（无问题为 None；否则 not_member、
   not_found、archived）。
 - history(channel, &HistoryAfter) 读完所有分页，返回这个频道里比游标新的
@@ -173,6 +193,10 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   90 秒后才重置；快速连接又断开不会重置。close/Drop 唤醒退避并等待工作线程退出。
   连接状态落盘失败也照常退避重试，不让 Socket 线程悄悄退出；标准错误只记固定代码，
   写标准错误失败不影响收发和重试。
+- R47a 同一 Socket 收 `interactive/block_actions`。校验消息的 user、bot_id
+  以及 container 的频道和消息 ID，翻译成 Action；不保存原 payload、response_url
+  或 token。发送按钮用 actions 块；修改原消息用 POST `chat.update`，保留正文
+  与原通知块、移除 actions 块，不增加权限。
 - 普通消息、附件消息、删除事件翻译成共用事件；线程回复勾了「同时发到频道」的
   `thread_broadcast` 按普通线程回复处理，补收时按 ID 去重。忽略机器人和编辑等
   其他子类型；链接展开带来的 attachments 不算附件，真正的附件仍然提示未送。
@@ -282,10 +306,16 @@ launchctl、不等交互确认；两个参数一起给时仍以 `--dry-run` 为�
 以下步骤留到合并后、用户在场时执行。开发和自动测试不安装真实服务、不连 Slack。
 
 1. 按设计稿 `docs/调研/R38a-Slack机器人设计.md` §3.3 的 manifest 建 Slack
-   应用，启用 Socket Mode，只订 `message.channels`、`message.groups`，不订
+   应用，启用 Socket Mode 和交互，只订 `message.channels`、`message.groups`，不订
    `app_mention`。bot 权限是 `chat:write`、`channels:history`、`groups:history`、
    `channels:read`、`groups:read`。安装到工作区得到 bot token；在 Basic Information
    新建带 `connections:write` 的 app token。
+   已有应用先在 App Manifest 把 `settings.interactivity.is_enabled` 改为 true
+   保存，或在 Interactivity & Shortcuts 打开交互；Socket Mode 不填 Request URL。
+   页面提示重装时再重装。到 OAuth & Permissions 核对 Bot User OAuth Token：
+   若变了，先更新本机 `~/.pony/secrets/slack.toml` 的 bot_token，再部署新版。
+   只开交互、不加权限是否提示重装，以上线时 Slack 页面为准。
+   次序是先开交互、再部署；旧版会忽略点击，新版尚未开交互时点按钮会报错。
 2. 两枚凭证只在本机编辑 `~/.pony/secrets/slack.toml` 的 `app_token`、`bot_token`，
    不粘进命令参数、任务、仓库或日志。`~/.pony`、`secrets/` 由当前用户所有且
    为 0700，凭证是 0600 的普通文件，不用符号链接。按设计稿 §3.2 写

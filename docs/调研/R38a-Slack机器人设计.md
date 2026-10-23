@@ -178,6 +178,13 @@ channels = [
 
 **连法**：Socket Mode，pony 往外连 wss，本机不需要公网地址（已定）。
 
+R47a：开启交互，Socket Mode 同时收 `interactive` 信封中的 `block_actions`。
+先把共用点击事件落盘再按 `envelope_id` 回执（3 秒内），核心再核对 owner、
+消息来源、随机记号和 agent 状态。`chat.postMessage` 的 actions 块放按钮，
+`chat.update` 更新原消息去掉按钮；都只要已有的 `chat:write`，不增加权限。
+Needs you 给「拒绝」，`?` 后的本频道具名消息、pony 送话后的这一轮给「打断」；
+agy 不给。按法与「停」相同，不弹确认框，不批准任何内容。
+
 1. 用 app 级 token（`xapp-`，权限 `connections:write`）调 `apps.connections.open`，token 放在 `Authorization` 头里，拿到临时的 wss 地址。
 2. 连上后先收到 `hello`，里面有 `num_connections`。大于 1 就说明还有别的连接（另一台机器，或一份没退干净的 pony）。Slack 会把每条事件交给任意一条连接，所以 status 报 `other_connections`，paddock 显示成警告。
 3. 每个事件信封都要按 `envelope_id` 回执，否则 Slack 会重发。Events API 要求 3 秒内答复，重发最多 3 次。pony 先把这条消息记进状态文件再回执（几毫秒），重启也不丢；按消息的 `ts` 去重。别人的消息不记，直接回执、丢掉。
@@ -226,7 +233,7 @@ settings:
   event_subscriptions:
     bot_events: [message.channels, message.groups]
   interactivity:
-    is_enabled: false
+    is_enabled: true
   org_deploy_enabled: false
   socket_mode_enabled: true
   token_rotation_enabled: false
