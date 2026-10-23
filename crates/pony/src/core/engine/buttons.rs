@@ -3,6 +3,7 @@ use crate::chats::{Action, Button, ButtonStyle};
 use std::io::Read;
 
 pub(super) struct ButtonOffer {
+    pub approval: Option<super::super::state::ApprovalButton>,
     pub form: Option<super::super::state::QuestionForm>,
     pub button: Button,
     pub status: Status,
@@ -58,9 +59,15 @@ impl Engine {
             {
                 let permitted = self.configs.iter().any(|c| {
                     c.kind == b.address.kind
-                        && c.channels
-                            .iter()
-                            .any(|channel| channel.id == b.address.channel)
+                        && c.channels.iter().any(|channel| {
+                            channel.id == b.address.channel
+                                && (content.approval.is_none()
+                                    || content
+                                        .status
+                                        .name
+                                        .split_once('/')
+                                        .is_some_and(|(repo, _)| repo == channel.repo))
+                        })
                 }) && content
                     .status
                     .name
@@ -119,6 +126,7 @@ impl Engine {
             .and_then(|mut file| file.read_exact(&mut bytes))
             .map_err(|_| Error::new("random_unavailable", "不能生成按钮记号"))?;
         Ok(Some(ButtonOffer {
+            approval: None,
             form: None,
             button: Button {
                 value: bytes.iter().map(|b| format!("{b:02x}")).collect(),
@@ -165,10 +173,25 @@ impl Engine {
             return Ok(());
         };
         let button = self.state.buttons[i].clone();
+        let approval = button.approval_value.as_deref() == Some(action.value.as_str());
         let address = &button.address;
         let Some(config) = self.configs.iter().find(|c| c.kind == kind) else {
             return Ok(());
         };
+        if approval
+            && button.content.as_ref().is_some_and(|content| {
+                !config.channels.iter().any(|channel| {
+                    channel.id == address.channel
+                        && content
+                            .status
+                            .name
+                            .split_once('/')
+                            .is_some_and(|(repo, _)| repo == channel.repo)
+                })
+            })
+        {
+            return self.finish_button(i, "频道绑定已变，没按", false, at);
+        }
         if !config.channels.iter().any(|b| b.id == address.channel)
             || button.content.as_ref().is_some_and(|content| {
                 !content
@@ -195,6 +218,9 @@ impl Engine {
             None
         };
         if let Some(reason) = reason {
+            if approval && !button.used && button.outcome.is_none() {
+                return self.finish_button(i, &reason.replace(" Esc", ""), false, at);
+            }
             return self.say(address, &refusal(&button, reason), false);
         }
         let Some(content) = &button.content else {
@@ -202,6 +228,9 @@ impl Engine {
             self.save()?;
             return self.say(address, "这个按钮已过期，没按 Esc", false);
         };
+        if approval {
+            return self.approval_action(i, action, corral, at);
+        }
         let mut status = match corral.status(&content.status.name) {
             Ok(s) => s,
             Err(_) => return self.finish_button(i, "读不出 agent 状态，没按 Esc", false, at),
@@ -364,7 +393,11 @@ fn refusal(button: &ButtonMessage, reason: &str) -> String {
 }
 
 pub(super) fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static str> {
-    let old = &button.content.as_ref()?.status;
+    let content = button.content.as_ref()?;
+    let old = &content.status;
+    if content.approval.is_some() {
+        return approvals::stale(old, status);
+    }
     if status.instance != old.instance {
         Some("它重开过，框没了")
     } else if status.turn_started != old.turn_started {

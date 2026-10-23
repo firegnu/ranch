@@ -203,6 +203,9 @@ struct FakeCorral {
     status_errors: BTreeMap<String, corral::Failure>,
     escapes: Vec<(String, bool)>,
     escape_error: Option<corral::Failure>,
+    approvals: Vec<(String, u8)>,
+    approval_error: Option<corral::Failure>,
+    approval_store: Option<std::path::PathBuf>,
 }
 impl Corral for FakeCorral {
     fn list(&mut self) -> corral::Result<Vec<Agent>> {
@@ -272,6 +275,18 @@ impl Corral for FakeCorral {
         self.escapes.push((name.into(), twice));
         self.escape_error.clone().map_or(Ok(()), Err)
     }
+    fn approve(&mut self, name: &str, option: u8) -> corral::Result<()> {
+        if let Some(path) = &self.approval_store {
+            let disk: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            assert_eq!(
+                disk["state"]["buttons"][0]["used"], true,
+                "persist before keys"
+            );
+        }
+        self.approvals.push((name.into(), option));
+        self.approval_error.clone().map_or(Ok(()), Err)
+    }
 }
 fn failure(exit: i32, code: &str) -> corral::Failure {
     corral::Failure {
@@ -296,6 +311,7 @@ fn status(name: &str, state: &str) -> Status {
         questions: None,
         paused_at: None,
         last_human_input: None,
+        last_output: None,
         paused: false,
         interrupted: false,
     }
@@ -659,7 +675,87 @@ struct Fixture {
     events: Events,
 }
 
+const BASH_PERMISSION: &str = include_str!("fixtures/claude-bash-permission.txt");
+const PLAN_PERMISSION: &str = include_str!("fixtures/claude-plan-permission.txt");
+const EXIT_PLAN_PERMISSION: &str = "Exit plan mode?\n\nClaude wants to exit plan mode\n\n❯ 1. Yes, and switch to default (ask each time) for this session\n  2. No\n";
+
+#[test]
+fn approval_plan_selects_manual_approval_not_auto_mode() {
+    for screen in [PLAN_PERMISSION, EXIT_PLAN_PERMISSION] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"last_tool":"ExitPlanMode", "last_output":1.5}),
+        );
+        f.corral
+            .screens
+            .insert("paddock/dev".into(), Ok(screen.into()));
+        let posted = f.button_notice();
+        let allow = posted
+            .buttons
+            .iter()
+            .find(|b| b.label == "批准，之后的修改仍逐个问")
+            .expect("known plan frame needs the manual approval option");
+        assert!(
+            allow
+                .confirm
+                .as_ref()
+                .unwrap()
+                .text
+                .starts_with("ExitPlanMode\n")
+        );
+        assert_eq!(posted.buttons.len(), 2);
+    }
+}
+
+#[test]
+fn approval_notice_offers_only_once_with_confirmation_and_keeps_reject() {
+    let mut f = Fixture::new();
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({"last_tool":"Bash", "last_output":1.5}),
+    );
+    f.corral
+        .screens
+        .insert("paddock/dev".into(), Ok(BASH_PERMISSION.into()));
+    let posted = f.button_notice();
+    let allow = posted
+        .buttons
+        .iter()
+        .find(|b| b.label == "允许这一次")
+        .expect("complete Claude permission needs a once-only button");
+    let confirm = allow
+        .confirm
+        .as_ref()
+        .expect("approval requires confirmation");
+    assert_eq!(confirm.title, "允许 paddock/dev 这一次？");
+    assert_eq!(confirm.text, "Bash\nping-c1127.0.0.1");
+    assert_eq!((&*confirm.confirm, &*confirm.cancel), ("允许", "算了"));
+    assert_eq!(posted.buttons.len(), 2);
+    assert!(
+        posted
+            .buttons
+            .iter()
+            .any(|b| b.label == "拒绝" && b.confirm.is_none())
+    );
+    assert!(!posted.text.contains("要允许：回电脑处理"));
+}
+
 impl Fixture {
+    fn approval_notice(&mut self, tool: &str, screen: &str) -> Posted {
+        status_fields(
+            self.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"last_tool":tool,"last_output":1.5}),
+        );
+        self.corral
+            .screens
+            .insert("paddock/dev".into(), Ok(screen.into()));
+        let mut posted = self.button_notice();
+        posted.buttons.retain(|b| b.confirm.is_some());
+        assert_eq!(posted.buttons.len(), 1);
+        self.corral.approval_store = Some(self._dir.path().join("state.json"));
+        posted
+    }
     fn button_notice(&mut self) -> Posted {
         self.memory.borrow_mut().buttons = true;
         let s = self.corral.agents.get_mut("paddock/dev").unwrap();
@@ -697,6 +793,528 @@ impl Fixture {
                 own_message: true,
             }))
             .unwrap();
+    }
+}
+
+#[test]
+fn approval_persists_before_one_key_and_never_repeats_after_restart() {
+    for (tool, screen, option) in [
+        ("Bash", BASH_PERMISSION, 1),
+        ("ExitPlanMode", PLAN_PERMISSION, 2),
+        ("ExitPlanMode", EXIT_PLAN_PERMISSION, 1),
+    ] {
+        let mut f = Fixture::new();
+        let posted = f.approval_notice(tool, screen);
+        f.restart();
+        f.click(&posted, 10.);
+        f.click(&posted, 10.1);
+        f.step(10.);
+        assert_eq!(f.corral.approvals, [("paddock/dev".into(), option)]);
+        assert!(f.corral.escapes.is_empty());
+        assert!(
+            f.texts()
+                .contains(&format!("已按：{}（", posted.buttons[0].label))
+        );
+        assert!(
+            f.memory
+                .borrow()
+                .posted
+                .iter()
+                .find(|p| p.id == posted.id)
+                .unwrap()
+                .buttons
+                .is_empty()
+        );
+        f.restart();
+        f.click(&posted, 11.);
+        f.step(11.);
+        assert_eq!(f.corral.approvals.len(), 1);
+        assert!(f.texts().contains("这个按钮已经按过了"));
+    }
+}
+
+#[test]
+fn approval_observes_output_and_screen_for_ten_seconds_without_repeating() {
+    for reaction in [
+        "changed",
+        "same_frame",
+        "frame_with_refresh",
+        "no_output",
+        "idle_only",
+        "unreadable",
+        "send_failed",
+        "restarted",
+    ] {
+        let mut f = Fixture::new();
+        let posted = f.approval_notice("Bash", BASH_PERMISSION);
+        if reaction == "send_failed" {
+            f.corral.approval_error = Some(failure(1, "corral_unavailable"));
+        }
+        f.click(&posted, 10.);
+        f.step(10.);
+        f.restart();
+        match reaction {
+            "changed" => {
+                status_fields(
+                    f.corral.agents.get_mut("paddock/dev").unwrap(),
+                    serde_json::json!({"last_output":11.}),
+                );
+                f.corral.screens.insert(
+                    "paddock/dev".into(),
+                    Ok("PING 127.0.0.1\n1 packet received\n".into()),
+                );
+            }
+            "same_frame" => status_fields(
+                f.corral.agents.get_mut("paddock/dev").unwrap(),
+                serde_json::json!({"last_output":11.}),
+            ),
+            "frame_with_refresh" => {
+                status_fields(
+                    f.corral.agents.get_mut("paddock/dev").unwrap(),
+                    serde_json::json!({"last_output":11.}),
+                );
+                f.corral.screens.insert(
+                    "paddock/dev".into(),
+                    Ok(format!("{BASH_PERMISSION}\nstatus refresh")),
+                );
+            }
+            "idle_only" => f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into(),
+            "unreadable" => {
+                f.corral
+                    .status_errors
+                    .insert("paddock/dev".into(), failure(1, "io"));
+            }
+            "restarted" => {
+                f.corral.agents.get_mut("paddock/dev").unwrap().instance = "next-instance".into()
+            }
+            _ => {}
+        }
+        f.step(11.);
+        if reaction == "changed" {
+            assert!(
+                f.texts().contains("画面已变化，原来的框已不在屏幕尾部"),
+                "{}",
+                f.texts()
+            );
+        } else {
+            assert!(!f.texts().contains("画面已变化"));
+        }
+        f.step(20.);
+        if !matches!(reaction, "changed" | "restarted") {
+            assert!(
+                f.texts().contains("请回电脑看看"),
+                "{reaction}: {}",
+                f.texts()
+            );
+        }
+        assert!(f.engine.state.approvals.is_empty(), "{reaction}");
+        f.click(&posted, 21.);
+        f.step(21.);
+        assert_eq!(f.corral.approvals.len(), 1, "{reaction}");
+    }
+}
+
+#[test]
+fn approval_six_checks_each_refuse_and_remove_buttons() {
+    for change in [
+        "owner",
+        "origin",
+        "channel",
+        "message",
+        "instance",
+        "paused",
+        "state",
+        "wait",
+        "tool",
+        "kind",
+        "human",
+        "output",
+        "screen",
+        "read_human",
+        "read_output",
+        "read_error",
+        "status_error",
+        "read_status_error",
+    ] {
+        let mut f = Fixture::new();
+        let posted = f.approval_notice("Bash", BASH_PERMISSION);
+        let fields = match change {
+            "instance" => serde_json::json!({"instance":"next"}),
+            "paused" => serde_json::json!({"paused":true}),
+            "state" => serde_json::json!({"state":"working"}),
+            "wait" => serde_json::json!({"state_started":2.}),
+            "tool" => serde_json::json!({"last_tool":"Write"}),
+            "kind" => serde_json::json!({"kind":"codex"}),
+            "human" | "read_human" => serde_json::json!({"last_human_input":2.}),
+            "output" | "read_output" => serde_json::json!({"last_output":3.}),
+            _ => serde_json::json!({}),
+        };
+        if change.starts_with("read_") {
+            let mut status = f.corral.agents["paddock/dev"].clone();
+            status_fields(&mut status, fields);
+            f.corral.read_changes.insert("paddock/dev".into(), status);
+        } else {
+            status_fields(f.corral.agents.get_mut("paddock/dev").unwrap(), fields);
+        }
+        match change {
+            "screen" => {
+                f.corral
+                    .screens
+                    .insert("paddock/dev".into(), Ok(format!("{BASH_PERMISSION} ")));
+            }
+            "read_error" => {
+                f.corral
+                    .screens
+                    .insert("paddock/dev".into(), Err(failure(1, "io")));
+            }
+            "status_error" => {
+                f.corral.status_failure_after = Some(0);
+            }
+            "read_status_error" => {
+                f.corral.status_failure_after = Some(1);
+            }
+            _ => {}
+        }
+        f.events
+            .emit(Event::Action(Action {
+                channel: if change == "channel" {
+                    "C2".into()
+                } else {
+                    posted.channel.clone()
+                },
+                message: if change == "message" {
+                    "wrong".into()
+                } else {
+                    posted.id.clone()
+                },
+                sender: if change == "owner" {
+                    "stranger".into()
+                } else {
+                    "owner".into()
+                },
+                thread: None,
+                value: posted.buttons[0].value.clone(),
+                at: 40.,
+                selected: None,
+                own_message: change != "origin",
+            }))
+            .unwrap();
+        f.step(40.);
+        assert!(f.corral.approvals.is_empty(), "{change}");
+        assert!(f.corral.escapes.is_empty(), "{change}");
+        let memory = f.memory.borrow();
+        let updated = memory.posted.iter().find(|p| p.id == posted.id).unwrap();
+        assert!(updated.buttons.is_empty(), "{change}");
+        assert!(updated.text.contains("没按"), "{change}: {}", updated.text);
+    }
+}
+
+#[test]
+fn approval_unknown_truncated_long_or_persistent_options_are_not_offered() {
+    for (case, tool, screen) in [
+        ("unknown", "Bash", "Allow command?".into()),
+        ("tool", "Write", BASH_PERMISSION.into()),
+        (
+            "header",
+            "Bash",
+            BASH_PERMISSION.replacen("Bash command", "", 1),
+        ),
+        (
+            "partial option",
+            "Bash",
+            BASH_PERMISSION.replace("❯1. Yes", "❯1. Ye"),
+        ),
+        (
+            "partial tail",
+            "Bash",
+            BASH_PERMISSION.replace("Esc to cancel · Tab to amend", "Esc to can"),
+        ),
+        (
+            "truncated command",
+            "Bash",
+            BASH_PERMISSION.replace("ping-c1127.0.0.1", "ping…"),
+        ),
+        (
+            "long command",
+            "Bash",
+            BASH_PERMISSION.replace("ping-c1127.0.0.1", &"x".repeat(1001)),
+        ),
+        (
+            "always",
+            "Bash",
+            BASH_PERMISSION.replace("❯1. Yes", "❯1. Yes, always allow"),
+        ),
+        (
+            "session",
+            "Bash",
+            BASH_PERMISSION.replace("❯1. Yes", "❯1. Yes, allow for this session"),
+        ),
+        (
+            "skip",
+            "Bash",
+            BASH_PERMISSION.replace("❯1. Yes", "❯1. Yes, bypass permissions"),
+        ),
+        (
+            "auto edits",
+            "ExitPlanMode",
+            PLAN_PERMISSION.replace("Yes,manuallyapproveedits", "Yes, auto-accept edits"),
+        ),
+        (
+            "missing plan body",
+            "ExitPlanMode",
+            PLAN_PERMISSION
+                .split("Claude has written")
+                .last()
+                .unwrap()
+                .into(),
+        ),
+    ] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"last_tool":tool,"last_output":1.5}),
+        );
+        f.corral.screens.insert("paddock/dev".into(), Ok(screen));
+        let posted = f.button_notice();
+        assert!(posted.buttons.iter().all(|b| b.confirm.is_none()), "{case}");
+        assert!(posted.text.contains("认不出框的样子，没给按钮"), "{case}");
+    }
+    for kind in ["codex", "pi", "omp", "amp", "agy"] {
+        let mut f = Fixture::new();
+        f.memory.borrow_mut().buttons = true;
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"kind":kind,"state":"blocked","last_tool":"Bash","last_output":1.5}),
+        );
+        f.corral
+            .screens
+            .insert("paddock/dev".into(), Ok(BASH_PERMISSION.into()));
+        f.step(2.);
+        f.step(4.);
+        assert!(
+            f.memory
+                .borrow()
+                .posted
+                .iter()
+                .all(|p| p.buttons.iter().all(|b| b.confirm.is_none())),
+            "{kind}"
+        );
+    }
+}
+
+#[test]
+fn approval_buttons_expire_without_click_on_output_or_pause() {
+    for fields in [
+        serde_json::json!({"last_output":3.}),
+        serde_json::json!({"paused":true}),
+    ] {
+        let mut f = Fixture::new();
+        let posted = f.approval_notice("Bash", BASH_PERMISSION);
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            fields.clone(),
+        );
+        f.step(6.);
+        assert!(
+            f.memory
+                .borrow()
+                .posted
+                .iter()
+                .find(|p| p.id == posted.id)
+                .unwrap()
+                .buttons
+                .is_empty(),
+            "{fields}"
+        );
+        assert!(f.corral.approvals.is_empty());
+    }
+}
+
+#[test]
+fn approval_missing_snapshot_or_unreadable_screen_stays_manual() {
+    for fields in [
+        serde_json::json!({"last_output":null}),
+        serde_json::json!({"state_started":null}),
+        serde_json::json!({"last_human_input":2.}),
+        serde_json::json!({}),
+    ] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"last_tool":"Bash","last_output":1.5}),
+        );
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            fields.clone(),
+        );
+        f.corral.screens.insert(
+            "paddock/dev".into(),
+            if fields == serde_json::json!({}) {
+                Err(failure(1, "io"))
+            } else {
+                Ok(BASH_PERMISSION.into())
+            },
+        );
+        let posted = f.button_notice();
+        assert!(posted.buttons.iter().all(|b| b.confirm.is_none()));
+        assert!(
+            posted.text.contains("认不出框的样子，没给按钮"),
+            "{fields}: {}",
+            posted.text
+        );
+    }
+}
+
+#[test]
+fn approval_changed_channel_binding_cannot_target_previous_repository() {
+    let mut f = Fixture::new();
+    let posted = f.approval_notice("Bash", BASH_PERMISSION);
+    for config in &mut f.engine.configs {
+        for channel in &mut config.channels {
+            if channel.id == "C1" {
+                channel.repo = "ranch".into();
+            }
+            if channel.id == "C2" {
+                channel.repo = "paddock".into();
+            }
+        }
+    }
+    f.click(&posted, 10.);
+    f.step(10.);
+    assert!(f.corral.approvals.is_empty());
+    assert!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .find(|p| p.id == posted.id)
+            .unwrap()
+            .buttons
+            .is_empty()
+    );
+}
+
+#[test]
+fn approval_and_reject_share_one_receipt_and_updates_never_repeat_keys() {
+    for first in ["allow", "reject", "sibling", "stop"] {
+        let mut f = Fixture::new();
+        let allow = f.approval_notice("Bash", BASH_PERMISSION);
+        let reject = f
+            .memory
+            .borrow()
+            .posted
+            .iter()
+            .find(|p| p.id == allow.id)
+            .unwrap()
+            .clone();
+        f.message("query", None, "?", true);
+        f.step(6.);
+        let sibling = f
+            .memory
+            .borrow()
+            .posted
+            .iter()
+            .find(|p| p.id != allow.id && p.text.contains("paddock/dev") && !p.buttons.is_empty())
+            .unwrap()
+            .clone();
+        f.memory.borrow_mut().update_error = Some("network");
+        match first {
+            "allow" => {
+                f.click(&allow, 10.);
+                f.click(&reject, 10.1);
+                f.click(&sibling, 10.2);
+            }
+            "reject" => {
+                f.click(&reject, 10.);
+                f.click(&allow, 10.1);
+            }
+            "sibling" => {
+                f.click(&sibling, 10.);
+                f.click(&allow, 10.1);
+            }
+            "stop" => {
+                f.message("stop", Some(&allow.id), "停", false);
+                f.click(&allow, 10.1);
+            }
+            _ => unreachable!(),
+        }
+        f.step(10.);
+        assert_eq!(
+            f.corral.approvals.len(),
+            usize::from(first == "allow"),
+            "{first}"
+        );
+        assert_eq!(
+            f.corral.escapes.len(),
+            usize::from(first != "allow"),
+            "{first}"
+        );
+        f.restart();
+        f.memory.borrow_mut().update_error = None;
+        f.step(12.);
+        f.click(&allow, 13.);
+        f.step(13.);
+        assert_eq!(
+            f.corral.approvals.len() + f.corral.escapes.len(),
+            1,
+            "{first}"
+        );
+        assert!(
+            f.memory
+                .borrow()
+                .posted
+                .iter()
+                .find(|p| p.id == allow.id)
+                .unwrap()
+                .buttons
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn approval_confirmation_truncates_unicode_to_200_characters_and_rechecks_selection() {
+    let mut f = Fixture::new();
+    let command = "中文".repeat(120);
+    let screen = BASH_PERMISSION
+        .replace("ping-c1127.0.0.1", &command)
+        .replace("❯1. Yes", "1. Yes")
+        .replace("2. Yes", "❯2. Yes");
+    let posted = f.approval_notice("Bash", &screen);
+    assert_eq!(
+        posted.buttons[0].confirm.as_ref().unwrap().text,
+        format!("Bash\n{}", "中文".repeat(100))
+    );
+    f.click(&posted, 10.);
+    f.step(10.);
+    assert_eq!(
+        f.corral.approvals,
+        [("paddock/dev".into(), 1)],
+        "must select the safe number, never the highlighted persistent option"
+    );
+}
+
+#[test]
+fn approval_consumed_before_crash_and_unrecognized_receipts_never_press() {
+    for corrupted in [false, true] {
+        let mut f = Fixture::new();
+        let posted = f.approval_notice("Bash", BASH_PERMISSION);
+        let path = f._dir.path().join("state.json");
+        let mut disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        if corrupted {
+            disk["state"]["buttons"][0]["approval"]["button"]["style"] = "future-style".into();
+        } else {
+            disk["state"]["buttons"][0]["used"] = true.into();
+            disk["state"]["buttons"][0]["outcome"] =
+                "已接收，批准按键是否送达待确认；没重按".into();
+        }
+        std::fs::write(path, serde_json::to_vec(&disk).unwrap()).unwrap();
+        f.restart();
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert!(f.corral.approvals.is_empty());
+        assert!(f.corral.escapes.is_empty());
     }
 }
 

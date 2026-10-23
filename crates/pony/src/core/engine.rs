@@ -12,6 +12,7 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+mod approvals;
 mod buttons;
 mod questions;
 use buttons::ButtonOffer;
@@ -155,7 +156,13 @@ impl Engine {
         let buttons = offer
             .as_ref()
             .filter(|o| o.form.is_none())
-            .map(|o| vec![o.button.clone()])
+            .map(|o| {
+                let mut buttons = vec![o.button.clone()];
+                if let Some(approval) = &o.approval {
+                    buttons.push(approval.button.clone());
+                }
+                buttons
+            })
             .unwrap_or_default();
         while let Some((part, i, total, limit)) = work.pop_front() {
             let mut rendered = part.render(i, total);
@@ -214,7 +221,9 @@ impl Engine {
                             address: reply_to,
                             message: id.clone(),
                             value: offer.button.value.clone(),
+                            approval_value: offer.approval.as_ref().map(|a| a.button.value.clone()),
                             content: Some(ButtonContent {
+                                approval: offer.approval.clone(),
                                 form: offer.form.clone(),
                                 text: rendered,
                                 notify,
@@ -1353,6 +1362,18 @@ impl Engine {
                         .is_some_and(|(repo, _)| c.channels.iter().any(|b| b.repo == repo))
             })
         });
+        self.state.approvals.retain(|a| {
+            self.configs.iter().any(|c| {
+                c.kind == a.address.kind
+                    && c.channels.iter().any(|b| {
+                        b.id == a.address.channel
+                            && a.status
+                                .name
+                                .split_once('/')
+                                .is_some_and(|(repo, _)| repo == b.repo)
+                    })
+            })
+        });
         self.state.backfills.retain(|b| {
             self.configs.iter().any(|c| {
                 c.kind == b.address.kind
@@ -1476,6 +1497,7 @@ impl Engine {
         self.verify_queue(at)?;
         self.refresh_buttons(corral, at)?;
         self.poll_interrupts(corral, at)?;
+        self.poll_approvals(corral, at)?;
         for i in 0..self.state.pending.len() {
             let pending = self.state.pending[i].clone();
             if self.connected.contains(&pending.address.kind)
@@ -1909,7 +1931,24 @@ impl Engine {
             if offer.is_none() && status.state == "blocked" {
                 offer = self.button_offer(&address, status, "拒绝", corral, at)?;
             }
-            address.thread = match self.post_with_button(&address, text, true, true, offer) {
+            let mut text = text.to_owned();
+            if status.state == "blocked"
+                && status.kind.as_deref() == Some("claude")
+                && !is_question(status)
+            {
+                if let Some(offer) = &mut offer {
+                    offer.approval = approvals::offer(status, offer.screen.as_deref())?;
+                }
+                if let Some(offer) = &offer
+                    && offer.approval.is_some()
+                {
+                    text = needs_you_screen(status, offer.screen.as_deref())
+                        .replace("要允许：回电脑处理", "要允许：点批准按钮并确认");
+                } else {
+                    text.push_str("\n认不出框的样子，没给按钮（允许）；要允许请回电脑处理。");
+                }
+            }
+            address.thread = match self.post_with_button(&address, &text, true, true, offer) {
                 Ok(id) => id,
                 Err(error) => {
                     self.record_error("delivery_failed", error)?;
@@ -2178,6 +2217,15 @@ fn summary_title(status: &Status) -> Option<String> {
 }
 
 fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
+    let screen = if is_question(status) {
+        None
+    } else {
+        corral.read(&status.name).ok()
+    };
+    needs_you_screen(status, screen.as_deref())
+}
+
+fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
     let footer = if status.kind.as_deref() == Some("agy") {
         "要回电脑上处理；在这里回的话，等它处理完再送。"
     } else {
@@ -2226,7 +2274,7 @@ fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
             .map(|s| format!(" · 标题「{s}」"))
             .unwrap_or_default(),
     );
-    if let Ok(screen) = corral.read(&status.name) {
+    if let Some(screen) = screen {
         let lines: Vec<_> = screen.lines().collect();
         let mut tail = Vec::new();
         for line in &lines[lines.len().saturating_sub(20)..] {

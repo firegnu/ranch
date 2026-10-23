@@ -847,6 +847,9 @@ fn only_other_human_messages_in_bound_channels_are_logged_as_ignored() {
         fn escape(&mut self, _: &str, _: bool) -> corral::Result<()> {
             panic!("ignored events must not call corral")
         }
+        fn approve(&mut self, _: &str, _: u8) -> corral::Result<()> {
+            panic!("ignored events must not call corral")
+        }
     }
 
     let dir = tempfile::tempdir().unwrap();

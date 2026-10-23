@@ -125,11 +125,13 @@ fn serve(home: &Path, log: &Log, snapshot: &mut Snapshot) -> Result<()> {
     snapshot.save(home)?;
     log.event("run_started")?;
     while STOP.load(Ordering::Relaxed) == 0 {
-        thread::sleep(Duration::from_secs(if engine.state.interrupts.is_empty() {
-            2
-        } else {
-            1
-        }));
+        thread::sleep(Duration::from_secs(
+            if engine.state.interrupts.is_empty() && engine.state.approvals.is_empty() {
+                2
+            } else {
+                1
+            },
+        ));
         if STOP.load(Ordering::Relaxed) != 0 {
             break;
         }
