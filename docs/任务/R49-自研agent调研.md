@@ -77,3 +77,31 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、查了哪些来源、拿主意的地方、没查清的事、踩过的坑，各几句话。踩过的坑没有就写「没有」。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-23，ranch/dev-r49。
+
+**做了什么。** 写了 `docs/调研/R49-自研agent调研.md`（没配图，框图和时序图都用文字画在 Markdown 里）。开头一页讲核心理念、八条结论；接着是要用户定的事（任务书的六条，加我补的三条：服务端怎么起、新仓库开不开源、接 corral 走哪条路）；正文按八条展开：组成框图和一次对话的时序图、各部分第一版要不要、四家开源实现对照、模型接入和 ChatGPT 套餐登录、协议和消息清单、接 corral 的三条路线、和 fence/分工表/pony/技能的关系、仓库和界面库、分期和工作量。事实、推测、不知道都分开标了。
+
+**查了哪些来源。** 按本机装的版本克隆到 `/tmp/r49-src/` 读源码：Codex `rust-v0.163.0`、opencode `v2.1.3`、pi `v1.4.0`、omp `v18.12.6`，重点读了 Codex 的 app-server（协议、传输、认证、多连接批准、TUI 连服务端的三种目标、apply-patch、压缩）、opencode 的后台服务、登记文件、认证配对、事件流，pi 的核心循环和压缩、omp 的改文件和权限模式；行数用 scc 统计。网上看了 OpenAI「Sign in with ChatGPT」开发者文档全集、Codex app-server 文档、ACP 官网和 RFD 进度、Ollama/vLLM/llama.cpp 的兼容接口文档、crates.io 和 GitHub 的公开数据（版本、下载量、星数、许可证）。ranch 里读了 DESIGN §7–§10、CONTRACT、HANDOFF、`crates/corral/src/agents/`。出处都列在报告末尾，网上的都是 10-23 查的。
+
+**拿主意的地方。**
+- 用户中途说不查 Claude 订阅条款，报告里只记这条决定，模型接入只写 OpenAI、兼容接口和本机开源模型。
+- 推荐「每个终端一个、服务端嵌在终端客户端里」作第一期，常驻服务端以后再加。理由是常驻服务端会让 corral 的 `stop`、`pause`、`--sandbox`、`upgrade` 只管到客户端；这和用户说的「一个服务器」字面上不完全一样，报告里写明了，列为要用户定的第 7 条。
+- 协议推荐 HTTP + SSE 加 Codex 的数据结构，主要因为 corral、pony 是同步程序、用 ureq。
+- 接 corral 推荐先写适配器（agent 自带通用钩子），再让 pen 订事件流；后者动 corral 共用代码、新增公开命令，标成要用户同意的另一件活。
+- 工作量全按行数推测，标了推测。
+
+**没查清的事。**
+- 只是公开、不带开源许可证的仓库，算不算 OpenAI 说的「open-source partner」；OpenAI 条款页和帮助中心对抓取返回 403，只看到搜索摘要；帮助中心摘要提到 Go 套餐也能用，和开发者文档「Plus、Pro」不一致，没核对。
+- pony 从 Slack 触发一轮算不算条款里「用户自己的操作」。
+- `store:false` 时思考内容怎么跨轮带上，套餐这条路收不收 `reasoning.encrypted_content`。
+- ureq 能不能直接走 unix socket；cairn 怎么接各家；rig 自带的 Rust coding agent 没细读；omp hashline 的提升数据没验证。
+- 用户的 ChatGPT 是 Plus 还是 Pro，要问用户。
+
+**踩过的坑。**
+- 克隆源码时用了 `( git clone … & )`，变成了脱离的后台进程，不符合「命令都在前台跑完」；`wait` 等不到它们，再在前台克隆又报目录已存在。等后台那几个自己跑完，之后的命令都放前台。
+- openai.com、help.openai.com 对 WebFetch 和 curl 都返回 403，条款只能用搜索摘要，报告里标明了。
+- `developers.openai.com/codex/app-server` 308 跳到 `learn.chatgpt.com/docs/app-server`，从跳转后的地址读。
+- zsh 下 `grep --include=*.ts` 不加引号会报「no matches found」；本机的 `ls` 是 eza 别名，输出不对时改用 `/bin/ls`。
