@@ -126,7 +126,15 @@ impl Engine {
                 128
             }
         });
-        let limit = connection.limits().characters.saturating_sub(reserve);
+        let choice_hint = if offer.as_ref().is_some_and(|o| o.form.is_some()) {
+            "\n也可以点选项；多选至少选一项后点『提交』。全部题目答完即送出，此前可改选。"
+        } else {
+            ""
+        };
+        let limit = connection
+            .limits()
+            .characters
+            .saturating_sub(reserve + choice_hint.chars().count());
         let prefixed;
         let text = if !connection.limits().threads
             && let Some(t) = self.state.threads.iter().find(|t| t.address == *address)
@@ -150,7 +158,10 @@ impl Engine {
             .map(|o| vec![o.button.clone()])
             .unwrap_or_default();
         while let Some((part, i, total, limit)) = work.pop_front() {
-            let rendered = part.render(i, total);
+            let mut rendered = part.render(i, total);
+            if first.is_none() && offer.is_some() {
+                rendered.push_str(choice_hint);
+            }
             let thread = if !connection.limits().threads {
                 None
             } else if top {
@@ -180,6 +191,7 @@ impl Engine {
                 // Preserve the question even when the platform rejects its controls.
                 // No form receipt is kept for a message posted without choices.
                 offer = None;
+                rendered.truncate(rendered.len() - choice_hint.len());
                 result = connection.send(Outgoing {
                     channel: &address.channel,
                     thread,
@@ -1897,14 +1909,7 @@ impl Engine {
             if offer.is_none() && status.state == "blocked" {
                 offer = self.button_offer(&address, status, "拒绝", corral, at)?;
             }
-            let text = if offer.as_ref().is_some_and(|o| o.form.is_some()) {
-                format!(
-                    "{text}\n也可以点选项；多选至少选一项后点『提交』。全部题目答完即送出，此前可改选。"
-                )
-            } else {
-                text.to_owned()
-            };
-            address.thread = match self.post_with_button(&address, &text, true, true, offer) {
+            address.thread = match self.post_with_button(&address, text, true, true, offer) {
                 Ok(id) => id,
                 Err(error) => {
                     self.record_error("delivery_failed", error)?;
@@ -2343,7 +2348,9 @@ fn answer_prefix(reference: Option<&str>, closed: bool) -> String {
 }
 
 fn corral_error(e: crate::corral::Failure) -> Error {
-    Error::new(&e.code, e.message)
+    // Keep corral I/O errors distinct from pony's fatal storage errors.
+    let code = if e.code == "io" { "corral_io" } else { &e.code };
+    Error::new(code, e.message)
 }
 fn minutes(seconds: f64) -> u64 {
     (seconds.max(0.) / 60.) as u64

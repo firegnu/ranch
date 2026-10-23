@@ -1639,6 +1639,7 @@ fn question_buttons_single_answer_uses_escape_and_idle_queue() {
     f.step(4.);
     let posted = f.memory.borrow().posted[0].clone();
     assert_eq!(posted.choices.len(), 1, "完整的结构化题目应有选项按钮");
+    assert!(posted.text.contains("也可以点选项"));
     assert!(f.corral.screen_reads.is_empty(), "选项不依赖读屏");
     f.events
         .emit(Event::Action(Action {
@@ -1783,14 +1784,18 @@ fn question_buttons_three_questions_can_change_resume_and_submit_once() {
 
 #[test]
 fn question_review_submit_read_failure_explains_and_expires_without_pressing() {
-    for fail_list in [true, false] {
+    for list_error in [
+        Some(failure(1, "corral_unavailable")),
+        Some(failure(6, "io")),
+        None,
+    ] {
         let mut f = Fixture::meal_questions();
         let choices = f.memory.borrow().posted[0].choices.clone();
         f.choose(&choices[0].options[0].value, None, 6.);
         f.choose(&choices[1].options[0].value, None, 7.);
         f.step(7.);
-        if fail_list {
-            f.corral.list_error = Some(failure(1, "corral_unavailable"));
+        if let Some(error) = list_error {
+            f.corral.list_error = Some(error);
         } else {
             // The first status check passes; the final routing check fails.
             f.corral.status_failure_after = Some(1);
@@ -1921,6 +1926,7 @@ fn question_review_rejected_choice_blocks_retry_plain_text_and_keep_thread_answe
             assert!(f.texts().contains("A 红"));
             assert!(f.texts().contains("B 蓝"));
             assert!(!f.texts().contains("段发不出去"));
+            assert!(!f.texts().contains("也可以点选项"));
             assert!(f.engine.state.buttons.is_empty());
             assert_eq!(f.memory.borrow().choice_send_attempts, 1);
             assert!(
@@ -4828,6 +4834,37 @@ fn unverifiable_queue_backs_off_and_reconnect_restarts_ten_minute_deadline() {
             .count(),
         18
     );
+}
+
+#[test]
+fn corral_io_does_not_abort_polling_or_message_routing() {
+    for route_message in [false, true] {
+        for fail_list in [false, true] {
+            let mut f = Fixture::new();
+            f.step(2.);
+            if route_message {
+                f.message("bad", None, "dev 请继续", true);
+            }
+            for at in [10., 12.] {
+                if fail_list {
+                    f.corral.list_error = Some(failure(6, "io"));
+                } else {
+                    f.corral
+                        .status_errors
+                        .insert("paddock/dev".into(), failure(6, "io"));
+                }
+                f.step(at);
+            }
+            assert!(f.engine.log.iter().any(|line| line.ends_with("corral_io")));
+            assert!(f.engine.store.inbox().is_empty());
+            assert!(f.corral.escapes.is_empty());
+            assert!(f.corral.sent.is_empty());
+            f.corral.status_errors.clear();
+            f.message("good", None, "dev 恢复后继续", true);
+            f.step(14.);
+            assert_eq!(f.corral.sent, [("paddock/dev".into(), "恢复后继续".into())]);
+        }
+    }
 }
 
 #[test]
