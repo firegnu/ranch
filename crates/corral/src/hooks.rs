@@ -50,6 +50,12 @@ pub fn run(event: &str) {
         {
             record["questions"] = questions;
         }
+        if event == "PermissionRequest"
+            && body["tool_name"] == "Bash"
+            && let Some(command) = command(&body["tool_input"]["command"])
+        {
+            record["command"] = command;
+        }
         let mut data = serde_json::to_vec(&record)?;
         data.push(b'\n');
         let mut f = OpenOptions::new()
@@ -60,6 +66,24 @@ pub fn run(event: &str) {
         f.write_all(&data)?;
         Ok(())
     })();
+}
+
+fn command(input: &Value) -> Option<Value> {
+    let input = input.as_str()?;
+    let mut result = json!({"text":"", "truncated":false});
+    let mut remaining = 16 * 1024 - result.to_string().len();
+    let mut text = String::new();
+    for ch in input.chars() {
+        let size = serde_json::to_string(&ch).unwrap().len() - 2;
+        let Some(left) = remaining.checked_sub(size) else {
+            result["truncated"] = json!(true);
+            break;
+        };
+        remaining = left;
+        text.push(ch);
+    }
+    result["text"] = json!(text);
+    Some(result)
 }
 
 // PermissionRequest receives the same tool_input as PreToolUse, after any hook updates.

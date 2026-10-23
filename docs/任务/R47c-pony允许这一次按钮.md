@@ -85,3 +85,14 @@
 - **对 paddock 的影响**：只改 pony 内部识别和聊天文案，公开协议不变，paddock 不用动。
 - **没做的事**：第 3、5、7 条未改，第 3 条留给主控上线实测。主仓库审查文件只读未改；未改 corral、依赖、其他仓库、真实 Slack 设置或 `~/.pony`，未操作真实 agent，未部署、合并或推送。
 - **踩过的坑**：没有新增运行问题；两项残余风险已明确写进 DESIGN，未把本次计数校验描述成完全解决读屏或按键竞态。
+
+## 追加记录（corral 记原始命令）
+
+2026-10-23，按主仓库的 R47c 追加任务，在第一次返工 `01a3785` 之后继续；主仓库任务文件只读未改。
+
+- **做了什么**：corral 的 PermissionRequest 钩子仅新增采集 Bash 的 `tool_input.command`，保留原始空白；`status` 和 `wait` 的状态对象／超时报错在 Claude Code 的 Bash blocked 状态给只读 `command:{text,truncated}`。紧凑 JSON 上限 16 KiB，截断只保留完整 Unicode 字符前缀；通知保留当前命令，新输入、工具执行／结束、会话结束／切换、缺字段的下一次旧事件清掉旧命令。事件仍为 v1，cursor 升到 10，以便新旧 reader 交替后重放。pony 只在原始命令存在、未截断、去掉所有空白后与框内命令逐字相同才给 Bash 批准；点击前后重查状态时还要求原始命令与提醒快照完全一致。确认正文改用原始命令前 200 字，长命令注明「未显示全，共 N 字；看不全请回电脑」，不再带读屏丢空格提示。计划批准保持原样。CONTRACT、DESIGN §10、R38a、pony README 同步，原来的假框残余风险改为说明完整原始命令比对如何拒绝只露出后半截的框；按键竞态限制保留。
+- **验证了什么**：按先失败后实现的顺序，分别复现了缺少 `command`、超长未截断、旧 reader 先消费事件导致命令丢失、确认正文仍是读屏文字、200 字未注明截断，以及仅空白变化后仍按键，再修至通过。corral 新增 4 项测试：原始空白／status／wait／超时报错、16 KiB 含 Unicode 和转义的截断、其他工具及生命周期／旧事件无字段、真实新旧 reader 交替。保存本次改动前编出的程序于 `/tmp/r47c-command.Go9GuX/corral-before`，用 `CORRAL_COMPAT_BIN` 显式运行兼容用例，4 项均通过；全部使用隔离 HOME、CORRAL_HOME 和合成 cat。Claude 相关回归 20 项通过、2 项需旧程序的用例默认忽略（新增兼容项已单独通过）；raw event 快照回归通过，快照只更新 cursor 数字。pony 的 17 项批准测试及 2 项隔离命令协议测试通过，覆盖原始空格、缺字段／截断／不符、假框和真框头出窗口、200 字 Unicode 截取／总字数、重启后点击及读屏期间原始命令变化。最后 `cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次通过；全仓 438 通过、0 失败、13 忽略（原有 12 项及已单独运行的新兼容项）。`git diff --check` 通过。所有 Cargo 命令使用 `.target/r47c`，所有命令在前台等到结束；全仓日志在 `/tmp/r47c-command.Go9GuX`。
+- **拿主意的地方**：采用任务建议的 `command` 字段；16 KiB 按 R43 的紧凑 JSON 总量计，避免转义后超限。读屏只用于匹配已知框和完整命令，确认显示独立保存的原始命令；去空白仅用于两种表示的比对，点击时比较完整原始字符串，因此空白变化也拒绝。旧 helper 不提供字段时降级，不能沿用上一框的命令。没有新增设计待决事项。
+- **对 paddock 的影响**：`status`／`wait` 兼容新增可选只读字段，原有字段与状态值不变；`pony status` 不变，paddock 不用动。要采集命令，查询方与该命名空间的 helper 都须使用新版本；部署仍由主控另做。
+- **没做的事及待继续项**：未改 fence、dispatch、依赖或用户的 Slack、pony；未切共享 helper／bin 链接，未部署、合并、推送。真实 Claude 钩子的 `tool_input.command` 尚待实测：追加任务明确要求启动前说清方案、结束本轮等主控回复。本次先完成实现和自动检查，拟使用本分支程序、全新隔离 CORRAL_HOME、临时 cwd，开 `ranch/test-r47c-command`（`role=test`、`CAIRN_DISABLE=1`、sonnet／manual），只请求无害的 `ping -c 1 127.0.0.1`，核对 helper 目标、权限框与 `status.command` 的原始空格，用完 stop；本轮尚未启动该 agent。
+- **踩过的坑**：兼容测试确认不升级 cursor 会使旧 reader 消费新事件后丢掉命令；按 R43 的重放办法升级后通过。没有新增工具或环境故障。

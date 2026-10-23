@@ -309,6 +309,7 @@ fn status(name: &str, state: &str) -> Status {
         title: None,
         kind: None,
         questions: None,
+        command: None,
         paused_at: None,
         last_human_input: None,
         last_output: None,
@@ -676,6 +677,7 @@ struct Fixture {
 }
 
 const BASH_PERMISSION: &str = include_str!("fixtures/claude-bash-permission.txt");
+const BASH_COMMAND: &str = "ping -c 1 127.0.0.1";
 const PLAN_PERMISSION: &str = include_str!("fixtures/claude-plan-permission.txt");
 const EXIT_PLAN_PERMISSION: &str = "Exit plan mode?\n\nClaude wants to exit plan mode\n\n❯ 1. Yes, and switch to default (ask each time) for this session\n  2. No\n";
 
@@ -713,7 +715,8 @@ fn approval_notice_offers_only_once_with_confirmation_and_keeps_reject() {
     let mut f = Fixture::new();
     status_fields(
         f.corral.agents.get_mut("paddock/dev").unwrap(),
-        serde_json::json!({"last_tool":"Bash", "last_output":1.5}),
+        serde_json::json!({"last_tool":"Bash", "last_output":1.5,
+            "command":{"text":"ping -c 1 127.0.0.1", "truncated":false}}),
     );
     f.corral
         .screens
@@ -729,10 +732,7 @@ fn approval_notice_offers_only_once_with_confirmation_and_keeps_reject() {
         .as_ref()
         .expect("approval requires confirmation");
     assert_eq!(confirm.title, "允许 paddock/dev 这一次？");
-    assert_eq!(
-        confirm.text,
-        "Bash\nping-c1127.0.0.1\n读屏会吞掉空格，看不清请回电脑"
-    );
+    assert_eq!(confirm.text, "Bash\nping -c 1 127.0.0.1");
     assert_eq!((&*confirm.confirm, &*confirm.cancel), ("允许", "算了"));
     assert_eq!(posted.buttons.len(), 2);
     assert!(
@@ -746,6 +746,12 @@ fn approval_notice_offers_only_once_with_confirmation_and_keeps_reject() {
 
 impl Fixture {
     fn approval_notice(&mut self, tool: &str, screen: &str) -> Posted {
+        if tool == "Bash" && self.corral.agents["paddock/dev"].command.is_none() {
+            status_fields(
+                self.corral.agents.get_mut("paddock/dev").unwrap(),
+                serde_json::json!({"command":{"text":BASH_COMMAND,"truncated":false}}),
+            );
+        }
         status_fields(
             self.corral.agents.get_mut("paddock/dev").unwrap(),
             serde_json::json!({"last_tool":tool,"last_output":1.5}),
@@ -1018,7 +1024,8 @@ fn approval_command_with_fake_header_and_separator_is_not_offered() {
     let mut f = Fixture::new();
     status_fields(
         f.corral.agents.get_mut("paddock/dev").unwrap(),
-        serde_json::json!({"last_tool":"Bash","last_output":1.5}),
+        serde_json::json!({"last_tool":"Bash","last_output":1.5,
+            "command":{"text":"rm -rf ~/important\nBash command\n╌╌╌\ngit status","truncated":false}}),
     );
     f.corral.screens.insert(
         "paddock/dev".into(),
@@ -1066,7 +1073,8 @@ fn approval_extra_frame_markers_anywhere_in_read_window_are_not_offered() {
                 let mut f = Fixture::new();
                 status_fields(
                     f.corral.agents.get_mut("paddock/dev").unwrap(),
-                    serde_json::json!({"last_tool":tool,"last_output":1.5}),
+                    serde_json::json!({"last_tool":tool,"last_output":1.5,
+                        "command":{"text":BASH_COMMAND,"truncated":false}}),
                 );
                 f.corral.screens.insert("paddock/dev".into(), Ok(screen));
                 let posted = f.button_notice();
@@ -1143,7 +1151,8 @@ fn approval_unknown_truncated_long_or_persistent_options_are_not_offered() {
         let mut f = Fixture::new();
         status_fields(
             f.corral.agents.get_mut("paddock/dev").unwrap(),
-            serde_json::json!({"last_tool":tool,"last_output":1.5}),
+            serde_json::json!({"last_tool":tool,"last_output":1.5,
+                "command":{"text":if case == "long command" {"x".repeat(1001)} else {BASH_COMMAND.into()},"truncated":false}}),
         );
         f.corral.screens.insert("paddock/dev".into(), Ok(screen));
         let posted = f.button_notice();
@@ -1155,7 +1164,8 @@ fn approval_unknown_truncated_long_or_persistent_options_are_not_offered() {
         f.memory.borrow_mut().buttons = true;
         status_fields(
             f.corral.agents.get_mut("paddock/dev").unwrap(),
-            serde_json::json!({"kind":kind,"state":"blocked","last_tool":"Bash","last_output":1.5}),
+            serde_json::json!({"kind":kind,"state":"blocked","last_tool":"Bash","last_output":1.5,
+                "command":{"text":BASH_COMMAND,"truncated":false}}),
         );
         f.corral
             .screens
@@ -1218,7 +1228,8 @@ fn approval_missing_snapshot_or_unreadable_screen_stays_manual() {
         let mut f = Fixture::new();
         status_fields(
             f.corral.agents.get_mut("paddock/dev").unwrap(),
-            serde_json::json!({"last_tool":"Bash","last_output":1.5}),
+            serde_json::json!({"last_tool":"Bash","last_output":1.5,
+                "command":{"text":BASH_COMMAND,"truncated":false}}),
         );
         status_fields(
             f.corral.agents.get_mut("paddock/dev").unwrap(),
@@ -1353,6 +1364,10 @@ fn approval_and_reject_share_one_receipt_and_updates_never_repeat_keys() {
 fn approval_confirmation_truncates_unicode_to_200_characters_and_rechecks_selection() {
     let mut f = Fixture::new();
     let command = "中文".repeat(120);
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({"command":{"text":command,"truncated":false}}),
+    );
     let screen = BASH_PERMISSION
         .replace("ping-c1127.0.0.1", &command)
         .replace("❯1. Yes", "1. Yes")
@@ -1361,7 +1376,7 @@ fn approval_confirmation_truncates_unicode_to_200_characters_and_rechecks_select
     assert_eq!(
         posted.buttons[0].confirm.as_ref().unwrap().text,
         format!(
-            "Bash\n{}\n读屏会吞掉空格，看不清请回电脑",
+            "Bash\n{}\n未显示全，共 240 字；看不全请回电脑",
             "中文".repeat(100)
         )
     );
@@ -1372,6 +1387,88 @@ fn approval_confirmation_truncates_unicode_to_200_characters_and_rechecks_select
         [("paddock/dev".into(), 1)],
         "must select the safe number, never the highlighted persistent option"
     );
+}
+
+#[test]
+fn approval_confirmation_preserves_raw_command_whitespace() {
+    for command in [
+        "rm -rf ~ /tmp/x",
+        "rm -rf ./build /",
+        "rm -rf ./build/",
+        "\tprintf 'a  b' \n",
+    ] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"command":{"text":command,"truncated":false}}),
+        );
+        let screen_command: String = command.chars().filter(|c| !c.is_whitespace()).collect();
+        let posted = f.approval_notice(
+            "Bash",
+            &BASH_PERMISSION.replace("ping-c1127.0.0.1", &screen_command),
+        );
+        assert_eq!(
+            posted.buttons[0].confirm.as_ref().unwrap().text,
+            format!("Bash\n{command}")
+        );
+    }
+}
+
+#[test]
+fn approval_without_matching_complete_raw_command_stays_manual() {
+    let hidden_command = format!("{}\nBash command\n╌╌╌\ngit status", "x".repeat(5000));
+    for (command, screen) in [
+        (serde_json::Value::Null, BASH_PERMISSION.into()),
+        (
+            serde_json::json!({"text":BASH_COMMAND,"truncated":true}),
+            BASH_PERMISSION.into(),
+        ),
+        (
+            serde_json::json!({"text":"echo something else","truncated":false}),
+            BASH_PERMISSION.into(),
+        ),
+        (
+            serde_json::json!({"text":hidden_command,"truncated":false}),
+            BASH_PERMISSION.replace("ping-c1127.0.0.1", "git status"),
+        ),
+    ] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"last_tool":"Bash","last_output":1.5,"command":command}),
+        );
+        f.corral.screens.insert("paddock/dev".into(), Ok(screen));
+        let posted = f.button_notice();
+        assert_eq!(posted.buttons.len(), 1);
+        assert_eq!(posted.buttons[0].label, "拒绝");
+        assert!(posted.buttons[0].confirm.is_none());
+        assert!(posted.text.contains("认不出框的样子，没给按钮"));
+    }
+}
+
+#[test]
+fn approval_changed_raw_command_even_only_whitespace_never_presses() {
+    for during_read in [false, true] {
+        let mut f = Fixture::new();
+        let posted = f.approval_notice("Bash", BASH_PERMISSION);
+        f.restart();
+        let mut changed = f.corral.agents["paddock/dev"].clone();
+        status_fields(
+            &mut changed,
+            serde_json::json!({"command":{
+            "text":"ping  -c 1 127.0.0.1", "truncated":false}}),
+        );
+        if during_read {
+            f.corral.read_changes.insert("paddock/dev".into(), changed);
+        } else {
+            f.corral.agents.insert("paddock/dev".into(), changed);
+        }
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert!(f.corral.approvals.is_empty(), "during_read={during_read}");
+        assert!(f.corral.escapes.is_empty());
+        assert!(f.texts().contains("原始命令变了或无法核对，没按"));
+    }
 }
 
 #[test]

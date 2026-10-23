@@ -65,6 +65,11 @@ fn exercise_protocol_in_child() {
     assert!(process.status("repo/main").unwrap().interrupted);
     fs::write(&response, r#"{"ok":true,"name":"repo/main","instance":"i","state":"blocked","state_started":1.0,"last_output":2.5,"last_human_input":0.5}"#).unwrap();
     assert_eq!(process.status("repo/main").unwrap().last_output, Some(2.5));
+    assert!(process.status("repo/main").unwrap().command.is_none());
+    fs::write(&response, r#"{"ok":true,"name":"repo/main","instance":"i","state":"blocked","last_tool":"Bash","command":{"text":"printf 'a  b'\n","truncated":false}}"#).unwrap();
+    let command = process.status("repo/main").unwrap().command.unwrap();
+    assert_eq!(command.text, "printf 'a  b'\n");
+    assert!(!command.truncated);
     fs::write(
         &response,
         r#"{"ok":true,"name":"repo/main","instance":"i","text":"原样\n","at":2.0}"#,

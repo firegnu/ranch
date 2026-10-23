@@ -25,6 +25,7 @@ pub struct Status {
     pub title: Option<String>,
     pub kind: Option<String>,
     pub questions: Option<Questions>,
+    pub command: Option<PermissionCommand>,
     pub paused_at: Option<f64>,
     pub last_human_input: Option<f64>,
     pub last_output: Option<f64>,
@@ -32,6 +33,12 @@ pub struct Status {
     pub paused: bool,
     #[serde(default)]
     pub interrupted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct PermissionCommand {
+    pub text: String,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

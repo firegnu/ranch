@@ -174,6 +174,10 @@ pub(super) fn stale(old: &Status, status: &Status) -> Option<&'static str> {
         || status.turn_started != old.turn_started
     {
         Some("换了一个框或无法核对等待")
+    } else if old.last_tool.as_deref() == Some("Bash")
+        && (old.command.as_ref().is_none_or(|c| c.truncated) || status.command != old.command)
+    {
+        Some("原始命令变了或无法核对")
     } else if status.last_human_input != old.last_human_input
         || status
             .last_human_input
@@ -203,6 +207,14 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
     let Some(prompt) = screen.and_then(|s| recognize(status, s)) else {
         return Ok(None);
     };
+    let length = prompt.command.chars().count();
+    let note = if status.last_tool.as_deref() != Some("Bash") {
+        "\n读屏会吞掉空格，看不清请回电脑".into()
+    } else if length > 200 {
+        format!("\n未显示全，共 {length} 字；看不全请回电脑")
+    } else {
+        String::new()
+    };
     let mut bytes = [0u8; 16];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(&mut bytes))
@@ -216,9 +228,10 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
             confirm: Some(Confirmation {
                 title: format!("允许 {} 这一次？", status.name),
                 text: format!(
-                    "{}\n{}\n读屏会吞掉空格，看不清请回电脑",
+                    "{}\n{}{}",
                     status.last_tool.as_deref().unwrap_or_default(),
-                    prompt.command.chars().take(200).collect::<String>()
+                    prompt.command.chars().take(200).collect::<String>(),
+                    note
                 ),
                 confirm: "允许".into(),
                 cancel: "算了".into(),
@@ -355,12 +368,17 @@ fn recognize(status: &Status, screen: &str) -> Option<Prompt> {
     if separators.len() != 2 || separators[1] <= separators[0] + 1 {
         return None;
     }
-    let command = frame[separators[0] + 1..separators[1]].join("\n");
+    let mut command = frame[separators[0] + 1..separators[1]].join("\n");
     if command.chars().count() > 1000 || command.contains('…') || command.contains("...") {
         return None;
     }
     let tail = &frame[separators[1] + 1..];
     let option = if rule.tool == "Bash" {
+        let raw = status.command.as_ref()?;
+        if raw.truncated || compact(&raw.text) != compact(&command) {
+            return None;
+        }
+        command.clone_from(&raw.text);
         if compact(tail.first()?) != "Thiscommandrequiresapproval"
             || compact(tail.get(1)?) != "Doyouwanttoproceed?"
             || compact(tail.last()?) != "Esctocancel·Tabtoamend"

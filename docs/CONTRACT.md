@@ -86,12 +86,26 @@ ranch dispatch reset <名字> [--if-version <版本>]
 ```
 
 - `items` 按上游顺序列出每道题。`header`、`question`、选项的 `label`、`description` 是字符串；`multi_select` 是布尔值，上游省略时为 `false`。完整保留多道题及各题选项，不从屏幕或用户输入推测。
-- 只从 Claude Code 的 `PermissionRequest` 钩子的 `tool_input.questions` 取这些字段；不记录 `answers`、其他参数或其他工具的参数。[官方输入格式](https://code.claude.com/docs/en/hooks#permissionrequest-input) 与 [AskUserQuestion 字段](https://code.claude.com/docs/en/hooks#pretooluse-input)（2026-10-22 核对）。钩子仍只观察，不批准或回答。
+- 只从 Claude Code 的 `PermissionRequest` 钩子的 `tool_input.questions` 取这些字段；不记录 `answers` 或其他提问参数。R47c 另只采集 Bash 原始命令，见下一节。[官方输入格式](https://code.claude.com/docs/en/hooks#permissionrequest-input) 与 [AskUserQuestion 字段](https://code.claude.com/docs/en/hooks#pretooluse-input)（2026-10-22 核对）。钩子仍只观察，不批准或回答。
 - `questions` 的紧凑 JSON（UTF-8，包括结构和转义）最多 **16 KiB**。按题目顺序、每题 header → question → options（每项 label → description）分配剩余空间；字符串只保留完整 Unicode 字符的前缀，放不下的后续题目或选项省略，仍保留已列项的全部字段。任一内容被截断时 `truncated:true`，否则为 `false`；截断后可能没有选项，调用方应明确提示题目不完整。
 - 新输入、工具执行/结束、会话结束或切换会清掉旧题目；permission_prompt 通知保留当前题目。旧钩子下一次不带题目的 AskUserQuestion 不会复用上次内容。
 - R24 的对话记录识别扩到 `blocked`：三种框（权限、AskUserQuestion、ExitPlanMode）被 Esc，或批准后工具运行中被 Esc，仍以本主会话、非侧链、严格晚于最近输入的明确标记为依据，识别后 `idle`、`interrupted:true`，普通 `send` 可继续。没按 Esc 的框仍是 `blocked`；旧标记不能改判新一轮。已识别打断被晚到钩子拉回 blocked 时同样重新核对证据。正常结束、别家 agent 和原有字段/状态值不变。
 - 事件仍为 v1，新增可选 `questions`；旧 reader 忽略它，新 reader 接受无此字段的旧事件。cursor 从 8 升到 9，新旧 reader 交替时各自重放原事件。题目采集需要命名空间的 `.runtime/helper` 使用 R43 程序；打断需要查询方使用 R43 且钩子至少能记 R24 的 transcript_path。共用 helper 的切换规矩仍见上节，单切 CLI 链接不能更新钩子。
 - 对 paddock：兼容新增，现有调用无需修改，可以暂不显示题目；Esc 后从误报 blocked 变成 idle，paddock 不用动。pony 如何显示或回答题目由后续任务处理。
+
+## Claude Code Bash 权限框的原始命令（R47c 追加）
+
+`corral status NAME` 兼容新增只读字段 `command`。仅 Claude Code 当前状态为 `blocked`、`last_tool` 为 `Bash` 且收到原始命令时给出；其他情况缺省或 `null`。`wait` 返回的状态对象及超时报错同样带此字段：
+
+```json
+{"command":{"text":"ping -c 1 127.0.0.1","truncated":false}}
+```
+
+- 只在 `PermissionRequest` 钩子中取 Bash 的 `tool_input.command` 字符串，保留空格、换行及其他字符，不从读屏恢复。缺少参数或参数不是字符串就不记；不记其他 Bash 参数、其他工具参数或计划正文。钩子仍只观察，不批准、不回答。
+- `command` 的紧凑 JSON（UTF-8，包含结构和转义）上限为 **16 KiB**，只保留完整 Unicode 字符的前缀；超过上限时 `truncated:true`，否则为 `false`。调用方不能把截断内容当成完整命令。
+- 新输入、工具执行／结束、会话结束或切换清除旧命令；permission_prompt 通知保留当前命令。旧 helper 下一次发出没有 `command` 的 Bash 权限事件时清掉上一份，不复用。离开 Bash 的 blocked 状态后不对外提供该字段。
+- 事件仍为 v1，兼容新增可选 `command`；旧 reader 忽略，新 reader 接受无该字段的旧事件。cursor 从 9 升到 10，新旧 reader 交替时重放各自不认识的缓存，防止旧 reader 已消费事件但未保留命令。查询方及该命名空间的 `.runtime/helper` 均须使用本次程序；只切 CLI 链接不会更新钩子。共用 helper 的切换仍是单独部署操作。
+- 对 paddock：兼容新增只读字段，现有调用无需修改，可以不显示命令。pony 用它核对 Bash 框并展示确认正文；缺少字段、截断或与读屏不符时不给批准按钮。
 
 ## `corral integration status`（R4）
 

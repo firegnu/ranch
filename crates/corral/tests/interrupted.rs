@@ -738,6 +738,147 @@ fn claude_approved_tool_escape_recovers_idle() {
 }
 
 #[test]
+fn claude_command_preserves_raw_spaces_in_status_and_wait() {
+    let lab = Lab::new();
+    let command = "printf '中文  hello\\n'\n  ping -c 1 127.0.0.1\t";
+    let body = json!({"session_id":"main", "tool_name":"Bash", "tool_input":{
+        "command":command, "description":"not-recorded", "timeout":99999
+    }});
+    lab.hook("PreToolUse", body.clone());
+    assert!(lab.json(&["status", "test/work"])["command"].is_null());
+    lab.hook("PermissionRequest", body);
+    lab.hook(
+        "Notification",
+        json!({"session_id":"main", "notification_type":"permission_prompt"}),
+    );
+    let expected = json!({"text":command,"truncated":false});
+    assert_eq!(lab.json(&["status", "test/work"])["command"], expected);
+    assert_eq!(
+        lab.json(&["wait", "test/work", "--timeout", "3"])["command"],
+        expected
+    );
+    let out = lab.out(&["wait", "test/work", "--timeout", "0"]);
+    assert_eq!(out.status.code(), Some(4));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["command"],
+        expected
+    );
+    let events = fs::read_to_string(lab.0.path().join("pens/test/work/events")).unwrap();
+    assert!(
+        !events.contains("not-recorded")
+            && !events.contains("99999")
+            && !events.contains("tool_input")
+    );
+}
+
+#[test]
+fn claude_command_truncates_at_a_total_json_limit() {
+    let lab = Lab::new();
+    let long = "中文\"\n\u{0}".repeat(8192);
+    lab.hook(
+        "PermissionRequest",
+        json!({"session_id":"main", "tool_name":"Bash",
+        "tool_input":{"command":long}}),
+    );
+    let command = lab.json(&["status", "test/work"])["command"].clone();
+    assert_eq!(command["truncated"], true);
+    assert!(serde_json::to_vec(&command).unwrap().len() <= 16 * 1024);
+    let text = command["text"].as_str().unwrap();
+    assert!(!text.is_empty() && long.starts_with(text) && text.len() < long.len());
+}
+
+#[test]
+fn claude_command_only_belongs_to_the_current_bash_permission() {
+    let lab = Lab::new();
+    for (event, body) in [
+        ("PermissionRequest", json!({"tool_name":"Bash"})), // old helper
+        (
+            "PermissionRequest",
+            json!({"tool_name":"Bash", "tool_input":{"command":42}}),
+        ),
+        (
+            "PermissionRequest",
+            json!({"tool_name":"Read", "tool_input":{"command":"not-recorded"}}),
+        ),
+        (
+            "PermissionRequest",
+            json!({"tool_name":"ExitPlanMode", "tool_input":{"command":"not-recorded"}}),
+        ),
+        (
+            "PermissionRequest",
+            json!({"tool_name":"AskUserQuestion", "tool_input":{"command":"not-recorded"}}),
+        ),
+        (
+            "PreToolUse",
+            json!({"tool_name":"Bash", "tool_input":{"command":"not-recorded"}}),
+        ),
+        (
+            "PostToolUse",
+            json!({"tool_name":"Bash", "tool_input":{"command":"not-recorded"}}),
+        ),
+        ("UserPromptSubmit", json!({"prompt":"next"})),
+        ("Stop", json!({})),
+        ("SessionEnd", json!({})),
+    ] {
+        lab.hook(
+            "PermissionRequest",
+            json!({"session_id":"main", "tool_name":"Bash",
+            "tool_input":{"command":"echo old"}}),
+        );
+        assert_eq!(
+            lab.json(&["status", "test/work"])["command"]["text"],
+            "echo old"
+        );
+        let mut body = body;
+        body["session_id"] = json!("main");
+        lab.hook(event, body);
+        assert!(
+            lab.json(&["status", "test/work"])["command"].is_null(),
+            "{event}"
+        );
+        lab.hook(
+            "Notification",
+            json!({"session_id":"main", "notification_type":"permission_prompt"}),
+        );
+        assert!(lab.json(&["status", "test/work"])["command"].is_null());
+    }
+    let events = fs::read_to_string(lab.0.path().join("pens/test/work/events")).unwrap();
+    assert!(!events.contains("not-recorded"));
+}
+
+#[test]
+#[ignore = "set CORRAL_COMPAT_BIN to the pre-command corral binary"]
+fn claude_command_new_and_old_clients_share_events() {
+    let lab = Lab::new();
+    for text in ["echo first", "echo second"] {
+        lab.hook(
+            "PermissionRequest",
+            json!({"session_id":"main", "tool_name":"Bash",
+            "tool_input":{"command":text}}),
+        );
+        // Let the old reader consume the new event before the new reader sees it.
+        let out = Command::new(std::env::var_os("CORRAL_COMPAT_BIN").expect("baseline required"))
+            .args(["status", "test/work"])
+            .env("HOME", lab.0.path())
+            .env("CORRAL_HOME", lab.0.path().join("pens"))
+            .env("SHELL", "/bin/sh")
+            .env_remove("CODEX_SANDBOX")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let old: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(old["state"], "blocked");
+        assert!(old["command"].is_null());
+        assert_eq!(
+            lab.json(&["status", "test/work"])["command"],
+            json!({"text":text,"truncated":false})
+        );
+    }
+    lab.event("PermissionRequest", json!({"tool_name":"Bash"}));
+    assert!(lab.json(&["status", "test/work"])["command"].is_null());
+}
+
+#[test]
 fn claude_question_dialog_exposes_single_choice() {
     let lab = Lab::new();
     lab.transcript_turn();
@@ -861,7 +1002,7 @@ fn claude_questions_do_not_record_other_tool_parameters() {
     let lab = Lab::new();
     for tool in ["Bash", "ExitPlanMode", "Read"] {
         lab.hook("PermissionRequest", json!({"session_id":"main", "tool_name":tool,
-            "tool_input":{"questions":[fruit_question()], "command":"not-recorded", "plan":"not-recorded"}}));
+            "tool_input":{"questions":[fruit_question()], "command":"only-bash-command", "plan":"not-recorded"}}));
         assert!(lab.json(&["status", "test/work"])["questions"].is_null());
     }
     let events = fs::read_to_string(lab.0.path().join("pens/test/work/events")).unwrap();
