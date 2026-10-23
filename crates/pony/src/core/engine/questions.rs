@@ -166,8 +166,8 @@ impl Engine {
         form.action_at[q] = action.at;
         form.dirty = true;
         if !form.answered.iter().all(|a| *a) {
-            self.save()?;
-            return self.update_button(i, at);
+            // refresh_buttons renders once after this batch of input is processed.
+            return self.save();
         }
         let text = answer(content);
         let address = b.address.clone();
@@ -181,8 +181,15 @@ impl Engine {
             attachments: false,
             at: action.at,
         };
-        self.route_message(&address.kind, message, corral, at, false, Some(i))?;
-        self.update_button(i, at)
+        if let Err(error) = self.route_message(&address.kind, message, corral, at, false, Some(i)) {
+            self.record_error("route_failed", error)?;
+            if !self.state.buttons[i].used {
+                return self.finish_button(i, "读不出 agent 状态，没按 Esc", false, at);
+            }
+            // The answer and interrupt were persisted. Its announcement is retried
+            // by the normal queue; do not replay this click or interrupt again.
+        }
+        Ok(())
     }
 
     pub(super) fn take_over_question(&mut self, address: &Address) {

@@ -195,7 +195,7 @@ impl Engine {
             None
         };
         if let Some(reason) = reason {
-            return self.say(address, reason, false);
+            return self.say(address, &refusal(&button, reason), false);
         }
         let Some(content) = &button.content else {
             self.state.buttons[i].finish_update();
@@ -260,7 +260,11 @@ impl Engine {
         used: bool,
         at: f64,
     ) -> Result<()> {
-        self.state.buttons[i].outcome = Some(text.into());
+        self.state.buttons[i].outcome = Some(if used {
+            text.into()
+        } else {
+            refusal(&self.state.buttons[i], text)
+        });
         self.state.buttons[i].used = used;
         self.save()?;
         self.update_button(i, at)
@@ -348,6 +352,14 @@ impl Engine {
             self.state.buttons[i].finish_update();
         }
         self.save()
+    }
+}
+
+fn refusal(button: &ButtonMessage, reason: &str) -> String {
+    if !button.used && button.content.as_ref().is_some_and(|c| c.form.is_some()) {
+        format!("{reason}，选项答案没送；要回答请在线程里写")
+    } else {
+        reason.into()
     }
 }
 

@@ -112,7 +112,7 @@ impl Engine {
         text: &str,
         notify: bool,
         top: bool,
-        offer: Option<ButtonOffer>,
+        mut offer: Option<ButtonOffer>,
     ) -> Result<String> {
         let connection = self
             .connections
@@ -158,7 +158,7 @@ impl Engine {
             } else {
                 Some(address.thread.as_str())
             };
-            match connection.send(Outgoing {
+            let mut result = connection.send(Outgoing {
                 channel: &address.channel,
                 thread,
                 markdown: &rendered,
@@ -172,7 +172,24 @@ impl Engine {
                 } else {
                     &[]
                 },
-            }) {
+            });
+            if result.is_err()
+                && first.is_none()
+                && offer.as_ref().is_some_and(|o| o.form.is_some())
+            {
+                // Preserve the question even when the platform rejects its controls.
+                // No form receipt is kept for a message posted without choices.
+                offer = None;
+                result = connection.send(Outgoing {
+                    channel: &address.channel,
+                    thread,
+                    markdown: &rendered,
+                    notify,
+                    buttons: &[],
+                    choices: &[],
+                });
+            }
+            match result {
                 Ok(id) => {
                     if first.is_none()
                         && let Some(offer) = &offer
@@ -562,7 +579,7 @@ impl Engine {
                 )
                 .or_else(|| buttons::stale(b, &status));
             if let Some(reason) = reason {
-                return self.finish_button(i, &format!("{reason}；没送回答"), false, at);
+                return self.finish_button(i, reason, false, at);
             }
         }
         let reopened = known
@@ -618,7 +635,7 @@ impl Engine {
         {
             return self.finish_button(
                 i,
-                question_reason.unwrap_or("提问已处理，没按 Esc；没送回答"),
+                question_reason.unwrap_or("提问已处理，没按 Esc"),
                 false,
                 at,
             );
@@ -1872,13 +1889,14 @@ impl Engine {
             })
             .collect();
         for mut address in addresses {
-            let offer = if status.state == "blocked" && is_question(status) {
+            let mut offer = if status.state == "blocked" && is_question(status) {
                 self.question_offer(&address, status, at)?
-            } else if status.state == "blocked" {
-                self.button_offer(&address, status, "拒绝", corral, at)?
             } else {
                 None
             };
+            if offer.is_none() && status.state == "blocked" {
+                offer = self.button_offer(&address, status, "拒绝", corral, at)?;
+            }
             let text = if offer.as_ref().is_some_and(|o| o.form.is_some()) {
                 format!(
                     "{text}\n也可以点选项；多选至少选一项后点『提交』。全部题目答完即送出，此前可改选。"
