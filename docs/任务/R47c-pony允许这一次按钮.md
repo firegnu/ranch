@@ -97,3 +97,14 @@
 - **真实钩子实测**：方案获用户同意后，使用本分支编出的 corral、全新隔离的 `/tmp/r47c-raw-live.PL4NdL/pens` 作为 CORRAL_HOME、临时 cwd，启动唯一测试 agent `ranch/test-r47c-command-1`（`role=test`、`CAIRN_DISABLE=1`、Claude Code 2.1.309／sonnet／manual）。只请求本机单次 ping，命令原文为 `ping  -c 1  127.0.0.1`，其中 ping 后和 1 后各两个 ASCII 空格，共 21 字节。真实 Bash 权限框出现后，`wait` 与 `status` 都返回 blocked／Bash、`command.truncated=false`，`command.text` 与预先保存的原文完全相等；用 `cmp` 逐字节核对通过，十六进制检查确认两处均为连续的 `20 20`。读屏中的命令仍丢失空格，钩子原文完整保留。全程没有发送批准或其他按键，`last_human_input` 为 null。测完 `corral stop` 成功（SIGHUP），隔离命名空间的 `corral ls` 返回空列表。隔离 helper 指向 `.target/r47c/debug/corral`；共享 helper 测前、测后均指向 `~/.local/share/ranch/versions/2d63ee1/bin/corral`，逐字比较未变。公开命令输出和比对材料留在上述临时目录，未加入仓库。本轮只补实测记录，`git diff --check` 通过，没有重复跑全仓测试；命令均在前台等到结束。
 - **没做的事**：未改 fence、dispatch、依赖或用户的 Slack、pony；未切共享 helper／bin 链接，未部署、合并、推送。真 Slack 确认框展示仍由主控上线实测；本次原始命令真实钩子核对已完成，没有新增待决定事项。
 - **踩过的坑**：兼容测试确认不升级 cursor 会使旧 reader 消费新事件后丢掉命令；按 R43 的重放办法升级后通过。没有新增工具或环境故障。
+
+## 复核后修改
+
+2026-10-23，按主控采纳的复核建议第 1、2、3 条，在 `r47c` 分支继续；主仓库审查文件的「复核意见」只读未改。
+
+- **做了什么**：Bash 原始命令含 Unicode 格式字符（Cf）或除 `\n`、`\t` 外的控制字符（Cc）时，按认不出降级，不给批准按钮。Cf 范围核对 [Unicode 17.0 分类表](https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt)，涵盖补充平面的格式字符，不新增依赖。连续空白字符超过 4 个也直接不给批准，空格、换行、制表符和其他 Unicode 空白混合连续时合计；4 个以内仍原样显示。Bash 或计划批准的消息发送失败时，移除批准按钮，恢复「要允许：回电脑处理」并重发一次；分段消息也恢复提示，不保存批准记号，保留拒绝按钮及其记录。先补 DESIGN §10 的规则，README、R38a 同步。
+- **验证了什么**：新增 3 项引擎集成用例，均先确认目标失败再修复通过：U+202E 原先仍给批准；连续 5 个空格原先仍给批准；带批准的消息被 `invalid_blocks` 拒收时原先丢掉 Needs you 正文。用例覆盖各 Cf 范围代表字符、全部需拒绝的 Cc、4／5／150 个空格／换行／tab／Unicode 空白及混合空白；发送降级覆盖 Bash 和计划框、`invalid_blocks` 与网络错误、单段与分段、emoji 确认正文、不保存批准记号及重启后拒绝仍可用。随后 `cargo test -p pony --all-targets` 共 206 通过、0 失败、0 忽略；`cargo clippy -p pony --all-targets -- -D warnings`、`cargo fmt --check -p pony` 各一次通过，`git diff --check` 通过。没有跑全仓测试；Cargo 使用 `.target/r47c`，所有命令均在前台等到结束。pony 回归日志在 `/tmp/r47c-review-fixes.bzLCtw/pony-tests.log`。
+- **拿主意的地方**：第 2 条选直接不给按钮，阈值为连续 4 个 Unicode 空白字符；合法的长缩进或大段空行也回电脑处理，不压缩原文或仅靠警告。第 3 条保留拒绝，只去掉批准能力；重新分段前恢复整条正文提示，避免后续段落仍叫用户点批准。没有待主控另定的事项。
+- **对 paddock 的影响**：只改 pony 内部识别、消息发送降级及说明，公开协议不变，paddock 不用动。
+- **没做的事**：复核第 4、5 条未改；未改 corral、依赖、其他仓库或主仓库审查文件。未操作真实 agent、Slack、用户 pony 或共享 helper，未部署、合并、推送。原定主控上线实测事项不变。
+- **踩过的坑**：没有新增运行或环境问题；发送失败用例同时检查分段后的提示和拒绝记录，避免只删界面按钮却留下批准能力或失效提示。

@@ -28,6 +28,8 @@ struct Posted {
 struct Memory {
     choice_send_error: Option<(&'static str, bool)>,
     choice_send_attempts: usize,
+    approval_send_error: Option<(&'static str, bool)>,
+    approval_send_attempts: usize,
     posted: Vec<Posted>,
     buttons: bool,
     updates: Vec<String>,
@@ -57,6 +59,15 @@ impl Connection for MemoryConnection {
     }
     fn send(&mut self, m: Outgoing<'_>) -> Result<String, SendError> {
         let mut data = self.0.borrow_mut();
+        if m.buttons.iter().any(|b| b.confirm.is_some()) {
+            data.approval_send_attempts += 1;
+            if let Some((code, resize)) = data.approval_send_error {
+                return Err(SendError {
+                    code: code.into(),
+                    resize,
+                });
+            }
+        }
         if !m.choices.is_empty() {
             data.choice_send_attempts += 1;
             if let Some((code, resize)) = data.choice_send_error {
@@ -1411,6 +1422,191 @@ fn approval_confirmation_preserves_raw_command_whitespace() {
             posted.buttons[0].confirm.as_ref().unwrap().text,
             format!("Bash\n{command}")
         );
+    }
+}
+
+#[test]
+fn approval_review_format_and_control_characters_stay_manual() {
+    let formats = [
+        '\u{202e}',
+        '\u{00ad}',
+        '\u{0600}',
+        '\u{0605}',
+        '\u{061c}',
+        '\u{06dd}',
+        '\u{070f}',
+        '\u{0890}',
+        '\u{0891}',
+        '\u{08e2}',
+        '\u{180e}',
+        '\u{200b}',
+        '\u{200c}',
+        '\u{200d}',
+        '\u{200e}',
+        '\u{200f}',
+        '\u{202a}',
+        '\u{202b}',
+        '\u{202c}',
+        '\u{202d}',
+        '\u{2060}',
+        '\u{2064}',
+        '\u{2066}',
+        '\u{2067}',
+        '\u{2068}',
+        '\u{2069}',
+        '\u{206f}',
+        '\u{feff}',
+        '\u{fff9}',
+        '\u{fffb}',
+        '\u{110bd}',
+        '\u{110cd}',
+        '\u{13430}',
+        '\u{1343f}',
+        '\u{1bca0}',
+        '\u{1bca3}',
+        '\u{1d173}',
+        '\u{1d17a}',
+        '\u{e0001}',
+        '\u{e0020}',
+        '\u{e007f}',
+    ];
+    let controls = ('\0'..='\u{1f}')
+        .chain('\u{7f}'..='\u{9f}')
+        .filter(|c| !matches!(c, '\n' | '\t'));
+    for c in formats.into_iter().chain(controls) {
+        let mut f = Fixture::new();
+        let command = format!("printf 'before{c}after'");
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"last_tool":"Bash","last_output":1.5,
+                "command":{"text":command,"truncated":false}}),
+        );
+        let screen: String = command.chars().filter(|c| !c.is_whitespace()).collect();
+        f.corral.screens.insert(
+            "paddock/dev".into(),
+            Ok(BASH_PERMISSION.replace("ping-c1127.0.0.1", &screen)),
+        );
+        let posted = f.button_notice();
+        assert_eq!(posted.buttons.len(), 1, "U+{:04X}", c as u32);
+        assert_eq!(posted.buttons[0].label, "拒绝");
+        assert!(posted.buttons[0].confirm.is_none());
+        assert!(posted.text.contains("认不出框的样子，没给按钮"));
+        assert!(f.corral.approvals.is_empty());
+    }
+}
+
+#[test]
+fn approval_review_long_whitespace_stays_manual() {
+    for whitespace in [" ", "\n", "\t", "\u{00a0}", "\u{2028}", "\u{3000}"] {
+        for count in [4, 5, 150] {
+            let mut f = Fixture::new();
+            let command = format!("git status{}rm -rf ~", whitespace.repeat(count));
+            status_fields(
+                f.corral.agents.get_mut("paddock/dev").unwrap(),
+                serde_json::json!({"last_tool":"Bash","last_output":1.5,
+                    "command":{"text":command,"truncated":false}}),
+            );
+            f.corral.screens.insert(
+                "paddock/dev".into(),
+                Ok(BASH_PERMISSION.replace("ping-c1127.0.0.1", "gitstatusrm-rf~")),
+            );
+            let posted = f.button_notice();
+            if count == 4 {
+                let confirm = posted
+                    .buttons
+                    .iter()
+                    .find_map(|b| b.confirm.as_ref())
+                    .unwrap();
+                assert_eq!(confirm.text, format!("Bash\n{command}"));
+            } else {
+                assert_eq!(posted.buttons.len(), 1, "{whitespace:?} × {count}");
+                assert_eq!(posted.buttons[0].label, "拒绝");
+                assert!(posted.buttons[0].confirm.is_none());
+                assert!(posted.text.contains("认不出框的样子，没给按钮"));
+            }
+            assert!(f.corral.approvals.is_empty());
+        }
+    }
+    let mut f = Fixture::new();
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({"last_tool":"Bash","last_output":1.5,
+            "command":{"text":"git status\n \t\u{3000}\nrm -rf ~","truncated":false}}),
+    );
+    f.corral.screens.insert(
+        "paddock/dev".into(),
+        Ok(BASH_PERMISSION.replace("ping-c1127.0.0.1", "gitstatusrm-rf~")),
+    );
+    let posted = f.button_notice();
+    assert_eq!(
+        posted.buttons.len(),
+        1,
+        "mixed whitespace counts as one run"
+    );
+    assert_eq!(posted.buttons[0].label, "拒绝");
+}
+
+#[test]
+fn approval_review_failed_notice_retries_without_approval_and_keeps_reject() {
+    for error in [("invalid_blocks", true), ("network", false)] {
+        for tool in ["Bash", "ExitPlanMode"] {
+            for limit in [10_000, 400] {
+                let mut f = Fixture::new();
+                f.memory.borrow_mut().buttons = true;
+                f.memory.borrow_mut().approval_send_error = Some(error);
+                f.engine.connections.insert(
+                    "memory".into(),
+                    Box::new(MemoryConnection(f.memory.clone(), limit, true)),
+                );
+                let command = "🙂".repeat(190);
+                status_fields(
+                    f.corral.agents.get_mut("paddock/dev").unwrap(),
+                    serde_json::json!({"state":"blocked","kind":"claude",
+                        "last_tool":tool,"last_output":1.5,
+                        "command":{"text":command,"truncated":false}}),
+                );
+                let screen = if tool == "Bash" {
+                    BASH_PERMISSION.replace("ping-c1127.0.0.1", &command)
+                } else {
+                    PLAN_PERMISSION.into()
+                };
+                f.corral.screens.insert("paddock/dev".into(), Ok(screen));
+                f.step(2.);
+                f.step(4.);
+                assert!(
+                    f.texts().contains("paddock/dev 在等你"),
+                    "{error:?}, {tool}, {limit}"
+                );
+                assert!(!f.texts().contains("段发不出去"));
+                assert!(!f.texts().contains("点批准按钮"));
+                assert!(f.texts().contains("要允许：回电脑处理"));
+                let posted = f.memory.borrow().posted[0].clone();
+                assert_eq!(posted.buttons.len(), 1);
+                assert_eq!(posted.buttons[0].label, "拒绝");
+                assert!(f.memory.borrow().posted.iter().all(|p| {
+                    p.buttons.iter().all(|b| b.confirm.is_none()) && p.choices.is_empty()
+                }));
+                assert_eq!(f.memory.borrow().approval_send_attempts, 1);
+                assert_eq!(f.engine.state.buttons.len(), 1);
+                assert!(f.engine.state.buttons[0].approval_value.is_none());
+                assert!(
+                    f.engine.state.buttons[0]
+                        .content
+                        .as_ref()
+                        .unwrap()
+                        .approval
+                        .is_none()
+                );
+                if limit == 400 {
+                    assert!(f.memory.borrow().posted.len() > 1);
+                }
+                f.restart();
+                f.click(&posted, 10.);
+                f.step(10.);
+                assert_eq!(f.corral.escapes.len(), 1);
+                assert!(f.corral.approvals.is_empty());
+            }
+        }
     }
 }
 

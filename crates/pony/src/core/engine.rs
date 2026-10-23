@@ -153,7 +153,7 @@ impl Engine {
             .map(|(i, p)| (p, i, total, limit))
             .collect();
         let mut first = None;
-        let buttons = offer
+        let mut buttons = offer
             .as_ref()
             .filter(|o| o.form.is_none())
             .map(|o| {
@@ -191,6 +191,24 @@ impl Engine {
                     &[]
                 },
             });
+            if result.is_err()
+                && first.is_none()
+                && let Some(offer) = offer.as_mut()
+                && offer.approval.take().is_some()
+            {
+                // Retry without approval, retaining rejection and its receipt.
+                // Re-split the full notice so later parts also lose the approval hint.
+                buttons.truncate(1);
+                let text = text.replace("要允许：点批准按钮并确认", "要允许：回电脑处理");
+                let parts = super::split::split(&text, limit)?;
+                let total = parts.len();
+                work = parts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, p)| (p, i, total, limit))
+                    .collect();
+                continue;
+            }
             if result.is_err()
                 && first.is_none()
                 && offer.as_ref().is_some_and(|o| o.form.is_some())

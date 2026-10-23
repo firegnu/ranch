@@ -244,6 +244,28 @@ fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
+fn readable_command(text: &str) -> bool {
+    if text
+        .split(|c: char| !c.is_whitespace())
+        .any(|run| run.chars().count() > 4)
+    {
+        return false;
+    }
+    // Unicode 17.0 General_Category=Cf, including supplementary-plane formats.
+    // https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt
+    !text.chars().any(|c| {
+        (c.is_control() && !matches!(c, '\n' | '\t'))
+            || matches!(c,
+                '\u{00ad}' | '\u{0600}'..='\u{0605}' | '\u{061c}' | '\u{06dd}'
+                | '\u{070f}' | '\u{0890}'..='\u{0891}' | '\u{08e2}' | '\u{180e}'
+                | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206f}' | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}' | '\u{110bd}' | '\u{110cd}'
+                | '\u{13430}'..='\u{1343f}' | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}' | '\u{e0001}' | '\u{e0020}'..='\u{e007f}')
+    })
+}
+
 // Extra status output after the old frame is not proof that the frame disappeared.
 fn contains_frame(screen: &str, original: &str) -> bool {
     let lines: Vec<_> = original.lines().collect();
@@ -375,7 +397,8 @@ fn recognize(status: &Status, screen: &str) -> Option<Prompt> {
     let tail = &frame[separators[1] + 1..];
     let option = if rule.tool == "Bash" {
         let raw = status.command.as_ref()?;
-        if raw.truncated || compact(&raw.text) != compact(&command) {
+        if raw.truncated || !readable_command(&raw.text) || compact(&raw.text) != compact(&command)
+        {
             return None;
         }
         command.clone_from(&raw.text);
