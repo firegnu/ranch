@@ -8,8 +8,8 @@
 
 ## 本机安装
 
-- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/b32b15a`（10-23，R46；只有 `pony` 程序变了，deploy 自动 kickstart 了 pony）。共用 helper 指 `versions/2d63ee1/bin/corral`（和 b32b15a 的 corral 相同）。退回：`~/.local/share/ranch/versions/b32b15a/bin/ranch deploy 7114172`（会自动重启 pony）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
-- 上一版 `7114172`（10-22，R44 + R45）。再往前退回用 `versions/b32b15a/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`（R43 钩子只多记一个字段，旧程序读得懂，一般不用退）。
+- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/a04f7dd`（10-23，R47a + R47b，Slack 按钮；只有 `pony` 程序变了，deploy 自动 kickstart 了 pony）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/2d63ee1/bin/corral`（和 a04f7dd 的 corral 相同）。退回：`~/.local/share/ranch/versions/a04f7dd/bin/ranch deploy b32b15a`（会自动重启 pony；旧版收到按钮点击只回执、不处理）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
+- 上一版 `b32b15a`（10-23，R46）。再往前退回用 `versions/a04f7dd/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`（R43 钩子只多记一个字段，旧程序读得懂，一般不用退）。
 - 旧版本目录都保留，不删。
 - 技能：corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）装在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/`；技能内容编进程序，改技能要先打新版本再重装。
 - 全局插件：amp 在 `~/.config/amp/plugins/corral.ts`；agy 在 `~/.gemini/config/plugins/corral/`。两个 `integration status` 都是 same。
