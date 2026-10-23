@@ -129,3 +129,9 @@
 - 「要用户定的」九条交用户；`fence run` 能不能直接包执行器子进程没查，同意等第二期做到那一步再查；rig 先不细读。
 - 主控合并时任务文件「用户原话」两边各加了一行，冲突没解就被一起提交进合并提交 `fd4634b`（标题误写成「R49 主控审查」）并推送；本提交解掉冲突标记、补上这段审查。
 结果：一次过
+
+## 用户的决定（10-23，看完报告后）
+
+用户逐条回了「要用户定的」九条：「1. 照着调研文档来，但是初步能达到pi我就很满意了 2. 我又chatgpt的pro订阅，还有deepseek的BYOK。3. 起一个合适的名字，然后你给我建立repo，之后在这个repo中将这个调研报告和相关的东西都可以放进去，之后我就会在这个repo中开发。4: 协议我觉得做好使用成熟的现有的coding agent使用的协议 5: gpui 6: 第一版的范围接受建议 7: 接受你的建议 8: 开源，repo就放在github上 9: corral的接入等agent差不多可以工作了（tui版本的），再考虑接入。」主控追问后用户选：名字 `canter`、协议 Codex app-server、许可证 Apache-2.0、DeepSeek 第一期就接。
+
+主控建了 `github.com/firegnu/canter`（公开，Apache-2.0，本机 `~/Developer/personal_projs/canter`），放进报告副本和 `docs/DESIGN.md`（全部决定和用户原话）。自研 agent 之后的开发在 canter 仓库里做，以那边的 DESIGN 为准。
