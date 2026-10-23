@@ -1,6 +1,6 @@
 use super::{Error, Result, files, now};
 use crate::{
-    chats::{Action, Button, Event, Events, HistoryAfter},
+    chats::{Action, Button, Choice, Event, Events, HistoryAfter},
     corral::{Questions, Status},
 };
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,8 @@ pub enum Phase {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Pending {
+    #[serde(default)]
+    pub button_answer: bool,
     #[serde(default)]
     pub interrupt_offered: bool,
     pub announcement: Option<String>,
@@ -122,6 +124,8 @@ pub struct ButtonMessage {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ButtonContent {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<QuestionForm>,
     pub text: String,
     pub notify: bool,
     pub button: Button,
@@ -129,7 +133,29 @@ pub struct ButtonContent {
     pub screen: Option<String>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct QuestionForm {
+    pub dirty: bool,
+    pub choices: Vec<Choice>,
+    pub answered: Vec<bool>,
+    pub action_at: Vec<f64>,
+}
+
 impl ButtonMessage {
+    pub(super) fn matches(&self, value: &str) -> bool {
+        self.value() == value
+            || self
+                .content
+                .as_ref()
+                .and_then(|c| c.form.as_ref())
+                .is_some_and(|form| {
+                    form.choices.iter().any(|q| {
+                        q.value == value
+                            || q.submit.value == value
+                            || q.options.iter().any(|o| o.value == value)
+                    })
+                })
+    }
     pub(super) fn value(&self) -> &str {
         self.content
             .as_ref()

@@ -13,6 +13,7 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod buttons;
+mod questions;
 use buttons::ButtonOffer;
 
 pub struct Engine {
@@ -111,17 +112,29 @@ impl Engine {
         text: &str,
         notify: bool,
         top: bool,
-        offer: Option<ButtonOffer>,
+        mut offer: Option<ButtonOffer>,
     ) -> Result<String> {
         let connection = self
             .connections
             .get_mut(&address.kind)
             .ok_or_else(|| Error::new("disconnected", "adapter is not connected"))?;
         // Updating this same message must leave room for the result or expiry reason.
+        let reserve = offer.as_ref().map_or(0, |o| {
+            if o.form.is_some() {
+                questions::reserve(&o.status)
+            } else {
+                128
+            }
+        });
+        let choice_hint = if offer.as_ref().is_some_and(|o| o.form.is_some()) {
+            "\n也可以点选项；多选至少选一项后点『提交』。全部题目答完即送出，此前可改选。"
+        } else {
+            ""
+        };
         let limit = connection
             .limits()
             .characters
-            .saturating_sub(if offer.is_some() { 128 } else { 0 });
+            .saturating_sub(reserve + choice_hint.chars().count());
         let prefixed;
         let text = if !connection.limits().threads
             && let Some(t) = self.state.threads.iter().find(|t| t.address == *address)
@@ -141,10 +154,14 @@ impl Engine {
         let mut first = None;
         let buttons = offer
             .as_ref()
+            .filter(|o| o.form.is_none())
             .map(|o| vec![o.button.clone()])
             .unwrap_or_default();
         while let Some((part, i, total, limit)) = work.pop_front() {
-            let rendered = part.render(i, total);
+            let mut rendered = part.render(i, total);
+            if first.is_none() && offer.is_some() {
+                rendered.push_str(choice_hint);
+            }
             let thread = if !connection.limits().threads {
                 None
             } else if top {
@@ -152,13 +169,39 @@ impl Engine {
             } else {
                 Some(address.thread.as_str())
             };
-            match connection.send(Outgoing {
+            let mut result = connection.send(Outgoing {
                 channel: &address.channel,
                 thread,
                 markdown: &rendered,
                 notify: notify && first.is_none(),
                 buttons: if first.is_none() { &buttons } else { &[] },
-            }) {
+                choices: if first.is_none() {
+                    offer
+                        .as_ref()
+                        .and_then(|o| o.form.as_ref())
+                        .map_or(&[], |f| &f.choices)
+                } else {
+                    &[]
+                },
+            });
+            if result.is_err()
+                && first.is_none()
+                && offer.as_ref().is_some_and(|o| o.form.is_some())
+            {
+                // Preserve the question even when the platform rejects its controls.
+                // No form receipt is kept for a message posted without choices.
+                offer = None;
+                rendered.truncate(rendered.len() - choice_hint.len());
+                result = connection.send(Outgoing {
+                    channel: &address.channel,
+                    thread,
+                    markdown: &rendered,
+                    notify,
+                    buttons: &[],
+                    choices: &[],
+                });
+            }
+            match result {
                 Ok(id) => {
                     if first.is_none()
                         && let Some(offer) = &offer
@@ -172,6 +215,7 @@ impl Engine {
                             message: id.clone(),
                             value: offer.button.value.clone(),
                             content: Some(ButtonContent {
+                                form: offer.form.clone(),
                                 text: rendered,
                                 notify,
                                 button: offer.button.clone(),
@@ -209,6 +253,7 @@ impl Engine {
                         markdown: &explanation,
                         notify: notify && first.is_none(),
                         buttons: &[],
+                        choices: &[],
                     }) {
                         Ok(id) => {
                             first.get_or_insert(id);
@@ -272,7 +317,7 @@ impl Engine {
         offline: bool,
     ) -> Result<()> {
         let address = Self::address(kind, &m);
-        if let Err(error) = self.route_message(kind, m, corral, at, offline) {
+        if let Err(error) = self.route_message(kind, m, corral, at, offline, None) {
             let text = format!("{}: {}", error.code, error.message);
             let delivery = error.code == "delivery_failed";
             self.record_error("route_failed", error)?;
@@ -291,6 +336,7 @@ impl Engine {
         corral: &mut dyn Corral,
         at: f64,
         offline: bool,
+        button: Option<usize>,
     ) -> Result<()> {
         let Some(config) = self.configs.iter().find(|c| c.kind == kind).cloned() else {
             return Ok(());
@@ -321,7 +367,10 @@ impl Engine {
             .iter()
             .find(|t| threaded && t.address == address)
             .cloned();
-        self.remember(kind, &m);
+        // A control action is not a new chat message and must not advance history.
+        if button.is_none() {
+            self.remember(kind, &m);
+        }
         let Some(binding) = config.channels.iter().find(|c| c.id == m.channel) else {
             self.save()?;
             if m.mentioned {
@@ -496,6 +545,20 @@ impl Engine {
             )?;
             return Ok(());
         }
+        if button.is_none()
+            && self.state.pending.iter().any(|p| {
+                p.address == address
+                    && p.button_answer
+                    && (p.phase == Phase::Queued || m.at <= p.at)
+            })
+        {
+            self.save()?;
+            return self.say(
+                &address,
+                "选项回答已提交，这句没作为第二份答案发送；收到回复后可接着聊",
+                false,
+            );
+        }
         if offline {
             let label = self.connections.get(kind).map_or("聊天", |c| c.name());
             body = format!(
@@ -517,6 +580,20 @@ impl Engine {
             }
             Err(e) => return Err(corral_error(e)),
         };
+        if let Some(i) = button {
+            let b = &self.state.buttons[i];
+            let reason = self
+                .stop_reason(
+                    &status,
+                    b.content.as_ref().map(|c| c.status.instance.as_str()),
+                    m.at,
+                    at,
+                )
+                .or_else(|| buttons::stale(b, &status));
+            if let Some(reason) = reason {
+                return self.finish_button(i, reason, false, at);
+            }
+        }
         let reopened = known
             .as_ref()
             .is_some_and(|t| !t.instance.is_empty() && t.instance != status.instance);
@@ -561,9 +638,20 @@ impl Engine {
         let answer = question.is_some();
         let reference = question
             .as_ref()
+            .filter(|_| button.is_none())
             .and_then(|q| q.questions.as_ref())
             .and_then(|questions| option_reference(questions, &body));
         let close_question = answer && question_reason.is_none();
+        if let Some(i) = button
+            && !close_question
+        {
+            return self.finish_button(
+                i,
+                question_reason.unwrap_or("提问已处理，没按 Esc"),
+                false,
+                at,
+            );
+        }
         if let Some(q) = &mut question {
             q.handled = true;
         }
@@ -627,6 +715,7 @@ impl Engine {
             }
         );
         self.state.pending.push(Pending {
+            button_answer: button.is_some(),
             interrupt_offered: false,
             announcement: Some(announcement.clone()),
             attachments: m.attachments,
@@ -648,6 +737,17 @@ impl Engine {
             baseline: status.turn_started,
             phase: Phase::Queued,
         });
+        if let Some(i) = button {
+            let b = &mut self.state.buttons[i];
+            b.used = true;
+            b.outcome = Some(format!(
+                "已答：{}（{}）",
+                questions::answer_summary(b.content.as_ref().expect("validated form")),
+                clock_time(at)
+            ));
+        } else if answer {
+            self.take_over_question(&address);
+        }
         self.save()?;
         if close_question {
             if self.start_interrupt(&address, &status, corral, at, true)? {
@@ -794,29 +894,28 @@ impl Engine {
             .iter()
             .enumerate()
             .filter_map(|(i, b)| {
-                (b.outcome.is_none()
+                ((b.outcome.is_none() || b.outcome.as_deref() == Some(questions::TEXT_ANSWER))
                     && b.content.as_ref().is_some_and(|c| {
                         c.status.name == status.name && c.status.instance == status.instance
                     })
                     && buttons::stale(b, status).is_none())
-                .then_some(i)
+                .then_some((i, b.outcome.clone()))
             })
             .collect();
-        for &i in &buttons {
-            self.state.buttons[i].outcome = Some("已接收，Esc 是否送达待确认；没重按".into());
+        for (i, _) in &buttons {
+            self.state.buttons[*i].outcome = Some("已接收，Esc 是否送达待确认；没重按".into());
         }
         // Persist before keys: a crash can lose a key, but must never repeat it.
         self.save()?;
         let result = corral.escape(&status.name, status.kind.as_deref() == Some("amp"));
-        for i in buttons {
-            self.state.buttons[i].outcome = Some(
-                if result.is_ok() {
-                    "已在线程里按了 Esc"
-                } else {
-                    "Esc 发送失败或结果不明，没重按"
-                }
-                .into(),
-            );
+        for (i, previous) in buttons {
+            let outcome = if result.is_ok() {
+                "已在线程里按了 Esc"
+            } else {
+                "Esc 发送失败或结果不明，没重按"
+            };
+            self.state.buttons[i].outcome =
+                Some(previous.map_or_else(|| outcome.into(), |p| format!("{p}；{outcome}")));
         }
         self.save()?;
         if let Err(error) = result {
@@ -1802,11 +1901,14 @@ impl Engine {
             })
             .collect();
         for mut address in addresses {
-            let offer = if status.state == "blocked" {
-                self.button_offer(&address, status, "拒绝", corral, at)?
+            let mut offer = if status.state == "blocked" && is_question(status) {
+                self.question_offer(&address, status, at)?
             } else {
                 None
             };
+            if offer.is_none() && status.state == "blocked" {
+                offer = self.button_offer(&address, status, "拒绝", corral, at)?;
+            }
             address.thread = match self.post_with_button(&address, text, true, true, offer) {
                 Ok(id) => id,
                 Err(error) => {
@@ -2246,7 +2348,9 @@ fn answer_prefix(reference: Option<&str>, closed: bool) -> String {
 }
 
 fn corral_error(e: crate::corral::Failure) -> Error {
-    Error::new(&e.code, e.message)
+    // Keep corral I/O errors distinct from pony's fatal storage errors.
+    let code = if e.code == "io" { "corral_io" } else { &e.code };
+    Error::new(code, e.message)
 }
 fn minutes(seconds: f64) -> u64 {
     (seconds.max(0.) / 60.) as u64

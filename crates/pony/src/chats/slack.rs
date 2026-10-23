@@ -267,8 +267,55 @@ fn message_body(message: &Outgoing<'_>, owner: &str) -> Value {
             .collect();
         blocks.push(json!({"type":"actions", "elements":elements}));
     }
+    for choice in message.choices {
+        blocks.push(json!({"type":"section","text":{"type":"plain_text","text":short_label(&choice.label, 3000)}}));
+        let elements = if choice.multi_select {
+            let options: Vec<_> = choice.options.iter().map(|o| json!({
+                "text":{"type":"plain_text","text":short_label(&o.label, 75)}, "value":o.value
+            })).collect();
+            let initial: Vec<_> = options
+                .iter()
+                .filter(|o| choice.selected.iter().any(|v| o["value"] == *v))
+                .cloned()
+                .collect();
+            let mut checks =
+                json!({"type":"checkboxes","action_id":choice.value,"options":options});
+            if !initial.is_empty() {
+                checks["initial_options"] = initial.into();
+            }
+            vec![
+                checks,
+                json!({"type":"button","action_id":choice.submit.value,"value":choice.submit.value,
+                "text":{"type":"plain_text","text":choice.submit.label}}),
+            ]
+        } else {
+            choice
+                .options
+                .iter()
+                .map(|o| {
+                    let mut b = json!({"type":"button","action_id":o.value,"value":o.value,
+                    "text":{"type":"plain_text","text":short_label(&o.label, 75)}});
+                    if choice.selected.contains(&o.value) {
+                        b["style"] = "primary".into();
+                    }
+                    b
+                })
+                .collect()
+        };
+        // Generated block IDs change on update; submit reads its checkbox snapshot
+        // from the same block in the interaction payload.
+        blocks.push(json!({"type":"actions","elements":elements}));
+    }
     json!({"channel":message.channel,"text":summary,"blocks":blocks,
         "unfurl_links":false,"unfurl_media":false,"parse":"none","link_names":false})
+}
+
+fn short_label(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        text.into()
+    } else {
+        format!("{}…", text.chars().take(limit - 1).collect::<String>())
+    }
 }
 
 impl Drop for SlackConnection {
@@ -832,14 +879,45 @@ fn emit_received(value: &Value, options: &Connect, session: &Session) -> CoreRes
             && payload["message"]["ts"] == message
             && payload["container"]["channel_id"] == channel;
         if let Some(actions) = payload["actions"].as_array() {
-            for action in actions.iter().filter(|a| a["type"] == "button") {
+            for action in actions
+                .iter()
+                .filter(|a| a["type"] == "button" || a["type"] == "checkboxes")
+            {
+                let checkbox = if action["type"] == "checkboxes" {
+                    Some(action)
+                } else {
+                    action["block_id"]
+                        .as_str()
+                        .and_then(|id| payload["state"]["values"][id].as_object())
+                        .and_then(|block| block.values().find(|v| v["type"] == "checkboxes"))
+                };
+                let selected = checkbox
+                    .map(|c| {
+                        c["selected_options"]
+                            .as_array()
+                            .map_or(Ok(Vec::new()), |options| {
+                                options
+                                    .iter()
+                                    .map(|o| required(o, "value"))
+                                    .collect::<CoreResult<Vec<_>>>()
+                            })
+                    })
+                    .transpose()?;
                 options.events.emit(Event::Action(Action {
                     channel: channel.clone(),
                     message: message.clone(),
                     thread: payload["message"]["thread_ts"].as_str().map(str::to_owned),
                     sender: sender.clone(),
-                    value: required(action, "value")?,
+                    value: required(
+                        action,
+                        if action["type"] == "checkboxes" {
+                            "action_id"
+                        } else {
+                            "value"
+                        },
+                    )?,
                     at: timestamp(&required(action, "action_ts")?)?,
+                    selected,
                     own_message,
                 }))?;
             }

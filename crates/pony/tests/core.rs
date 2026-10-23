@@ -22,9 +22,12 @@ struct Posted {
     notify: bool,
     id: String,
     buttons: Vec<Button>,
+    choices: Vec<Choice>,
 }
 #[derive(Default)]
 struct Memory {
+    choice_send_error: Option<(&'static str, bool)>,
+    choice_send_attempts: usize,
     posted: Vec<Posted>,
     buttons: bool,
     updates: Vec<String>,
@@ -54,6 +57,15 @@ impl Connection for MemoryConnection {
     }
     fn send(&mut self, m: Outgoing<'_>) -> Result<String, SendError> {
         let mut data = self.0.borrow_mut();
+        if !m.choices.is_empty() {
+            data.choice_send_attempts += 1;
+            if let Some((code, resize)) = data.choice_send_error {
+                return Err(SendError {
+                    code: code.into(),
+                    resize,
+                });
+            }
+        }
         if data.fail_after.is_some_and(|n| data.posted.len() >= n) {
             return Err(SendError {
                 code: "network".into(),
@@ -77,6 +89,7 @@ impl Connection for MemoryConnection {
             notify: m.notify,
             id: id.clone(),
             buttons: m.buttons.to_vec(),
+            choices: m.choices.to_vec(),
         });
         Ok(id)
     }
@@ -99,6 +112,7 @@ impl Connection for MemoryConnection {
             .unwrap();
         posted.text = m.markdown.into();
         posted.buttons = m.buttons.to_vec();
+        posted.choices = m.choices.to_vec();
         data.updates.push(id.into());
         Ok(())
     }
@@ -174,6 +188,9 @@ static TEST_CHATS: &[&dyn Chat] = &[&MemoryChat];
 
 #[derive(Default)]
 struct FakeCorral {
+    list_error: Option<corral::Failure>,
+    status_failure_after: Option<usize>,
+    status_change_after: Option<(usize, serde_json::Value)>,
     agents: BTreeMap<String, Status>,
     replies: BTreeMap<String, Result<Reply, corral::Failure>>,
     screens: BTreeMap<String, Result<String, corral::Failure>>,
@@ -189,6 +206,9 @@ struct FakeCorral {
 }
 impl Corral for FakeCorral {
     fn list(&mut self) -> corral::Result<Vec<Agent>> {
+        if let Some(error) = self.list_error.take() {
+            return Err(error);
+        }
         Ok(self
             .agents
             .values()
@@ -200,6 +220,21 @@ impl Corral for FakeCorral {
     }
     fn status(&mut self, name: &str) -> corral::Result<Status> {
         self.status_reads.push(name.into());
+        if let Some((left, fields)) = self.status_change_after.as_mut() {
+            if *left == 0 {
+                status_fields(self.agents.get_mut(name).unwrap(), fields.clone());
+                self.status_change_after = None;
+            } else {
+                *left -= 1;
+            }
+        }
+        if let Some(left) = self.status_failure_after.as_mut() {
+            if *left == 0 {
+                self.status_failure_after = None;
+                return Err(failure(1, "corral_unavailable"));
+            }
+            *left -= 1;
+        }
         if let Some(error) = self.status_errors.get(name) {
             return Err(error.clone());
         }
@@ -653,8 +688,12 @@ impl Fixture {
                 message: posted.id.clone(),
                 sender: "owner".into(),
                 thread: posted.thread.clone(),
-                value: posted.buttons[0].value.clone(),
+                value: posted.buttons.first().map_or_else(
+                    || posted.choices[0].options[0].value.clone(),
+                    |b| b.value.clone(),
+                ),
                 at,
+                selected: None,
                 own_message: true,
             }))
             .unwrap();
@@ -950,6 +989,7 @@ fn button_owner_origin_and_rapid_clicks_are_checked_before_keys() {
             thread: posted.thread.clone(),
             value: posted.buttons[0].value.clone(),
             at: 10.,
+            selected: None,
             own_message: true,
         };
         match invalid {
@@ -1581,6 +1621,599 @@ impl Fixture {
         f.step(4.);
         f
     }
+}
+
+#[test]
+fn question_buttons_single_answer_uses_escape_and_idle_queue() {
+    let mut f = Fixture::new();
+    f.memory.borrow_mut().buttons = true;
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({
+            "state":"blocked", "kind":"claude", "last_tool":"AskUserQuestion",
+            "questions":{"items":[{"header":"颜色","question":"选哪种？","multi_select":false,
+                "options":[{"label":"红","description":""},{"label":"蓝","description":""}]}],"truncated":false}
+        }),
+    );
+    f.step(2.);
+    f.step(4.);
+    let posted = f.memory.borrow().posted[0].clone();
+    assert_eq!(posted.choices.len(), 1, "完整的结构化题目应有选项按钮");
+    assert!(posted.text.contains("也可以点选项"));
+    assert!(f.corral.screen_reads.is_empty(), "选项不依赖读屏");
+    f.events
+        .emit(Event::Action(Action {
+            channel: posted.channel.clone(),
+            message: posted.id.clone(),
+            thread: None,
+            sender: "owner".into(),
+            value: posted.choices[0].options[1].value.clone(),
+            selected: None,
+            at: 10.,
+            own_message: true,
+        }))
+        .unwrap();
+    f.step(10.);
+    assert_eq!(f.corral.escapes, [("paddock/dev".into(), false)]);
+    assert!(f.corral.sent.is_empty());
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(11.);
+    assert!(f.corral.sent.is_empty());
+    f.step(12.);
+    assert_eq!(
+        f.corral.sent,
+        [(
+            "paddock/dev".into(),
+            "（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n1. 颜色：蓝".into()
+        )]
+    );
+    let updated = &f.memory.borrow().posted[0];
+    assert!(updated.choices.is_empty());
+    assert!(updated.text.contains("已答：1. 蓝（"));
+}
+
+impl Fixture {
+    fn meal_questions() -> Self {
+        let mut f = Self::new();
+        f.memory.borrow_mut().buttons = true;
+        let items = serde_json::json!([
+            {"header":"主食","question":"主食？","multi_select":false,"options":[
+                {"label":"面条","description":""},{"label":"米饭","description":""},{"label":"饺子","description":""}]},
+            {"header":"饮料","question":"饮料？","multi_select":false,"options":[
+                {"label":"茶","description":""},{"label":"咖啡","description":""},{"label":"果汁","description":""}]},
+            {"header":"配菜","question":"配菜？","multi_select":true,"options":[
+                {"label":"青菜","description":""},{"label":"豆腐","description":""},{"label":"鸡腿","description":""},{"label":"凉菜","description":""}]}
+        ]);
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+                "state":"blocked","kind":"claude","last_tool":"AskUserQuestion", "questions":{"items":items,"truncated":false}
+            }),
+        );
+        f.step(2.);
+        f.step(4.);
+        f
+    }
+    fn choose(&self, value: &str, selected: Option<Vec<String>>, at: f64) {
+        self.events
+            .emit(Event::Action(Action {
+                channel: "C1".into(),
+                message: "bot-0".into(),
+                thread: None,
+                sender: "owner".into(),
+                value: value.into(),
+                selected,
+                at,
+                own_message: true,
+            }))
+            .unwrap();
+    }
+}
+
+#[test]
+fn question_buttons_three_questions_can_change_resume_and_submit_once() {
+    let mut f = Fixture::meal_questions();
+    let choices = f.memory.borrow().posted[0].choices.clone();
+    assert_eq!(choices.len(), 3);
+    f.choose(&choices[0].options[0].value, None, 10.);
+    f.step(10.);
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("1. 面条（已选，可改）")
+    );
+    f.choose(&choices[0].options[1].value, None, 11.);
+    f.choose(
+        &choices[2].value,
+        Some(vec![
+            choices[2].options[2].value.clone(),
+            choices[2].options[3].value.clone(),
+        ]),
+        12.,
+    );
+    f.step(12.);
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("3. 鸡腿、凉菜（未提交）")
+    );
+    assert!(f.corral.escapes.is_empty());
+    f.restart();
+    f.step(13.);
+    f.choose(&choices[2].submit.value, None, 14.);
+    f.step(14.);
+    assert!(f.corral.escapes.is_empty(), "饮料还没选");
+    // Editing a submitted multi-select question requires submitting it again.
+    f.choose(
+        &choices[2].value,
+        Some(vec![choices[2].options[0].value.clone()]),
+        15.,
+    );
+    f.choose(&choices[1].options[0].value, None, 16.);
+    f.step(16.);
+    assert!(f.corral.escapes.is_empty());
+    // A submit carries the current checkbox state even if its change event was delayed.
+    let selected = Some(vec![
+        choices[2].options[3].value.clone(),
+        choices[2].options[2].value.clone(),
+    ]);
+    f.choose(&choices[2].submit.value, selected.clone(), 17.);
+    f.step(17.);
+    assert_eq!(f.corral.escapes, [("paddock/dev".into(), false)]);
+    assert!(f.corral.sent.is_empty());
+    f.restart();
+    f.choose(&choices[2].submit.value, selected, 17.);
+    f.step(18.);
+    assert_eq!(
+        f.memory.borrow().exists_reads,
+        ["bot-0"],
+        "重连应核对原提醒消息，不能拿内部记号查平台历史"
+    );
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(19.);
+    f.step(20.);
+    assert_eq!(f.corral.escapes.len(), 1);
+    assert_eq!(f.corral.sent, [("paddock/dev".into(),
+        "（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n1. 主食：米饭\n2. 饮料：茶\n3. 配菜：鸡腿、凉菜".into())]);
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("已答：1. 米饭 2. 茶 3. 鸡腿、凉菜（")
+    );
+}
+
+#[test]
+fn question_review_submit_read_failure_explains_and_expires_without_pressing() {
+    for list_error in [
+        Some(failure(1, "corral_unavailable")),
+        Some(failure(6, "io")),
+        None,
+    ] {
+        let mut f = Fixture::meal_questions();
+        let choices = f.memory.borrow().posted[0].choices.clone();
+        f.choose(&choices[0].options[0].value, None, 6.);
+        f.choose(&choices[1].options[0].value, None, 7.);
+        f.step(7.);
+        if let Some(error) = list_error {
+            f.corral.list_error = Some(error);
+        } else {
+            // The first status check passes; the final routing check fails.
+            f.corral.status_failure_after = Some(1);
+        }
+        f.choose(
+            &choices[2].submit.value,
+            Some(vec![choices[2].options[0].value.clone()]),
+            10.,
+        );
+        f.step(10.);
+        let updated = f.memory.borrow().posted[0].clone();
+        assert!(updated.choices.is_empty());
+        assert!(updated.text.contains("读不出 agent 状态"));
+        assert!(updated.text.contains("选项答案没送；要回答请在线程里写"));
+        assert!(f.corral.escapes.is_empty());
+        assert!(f.corral.sent.is_empty());
+        assert!(f.engine.store.inbox().is_empty());
+        f.restart();
+        f.step(11.);
+        assert!(f.corral.escapes.is_empty());
+        f.message("typed", Some("bot-0"), "改用文字回答", false);
+        f.step(12.);
+        assert_eq!(f.corral.escapes.len(), 1);
+    }
+}
+
+#[test]
+fn question_review_submit_announcement_failure_keeps_queue_without_replaying_click() {
+    let mut f = Fixture::meal_questions();
+    let choices = f.memory.borrow().posted[0].choices.clone();
+    f.choose(&choices[0].options[0].value, None, 6.);
+    f.choose(&choices[1].options[0].value, None, 7.);
+    f.step(7.);
+    let posted_count = f.memory.borrow().posted.len();
+    f.memory.borrow_mut().fail_after = Some(posted_count);
+    f.choose(
+        &choices[2].submit.value,
+        Some(vec![choices[2].options[0].value.clone()]),
+        10.,
+    );
+    f.step(10.);
+    assert_eq!(f.corral.escapes.len(), 1);
+    assert!(f.engine.store.inbox().is_empty());
+    assert_eq!(f.engine.state.pending.len(), 1);
+    assert!(f.engine.state.pending[0].announcement.is_some());
+    f.memory.borrow_mut().fail_after = None;
+    f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+    f.step(11.);
+    f.step(12.);
+    assert_eq!(f.corral.escapes.len(), 1);
+    assert_eq!(f.corral.sent.len(), 1);
+    assert!(
+        f.corral.sent[0]
+            .1
+            .ends_with("1. 主食：面条\n2. 饮料：茶\n3. 配菜：青菜")
+    );
+    assert!(!f.texts().contains("这个按钮已经按过了"));
+    assert!(f.texts().contains("→ paddock/dev（关掉提问框后就送）"));
+}
+
+#[test]
+fn question_review_unavailable_choices_keep_the_screen_checked_reject_button() {
+    for reason in ["truncated", "questions", "options", "time", "length"] {
+        let mut f = Fixture::new();
+        let item = serde_json::json!({"header":"颜色","question":"选哪种？","multi_select":false,
+            "options":[{"label":"红","description":""},{"label":"蓝","description":""}]});
+        let mut questions = serde_json::json!({"items":[item.clone()],"truncated":false});
+        match reason {
+            "truncated" => questions["truncated"] = true.into(),
+            "questions" => questions["items"] = vec![item; 25].into(),
+            "options" => {
+                questions["items"][0]["options"] =
+                    vec![serde_json::json!({"label":"颜色","description":""}); 11].into()
+            }
+            "length" => questions["items"][0]["options"][0]["label"] = "红".repeat(9000).into(),
+            _ => {}
+        }
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+                "state":"blocked","kind":"claude","last_tool":"AskUserQuestion","questions":questions,
+                "state_started":if reason == "time" { None } else { Some(1.) }
+            }),
+        );
+        let notice = f.button_notice();
+        assert!(notice.choices.is_empty(), "{reason}");
+        assert_eq!(notice.buttons.len(), 1, "{reason}: needs the R47a fallback");
+        assert_eq!(notice.buttons[0].label, "拒绝");
+        f.corral
+            .screens
+            .insert("paddock/dev".into(), Ok("changed screen".into()));
+        f.click(&notice, 10.);
+        f.step(10.);
+        assert!(
+            f.corral.escapes.is_empty(),
+            "{reason}: reject must still check the screen"
+        );
+    }
+    let f = Fixture::meal_questions();
+    let notice = &f.memory.borrow().posted[0];
+    assert!(
+        notice.buttons.is_empty(),
+        "with choices, use text stop to reject"
+    );
+    assert_eq!(notice.choices.len(), 3);
+}
+
+#[test]
+fn question_review_rejected_choice_blocks_retry_plain_text_and_keep_thread_answers() {
+    for error in [("invalid_blocks", true), ("network", false)] {
+        for long in [false, true] {
+            let mut f = Fixture::new();
+            f.memory.borrow_mut().buttons = true;
+            f.memory.borrow_mut().choice_send_error = Some(error);
+            status_fields(
+                f.corral.agents.get_mut("paddock/dev").unwrap(),
+                serde_json::json!({
+                    "state":"blocked","kind":"claude","last_tool":"AskUserQuestion",
+                    "questions":{"truncated":false,"items":[{"header":"颜色","question":"第一道问题？","multi_select":false,
+                        "options":[{"label":"红","description":if long { "x".repeat(12000) } else { String::new() }},
+                            {"label":"蓝","description":"最后的说明"}]}]}
+                }),
+            );
+            f.step(2.);
+            f.step(4.);
+            assert!(f.texts().contains("第一道问题？"), "{error:?}, long={long}");
+            assert!(f.texts().contains("最后的说明"));
+            assert!(f.texts().contains("A 红"));
+            assert!(f.texts().contains("B 蓝"));
+            assert!(!f.texts().contains("段发不出去"));
+            assert!(!f.texts().contains("也可以点选项"));
+            assert!(f.engine.state.buttons.is_empty());
+            assert_eq!(f.memory.borrow().choice_send_attempts, 1);
+            assert!(
+                f.memory
+                    .borrow()
+                    .posted
+                    .iter()
+                    .all(|p| p.choices.is_empty())
+            );
+            f.message("typed", Some("bot-0"), "蓝", false);
+            f.step(10.);
+            assert_eq!(f.corral.escapes.len(), 1);
+            f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+            f.step(11.);
+            f.step(12.);
+            assert_eq!(f.corral.sent.len(), 1);
+            assert!(f.corral.sent[0].1.ends_with("\n蓝"));
+        }
+    }
+}
+
+#[test]
+fn question_review_batches_draft_updates_after_processing_all_clicks() {
+    let mut f = Fixture::meal_questions();
+    let choices = f.memory.borrow().posted[0].choices.clone();
+    f.choose(&choices[0].options[0].value, None, 6.);
+    f.choose(&choices[0].options[1].value, None, 7.);
+    f.choose(
+        &choices[2].value,
+        Some(vec![choices[2].options[0].value.clone()]),
+        8.,
+    );
+    f.choose(
+        &choices[2].value,
+        Some(vec![
+            choices[2].options[2].value.clone(),
+            choices[2].options[3].value.clone(),
+        ]),
+        9.,
+    );
+    f.step(10.);
+    assert_eq!(
+        f.memory.borrow().update_attempts,
+        1,
+        "one update per input batch"
+    );
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("1. 米饭（已选，可改）")
+    );
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("3. 鸡腿、凉菜（未提交）")
+    );
+    assert!(f.corral.escapes.is_empty());
+    f.restart();
+    f.step(11.);
+    assert_eq!(f.memory.borrow().update_attempts, 1);
+    f.choose(&choices[1].options[0].value, None, 12.);
+    f.choose(&choices[2].submit.value, None, 13.);
+    f.step(13.);
+    assert_eq!(f.memory.borrow().update_attempts, 2);
+    assert_eq!(f.corral.escapes.len(), 1);
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("已答：1. 米饭 2. 茶 3. 鸡腿、凉菜")
+    );
+}
+
+#[test]
+fn question_review_refusal_explicitly_says_the_option_answer_was_not_sent() {
+    for final_check in [false, true] {
+        for fields in [
+            serde_json::json!({"state_started":8.}),
+            serde_json::json!({"last_human_input":9.}),
+            serde_json::json!({"paused":true}),
+            serde_json::json!({"state":"idle"}),
+        ] {
+            let mut f = Fixture::meal_questions();
+            let choices = f.memory.borrow().posted[0].choices.clone();
+            f.choose(&choices[0].options[0].value, None, 6.);
+            f.choose(&choices[1].options[0].value, None, 7.);
+            f.step(7.);
+            if final_check {
+                f.corral.status_change_after = Some((1, fields));
+            } else {
+                status_fields(f.corral.agents.get_mut("paddock/dev").unwrap(), fields);
+            }
+            f.choose(
+                &choices[2].submit.value,
+                Some(vec![choices[2].options[0].value.clone()]),
+                10.,
+            );
+            f.step(10.);
+            assert!(
+                f.memory.borrow().posted[0]
+                    .text
+                    .contains("选项答案没送；要回答请在线程里写")
+            );
+            assert!(f.memory.borrow().posted[0].choices.is_empty());
+            assert!(f.corral.escapes.is_empty());
+            assert!(f.corral.sent.is_empty());
+        }
+    }
+    let mut f = Fixture::meal_questions();
+    let choices = f.memory.borrow().posted[0].choices.clone();
+    f.corral
+        .status_errors
+        .insert("paddock/dev".into(), failure(1, "corral_unavailable"));
+    f.choose(&choices[0].options[0].value, None, 10.);
+    f.step(10.);
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("选项答案没送；要回答请在线程里写")
+    );
+    assert!(f.corral.escapes.is_empty());
+    assert!(f.corral.sent.is_empty());
+}
+
+#[test]
+fn question_buttons_and_text_deliver_one_answer_in_either_order() {
+    for button_first in [false, true] {
+        let mut f = Fixture::meal_questions();
+        let choices = f.memory.borrow().posted[0].choices.clone();
+        f.choose(&choices[0].options[1].value, None, 8.);
+        f.step(8.);
+        if button_first {
+            f.choose(&choices[1].options[0].value, None, 9.);
+            f.choose(
+                &choices[2].submit.value,
+                Some(vec![choices[2].options[2].value.clone()]),
+                10.,
+            );
+        }
+        f.message(
+            "typed-answer",
+            Some("bot-0"),
+            "改成面条、果汁，不要配菜",
+            false,
+        );
+        if !button_first {
+            f.choose(&choices[1].options[0].value, None, 11.);
+            f.choose(
+                &choices[2].submit.value,
+                Some(vec![choices[2].options[2].value.clone()]),
+                12.,
+            );
+        }
+        f.step(12.);
+        assert_eq!(f.corral.escapes.len(), 1);
+        f.restart();
+        f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+        f.step(13.);
+        f.step(14.);
+        assert_eq!(f.corral.sent.len(), 1, "button_first={button_first}");
+        assert_eq!(
+            f.corral.sent[0].1.ends_with("改成面条、果汁，不要配菜"),
+            !button_first
+        );
+        assert!(f.memory.borrow().posted[0].choices.is_empty());
+        assert!(f.texts().contains(if button_first {
+            "没作为第二份答案"
+        } else {
+            "已改用线程里的文字回答"
+        }));
+    }
+}
+
+#[test]
+fn question_buttons_stale_or_human_operated_prompts_never_press_or_send() {
+    for click in [false, true] {
+        for fields in [
+            serde_json::json!({"state":"idle"}),
+            serde_json::json!({"state_started":8.}),
+            serde_json::json!({"instance":"new-instance"}),
+            serde_json::json!({"turn_started":9.}),
+            serde_json::json!({"last_human_input":9.}),
+            serde_json::json!({"last_tool":"Bash"}),
+            serde_json::json!({"questions":null}),
+        ] {
+            let mut f = Fixture::meal_questions();
+            let choices = f.memory.borrow().posted[0].choices.clone();
+            f.choose(&choices[0].options[0].value, None, 6.);
+            f.choose(&choices[1].options[0].value, None, 7.);
+            f.step(7.);
+            status_fields(
+                f.corral.agents.get_mut("paddock/dev").unwrap(),
+                fields.clone(),
+            );
+            if click {
+                f.choose(
+                    &choices[2].submit.value,
+                    Some(vec![choices[2].options[0].value.clone()]),
+                    10.,
+                );
+            }
+            f.step(10.);
+            assert!(f.corral.escapes.is_empty(), "{fields}");
+            assert!(f.corral.sent.is_empty(), "{fields}");
+            assert!(f.memory.borrow().posted[0].choices.is_empty(), "{fields}");
+        }
+    }
+}
+
+#[test]
+fn question_buttons_missing_truncated_or_other_agent_stay_text_only() {
+    for fields in [
+        serde_json::json!({"kind":"codex"}),
+        serde_json::json!({"questions":null}),
+        serde_json::json!({"state_started":null}),
+        serde_json::json!({"questions":{"items":[{"header":"不完整","question":"选？","multi_select":false,
+            "options":[{"label":"一部分","description":""}]}],"truncated":true}}),
+    ] {
+        let mut f = Fixture::new();
+        f.memory.borrow_mut().buttons = true;
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+                "state":"blocked","kind":"claude","last_tool":"AskUserQuestion"
+            }),
+        );
+        status_fields(f.corral.agents.get_mut("paddock/dev").unwrap(), fields);
+        f.step(2.);
+        f.step(4.);
+        assert!(
+            f.memory
+                .borrow()
+                .posted
+                .iter()
+                .all(|p| p.choices.is_empty())
+        );
+    }
+    let f = Fixture::question_thread();
+    assert!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .all(|p| p.choices.is_empty())
+    );
+}
+
+#[test]
+fn question_buttons_replayed_drafts_do_not_undo_newer_choices_and_updates_retry() {
+    let mut f = Fixture::meal_questions();
+    let choices = f.memory.borrow().posted[0].choices.clone();
+    f.memory.borrow_mut().update_error = Some("network");
+    f.choose(&choices[0].options[1].value, None, 10.);
+    f.step(10.);
+    f.restart();
+    f.choose(&choices[0].options[0].value, None, 9.);
+    f.step(11.);
+    f.memory.borrow_mut().update_error = None;
+    f.step(12.);
+    assert!(
+        f.memory.borrow().posted[0]
+            .text
+            .contains("1. 米饭（已选，可改）")
+    );
+    assert!(f.corral.escapes.is_empty());
+    // Unknown selections and forged identity cannot complete the form.
+    f.choose(&choices[1].options[0].value, None, 13.);
+    f.choose(
+        &choices[2].submit.value,
+        Some(vec!["not-an-option".into()]),
+        14.,
+    );
+    f.step(14.);
+    f.events
+        .emit(Event::Action(Action {
+            channel: "C1".into(),
+            message: "bot-0".into(),
+            thread: None,
+            sender: "stranger".into(),
+            value: choices[2].submit.value.clone(),
+            selected: Some(vec![choices[2].options[0].value.clone()]),
+            at: 15.,
+            own_message: true,
+        }))
+        .unwrap();
+    f.step(15.);
+    assert!(f.corral.escapes.is_empty());
+    assert!(f.corral.sent.is_empty());
 }
 
 #[test]
@@ -4201,6 +4834,37 @@ fn unverifiable_queue_backs_off_and_reconnect_restarts_ten_minute_deadline() {
             .count(),
         18
     );
+}
+
+#[test]
+fn corral_io_does_not_abort_polling_or_message_routing() {
+    for route_message in [false, true] {
+        for fail_list in [false, true] {
+            let mut f = Fixture::new();
+            f.step(2.);
+            if route_message {
+                f.message("bad", None, "dev 请继续", true);
+            }
+            for at in [10., 12.] {
+                if fail_list {
+                    f.corral.list_error = Some(failure(6, "io"));
+                } else {
+                    f.corral
+                        .status_errors
+                        .insert("paddock/dev".into(), failure(6, "io"));
+                }
+                f.step(at);
+            }
+            assert!(f.engine.log.iter().any(|line| line.ends_with("corral_io")));
+            assert!(f.engine.store.inbox().is_empty());
+            assert!(f.corral.escapes.is_empty());
+            assert!(f.corral.sent.is_empty());
+            f.corral.status_errors.clear();
+            f.message("good", None, "dev 恢复后继续", true);
+            f.step(14.);
+            assert_eq!(f.corral.sent, [("paddock/dev".into(), "恢复后继续".into())]);
+        }
+    }
 }
 
 #[test]
