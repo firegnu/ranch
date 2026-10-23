@@ -689,6 +689,8 @@ struct Fixture {
 
 const BASH_PERMISSION: &str = include_str!("fixtures/claude-bash-permission.txt");
 const BASH_COMMAND: &str = "ping -c 1 127.0.0.1";
+const BASH_TOUCH_PERMISSION: &str = include_str!("fixtures/claude-bash-touch-permission.txt");
+const BASH_TOUCH_COMMAND: &str = "touch /tmp/pony-allow-test-r47c";
 const PLAN_PERMISSION: &str = include_str!("fixtures/claude-plan-permission.txt");
 const EXIT_PLAN_PERMISSION: &str = "Exit plan mode?\n\nClaude wants to exit plan mode\n\n❯ 1. Yes, and switch to default (ask each time) for this session\n  2. No\n";
 
@@ -753,6 +755,127 @@ fn approval_notice_offers_only_once_with_confirmation_and_keeps_reject() {
             .any(|b| b.label == "拒绝" && b.confirm.is_none())
     );
     assert!(!posted.text.contains("要允许：回电脑处理"));
+}
+
+#[test]
+fn approval_bash_touch_frame_offers_and_presses_only_once() {
+    let mut f = Fixture::new();
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({"last_tool":"Bash", "last_output":1.5,
+            "command":{"text":BASH_TOUCH_COMMAND,"truncated":false}}),
+    );
+    f.corral
+        .screens
+        .insert("paddock/dev".into(), Ok(BASH_TOUCH_PERMISSION.into()));
+    let mut posted = f.button_notice();
+    assert_eq!(
+        posted.buttons.len(),
+        2,
+        "needs once-only approval and reject"
+    );
+    assert!(posted.buttons.iter().any(|b| b.label == "拒绝"));
+    posted.buttons.retain(|b| b.label == "允许这一次");
+    assert_eq!(posted.buttons.len(), 1);
+    assert_eq!(
+        posted.buttons[0].confirm.as_ref().unwrap().text,
+        "Bash\ntouch /tmp/pony-allow-test-r47c"
+    );
+    f.corral.approval_store = Some(f._dir.path().join("state.json"));
+    f.click(&posted, 10.);
+    f.click(&posted, 10.1);
+    f.step(10.);
+    assert_eq!(f.corral.approvals, [("paddock/dev".into(), 1)]);
+    assert!(f.corral.escapes.is_empty());
+}
+
+#[test]
+fn approval_bash_optional_notice_and_yes_variants_press_the_exact_yes_number() {
+    for (screen, command) in [
+        (BASH_PERMISSION, BASH_COMMAND),
+        (BASH_TOUCH_PERMISSION, BASH_TOUCH_COMMAND),
+    ] {
+        let (prefix, _) = screen.split_once("Doyouwanttoproceed?").unwrap();
+        let prefix = prefix
+            .replace("Thiscommandrequiresapproval\n", "")
+            .replacen("\n", "\nAnother tip\n不同命令的说明\n", 1);
+        for notice in ["", "This command requires approval\n"] {
+            for (menu, option) in [
+                ("❯1. Yes\n2. Yes, allow for this session\n3. No", 1),
+                (
+                    "❯1. Yes, and always allow access to /tmp from this project\n2. Yes\n3. Yes, use auto mode\n4. No",
+                    2,
+                ),
+                (
+                    "1. Yes, some future persistent choice\n❯2. Yes, and don't ask again for: touch *\n3. Yes\n4. No",
+                    3,
+                ),
+            ] {
+                let mut f = Fixture::new();
+                status_fields(
+                    f.corral.agents.get_mut("paddock/dev").unwrap(),
+                    serde_json::json!({"command":{"text":command,"truncated":false}}),
+                );
+                let screen = format!(
+                    "{prefix}{notice}Doyouwanttoproceed?\n{menu}\nEsc to cancel · Tab to amend\n"
+                );
+                let posted = f.approval_notice("Bash", &screen);
+                assert_eq!(posted.buttons[0].label, "允许这一次");
+                assert_eq!(
+                    posted.buttons[0].confirm.as_ref().unwrap().text,
+                    format!("Bash\n{command}")
+                );
+                f.click(&posted, 10.);
+                f.step(10.);
+                assert_eq!(f.corral.approvals, [("paddock/dev".into(), option)]);
+                assert!(f.corral.escapes.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn approval_bash_requires_exact_yes_final_no_and_known_structure() {
+    for (case, from, to) in [
+        ("missing yes", "❯1. Yes", "❯1. Yes, always allow"),
+        (
+            "duplicate yes",
+            "2. Yes,andalwaysallowaccessto/tmpfromthisproject",
+            "2. Yes",
+        ),
+        ("final option", "4. No", "4. Yes, always allow"),
+        (
+            "unknown option",
+            "2. Yes,andalwaysallowaccessto/tmpfromthisproject",
+            "2. Remember this choice",
+        ),
+        (
+            "yes without comma",
+            "2. Yes,andalwaysallowaccessto/tmpfromthisproject",
+            "2. Yes please",
+        ),
+        ("missing question", "Doyouwanttoproceed?\n", ""),
+        (
+            "repeated optional notice",
+            "Doyouwanttoproceed?",
+            "This command requires approval\nThis command requires approval\nDoyouwanttoproceed?",
+        ),
+    ] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"last_tool":"Bash","last_output":1.5,
+                "command":{"text":BASH_TOUCH_COMMAND,"truncated":false}}),
+        );
+        f.corral.screens.insert(
+            "paddock/dev".into(),
+            Ok(BASH_TOUCH_PERMISSION.replace(from, to)),
+        );
+        let posted = f.button_notice();
+        assert!(posted.buttons.iter().all(|b| b.confirm.is_none()), "{case}");
+        assert!(posted.text.contains("认不出框的样子，没给按钮"), "{case}");
+        assert!(f.corral.approvals.is_empty(), "{case}");
+    }
 }
 
 impl Fixture {
@@ -1052,10 +1175,11 @@ fn approval_command_with_fake_header_and_separator_is_not_offered() {
 
 #[test]
 fn approval_extra_frame_markers_anywhere_in_read_window_are_not_offered() {
-    for (tool, screen) in [
-        ("Bash", BASH_PERMISSION),
-        ("ExitPlanMode", PLAN_PERMISSION),
-        ("ExitPlanMode", EXIT_PLAN_PERMISSION),
+    for (tool, screen, command) in [
+        ("Bash", BASH_PERMISSION, BASH_COMMAND),
+        ("Bash", BASH_TOUCH_PERMISSION, BASH_TOUCH_COMMAND),
+        ("ExitPlanMode", PLAN_PERMISSION, BASH_COMMAND),
+        ("ExitPlanMode", EXIT_PLAN_PERMISSION, BASH_COMMAND),
     ] {
         for extra in [
             "Bash command",
@@ -1085,7 +1209,7 @@ fn approval_extra_frame_markers_anywhere_in_read_window_are_not_offered() {
                 status_fields(
                     f.corral.agents.get_mut("paddock/dev").unwrap(),
                     serde_json::json!({"last_tool":tool,"last_output":1.5,
-                        "command":{"text":BASH_COMMAND,"truncated":false}}),
+                        "command":{"text":command,"truncated":false}}),
                 );
                 f.corral.screens.insert("paddock/dev".into(), Ok(screen));
                 let posted = f.button_notice();

@@ -296,11 +296,7 @@ const RULES: &[Rule] = &[
         tool: "Bash",
         header: "Bashcommand",
         separators: 2,
-        fixed_lines: &[
-            "Thiscommandrequiresapproval",
-            "Doyouwanttoproceed?",
-            "Esctocancel·Tabtoamend",
-        ],
+        fixed_lines: &["Doyouwanttoproceed?", "Esctocancel·Tabtoamend"],
         safe: "Yes",
         label: "允许这一次",
     },
@@ -344,6 +340,10 @@ fn recognize(status: &Status, screen: &str) -> Option<Prompt> {
         .filter(|s| !s.is_empty())
         .collect();
     let compact_lines: Vec<_> = lines.iter().map(|line| compact(line)).collect();
+    let approval_notices = compact_lines
+        .iter()
+        .filter(|line| *line == "Thiscommandrequiresapproval")
+        .count();
     let mut headers = compact_lines
         .iter()
         .enumerate()
@@ -354,6 +354,7 @@ fn recognize(status: &Status, screen: &str) -> Option<Prompt> {
     if headers.next().is_some()
         || status.kind.as_deref() != Some("claude")
         || status.last_tool.as_deref() != Some(rule.tool)
+        || approval_notices > usize::from(rule.tool == "Bash")
         || lines.iter().filter(|line| separator(line)).count() != rule.separators
         || RULES.iter().any(|known| {
             known.fixed_lines.iter().any(|fixed| {
@@ -402,13 +403,16 @@ fn recognize(status: &Status, screen: &str) -> Option<Prompt> {
             return None;
         }
         command.clone_from(&raw.text);
-        if compact(tail.first()?) != "Thiscommandrequiresapproval"
-            || compact(tail.get(1)?) != "Doyouwanttoproceed?"
+        // The notice is optional, but any occurrence must be here, not in old output
+        // or embedded in the command. Keep counting it across the entire window.
+        let notice = usize::from(compact(tail.first()?) == "Thiscommandrequiresapproval");
+        if approval_notices != notice
+            || compact(tail.get(notice)?) != "Doyouwanttoproceed?"
             || compact(tail.last()?) != "Esctocancel·Tabtoamend"
         {
             return None;
         }
-        menu(&tail[2..tail.len() - 1], rule, "No")?
+        menu(&tail[notice + 1..tail.len() - 1], rule, "No")?
     } else {
         if compact(frame.first()?) != "HereisClaude'splan:"
             || !tail.first()?.chars().all(|c| c == '─')
@@ -460,9 +464,7 @@ fn menu(options: &[&str], rule: &Rule, cancel: &str) -> Option<u8> {
             if safe.replace((i + 1) as u8).is_some() {
                 return None;
             }
-        } else if !(rule.tool == "Bash"
-            && (label.starts_with("Yes,anddon’taskagainfor:")
-                || label == "Yes,andswitchtoautomode·automodehandlesthesepromptsforyou")
+        } else if !(rule.tool == "Bash" && label.starts_with("Yes,")
             || rule.header == "Readytocode?" && label == "Yes,anduseautomode")
         {
             return None;

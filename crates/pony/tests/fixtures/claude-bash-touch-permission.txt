@@ -1,0 +1,12 @@
+Bash command
+Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+Create test marker file in /tmp
+╌╌╌╌╌╌╌╌╌╌╌╌
+touch/tmp/pony-allow-test-r47c
+╌╌╌╌╌╌╌╌╌╌╌╌
+Doyouwanttoproceed?
+❯1. Yes
+2. Yes,andalwaysallowaccessto/tmpfromthisproject
+3. Yes,andswitchtoautomode · auto mode handles these prompts for you
+4. No
+Esc to cancel · Tab to amend

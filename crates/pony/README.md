@@ -57,6 +57,11 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   200 字，按钮「允许」「算了」。Bash 保留原始空格，超过 200 字时注明「未显示全，共 N 字；看不全请回电脑」；计划仍加「读屏会吞掉空格，看不清请回电脑」。
   识别表在 `core/engine/approvals.rs`，目前只认 Claude Code
   的 Bash command、Ready to code?（逐个批准修改）、Exit plan mode?（切回 ask each time）。
+  R47d 的 Bash 框按结构认：框头到第一条分隔线间的 Tip、命令说明不限定内容，
+  `This command requires approval` 可省略，`Do you want to proceed?` 必须有。
+  菜单须有且只有一个精确 `Yes`、末项为 `No`，其余项只须以 `Yes,` 开头；
+  只按精确 `Yes` 自己的编号，其他未知项不给按钮。可选提示只允许在命令之后出现一次，
+  整窗计数及下面的核对照旧，两种计划框不变。
   只匹配完整安全选项，不批准永远允许、会话放行、自动接受修改或跳过权限。其他家不给。
   整个 `read --bytes 4000` 窗口的已知框头、`╌` 分隔线、固定提示行次数须恰好符合一个框，
   多出框标记或残留旧框都不给批准；正文、分隔线、选项和末尾提示必须完整。Bash 还须有未截断的 `status.command`，去掉所有空白后与框内命令完全相同；旧 helper 没有字段或对不上时降级。
@@ -80,6 +85,8 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   真实样本：2026-10-23 Claude Code 2.1.309，临时目录测试 agent 的 Bash `text:1` 和带正文
   计划 `text:2` 均立即提交，后者保持 manual mode；测试 agent 已停止。
   `tests/fixtures/claude-*-permission.txt` 保留读屏框形状，替换临时目录及计划文件名、去掉末尾空行；
+  `claude-bash-touch-permission.txt` 来自 R47d 任务书的现场样本，保留测试命令和缩短的分隔线，
+  与 ping 样本一起回归；这份样本没有 approval 提示，第 2 项为持久放行 `/tmp`。
   无正文 ExitPlanMode 样本来自 `docs/调研/R42t-确认框和打断实测.md` 的 2.1.308 记录。
 - R47b：完整的 Claude Code `status.questions` 给单选按钮、多选勾选框和「提交」。
   只用结构化题目，不读屏；多选至少选一项，提交前只是草稿。各题选择显示在
