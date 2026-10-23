@@ -39,6 +39,7 @@
 ## 还没派的草稿
 
 - `docs/任务/R39-pony后续想法.md`：pony 后续各条，按档排好，各条写了什么时候再做；手机上答确认框那条已由 R46、R47a–R47d 做完。
+- `docs/任务/R49-自研agent调研.md`（未提交）：自研 coding agent（模型不自研），先调研要做哪些事、借鉴什么、怎么接 corral、怎么分期。
 - `docs/任务/R48-接入Kimi-Code.md`（未提交）：接入 coding agent Kimi Code，先摸底出调研报告；本机还没装。
 - `docs/任务/R40b-pony-setup新机器一条命令装好.md`（未提交）：新机器上 `pony setup`，要给别的机器装 pony 时再做。
 - `docs/任务/R17c-Linux上验sandbox.md`（未提交）：5090 上验 sandbox，暂缓（用户 10-19：「先不做R17c了，先把全部的在macos上跑通」）。
