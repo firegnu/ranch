@@ -8,8 +8,8 @@
 
 ## 本机安装
 
-- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/a04f7dd`（10-23，R47a + R47b，Slack 按钮；只有 `pony` 程序变了，deploy 自动 kickstart 了 pony）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/2d63ee1/bin/corral`（和 a04f7dd 的 corral 相同）。退回：`~/.local/share/ranch/versions/a04f7dd/bin/ranch deploy b32b15a`（会自动重启 pony；旧版收到按钮点击只回执、不处理）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
-- 上一版 `b32b15a`（10-23，R46）。再往前退回用 `versions/a04f7dd/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`（R43 钩子只多记一个字段，旧程序读得懂，一般不用退）。
+- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/dd4d661`（10-23，R47c + R47d，Slack「允许这一次」按钮，真机实测过）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/dd02e36/bin/corral`（和 dd4d661 的 corral 相同；R47c 改了钩子，记 Bash 权限框的原始命令，10-23 已切）。退回：`~/.local/share/ranch/versions/dd4d661/bin/ranch deploy dd02e36`（会自动重启 pony）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
+- 上一版 `dd02e36`（10-23，R47c）、再上一版 `a04f7dd`（R47a + R47b）。再往前退回用 `versions/dd4d661/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；helper 退到 R47c（`dd02e36`）之前时，pony 拿不到原始命令，只是不给 Bash 的「允许」按钮，一般不用退 helper；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`。
 - 旧版本目录都保留，不删。
 - 技能：corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）装在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/`；技能内容编进程序，改技能要先打新版本再重装。
 - 全局插件：amp 在 `~/.config/amp/plugins/corral.ts`；agy 在 `~/.gemini/config/plugins/corral/`。两个 `integration status` 都是 same。
@@ -38,7 +38,7 @@
 
 ## 还没派的草稿
 
-- `docs/任务/R39-pony后续想法.md`：pony 后续各条，按档排好，各条写了什么时候再做；手机上答确认框那条已拆成 R46、R47a–R47c。
+- `docs/任务/R39-pony后续想法.md`：pony 后续各条，按档排好，各条写了什么时候再做；手机上答确认框那条已由 R46、R47a–R47d 做完。
 - `docs/任务/R48-接入Kimi-Code.md`（未提交）：接入 coding agent Kimi Code，先摸底出调研报告；本机还没装。
 - `docs/任务/R40b-pony-setup新机器一条命令装好.md`（未提交）：新机器上 `pony setup`，要给别的机器装 pony 时再做。
 - `docs/任务/R17c-Linux上验sandbox.md`（未提交）：5090 上验 sandbox，暂缓（用户 10-19：「先不做R17c了，先把全部的在macos上跑通」）。
