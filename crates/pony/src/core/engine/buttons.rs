@@ -218,15 +218,28 @@ impl Engine {
             None
         };
         if let Some(reason) = reason {
+            let reason = if approval {
+                reason.replace(" Esc", "")
+            } else {
+                reason.into()
+            };
             if approval && !button.used && button.outcome.is_none() {
-                return self.finish_button(i, &reason.replace(" Esc", ""), false, at);
+                return self.finish_button(i, &reason, false, at);
             }
-            return self.say(address, &refusal(&button, reason), false);
+            return self.say(address, &refusal(&button, &reason), false);
         }
         let Some(content) = &button.content else {
             self.state.buttons[i].finish_update();
             self.save()?;
-            return self.say(address, "这个按钮已过期，没按 Esc", false);
+            return self.say(
+                address,
+                if approval {
+                    "这个按钮已过期，没按"
+                } else {
+                    "这个按钮已过期，没按 Esc"
+                },
+                false,
+            );
         };
         if approval {
             return self.approval_action(i, action, corral, at);

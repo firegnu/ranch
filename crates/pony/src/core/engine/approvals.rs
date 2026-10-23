@@ -216,7 +216,7 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
             confirm: Some(Confirmation {
                 title: format!("允许 {} 这一次？", status.name),
                 text: format!(
-                    "{}\n{}",
+                    "{}\n{}\n读屏会吞掉空格，看不清请回电脑",
                     status.last_tool.as_deref().unwrap_or_default(),
                     prompt.command.chars().take(200).collect::<String>()
                 ),
@@ -243,11 +243,13 @@ fn contains_frame(screen: &str, original: &str) -> bool {
     compact(screen).contains(&compact(&lines[start..].join("\n")))
 }
 
-// corral read is a text stream, not a screen. Match the last complete known frame;
+// corral read is a text stream, not a screen. Require exactly one complete frame;
 // never infer a safe option from a partial "Yes" or the currently selected row.
 struct Rule {
     tool: &'static str,
     header: &'static str,
+    separators: usize,
+    fixed_lines: &'static [&'static str],
     safe: &'static str,
     label: &'static str,
 }
@@ -258,18 +260,32 @@ const RULES: &[Rule] = &[
     Rule {
         tool: "Bash",
         header: "Bashcommand",
+        separators: 2,
+        fixed_lines: &[
+            "Thiscommandrequiresapproval",
+            "Doyouwanttoproceed?",
+            "Esctocancel·Tabtoamend",
+        ],
         safe: "Yes",
         label: "允许这一次",
     },
     Rule {
         tool: "ExitPlanMode",
         header: "Readytocode?",
+        separators: 2,
+        fixed_lines: &[
+            "HereisClaude'splan:",
+            "Claudehaswrittenupaplanandisreadytoexecute.Wouldyouliketoproceed?",
+            "shift+tabtoapprovewiththisfeedback",
+        ],
         safe: "Yes,manuallyapproveedits",
         label: "批准，之后的修改仍逐个问",
     },
     Rule {
         tool: "ExitPlanMode",
         header: "Exitplanmode?",
+        separators: 0,
+        fixed_lines: &["Claudewantstoexitplanmode"],
         safe: "Yes,andswitchtodefault(askeachtime)forthissession",
         label: "批准，之后的修改仍逐个问",
     },
@@ -282,19 +298,40 @@ struct Prompt {
     label: &'static str,
 }
 
+fn separator(line: &str) -> bool {
+    line.chars().count() >= 3 && line.chars().all(|c| c == '╌')
+}
+
 fn recognize(status: &Status, screen: &str) -> Option<Prompt> {
     let lines: Vec<_> = screen
         .lines()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
-    let (start, rule) = lines.iter().enumerate().rev().find_map(|(i, s)| {
-        RULES
+    let compact_lines: Vec<_> = lines.iter().map(|line| compact(line)).collect();
+    let mut headers = compact_lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| RULES.iter().find(|r| s == r.header).map(|r| (i, r)));
+    let (start, rule) = headers.next()?;
+    // Count across the entire window: embedded headers must not hide command text,
+    // and old frame remnants also make the current frame ambiguous.
+    if headers.next().is_some()
+        || status.kind.as_deref() != Some("claude")
+        || status.last_tool.as_deref() != Some(rule.tool)
+        || lines.iter().filter(|line| separator(line)).count() != rule.separators
+        || RULES.iter().any(|known| {
+            known.fixed_lines.iter().any(|fixed| {
+                compact_lines.iter().filter(|line| line == fixed).count()
+                    != usize::from(known.header == rule.header)
+            })
+        })
+        || compact_lines
             .iter()
-            .find(|r| compact(s) == r.header)
-            .map(|r| (i, r))
-    })?;
-    if status.kind.as_deref() != Some("claude") || status.last_tool.as_deref() != Some(rule.tool) {
+            .filter(|line| line.starts_with("ctrl+gtoeditin"))
+            .count()
+            != usize::from(rule.header == "Readytocode?")
+    {
         return None;
     }
     let frame = &lines[start + 1..];
@@ -312,7 +349,7 @@ fn recognize(status: &Status, screen: &str) -> Option<Prompt> {
     let separators: Vec<_> = frame
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.chars().count() >= 3 && s.chars().all(|c| c == '╌'))
+        .filter(|(_, s)| separator(s))
         .map(|(i, _)| i)
         .collect();
     if separators.len() != 2 || separators[1] <= separators[0] + 1 {
