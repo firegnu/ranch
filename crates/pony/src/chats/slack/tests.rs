@@ -383,6 +383,7 @@ fn sends_markdown_threads_safe_mentions_and_retries_same_body_after_429() {
         markdown,
         notify: true,
         buttons: &[],
+        choices: &[],
     };
     assert_eq!(connection.send(outgoing()).unwrap(), "2.001");
     assert_eq!(connection.send(outgoing()).unwrap(), "3.001");
@@ -438,6 +439,7 @@ fn sends_buttons_and_updates_the_message_without_buttons() {
             markdown: "等你",
             notify: true,
             buttons: &buttons,
+            choices: &[],
         })
         .unwrap();
     let (method, body) = rx.recv().unwrap();
@@ -457,6 +459,7 @@ fn sends_buttons_and_updates_the_message_without_buttons() {
             markdown: "等你\n已按：拒绝（10:42）",
             notify: true,
             buttons: &[],
+            choices: &[],
         },
     )
     .unwrap();
@@ -489,10 +492,104 @@ fn update_preserves_permanent_message_error_codes() {
                     markdown: "已按",
                     notify: false,
                     buttons: &[],
+                    choices: &[],
                 },
             )
             .unwrap_err();
         assert_eq!(error.code, code);
+    }
+}
+
+#[test]
+fn question_choices_render_buttons_checkboxes_and_current_selection() {
+    use crate::chats::{Button, ButtonStyle, Choice};
+    let (tx, rx) = mpsc::channel();
+    let http = Http::new(move |r| {
+        tx.send(r.body).unwrap();
+        json!({"ok":true,"ts":"123.001"}).into()
+    });
+    let option = |value: &str, label: &str| Button {
+        value: value.into(),
+        label: label.into(),
+        style: ButtonStyle::Default,
+        confirm: None,
+    };
+    let mut choice = Choice {
+        label: "1. 主食".into(),
+        value: "choice-one".into(),
+        options: vec![option("noodles", "A 面条"), option("rice", "B 米饭")],
+        multi_select: false,
+        selected: vec!["rice".into()],
+        submit: option("submit-one", "提交"),
+    };
+    let single = choice.clone();
+    choice.multi_select = true;
+    choice.value = "choice-two".into();
+    choice.label = "2. 配菜".into();
+    choice.submit.value = "submit-two".into();
+    choice.options[0].label = "长".repeat(100);
+    let mut c = http_connection(&http);
+    c.send(Outgoing {
+        channel: "C1",
+        thread: None,
+        markdown: "题目和完整选项",
+        notify: false,
+        buttons: &[],
+        choices: &[single, choice],
+    })
+    .unwrap();
+    let body = rx.recv().unwrap();
+    assert_eq!(body["blocks"][2]["elements"][1]["style"], "primary");
+    let checks = &body["blocks"][4]["elements"][0];
+    assert_eq!(checks["type"], "checkboxes");
+    assert_eq!(checks["action_id"], "choice-two");
+    assert_eq!(checks["initial_options"][0]["value"], "rice");
+    assert!(
+        checks["options"][0]["text"]["text"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count()
+            <= 75
+    );
+    assert_eq!(body["blocks"][4]["elements"][1]["value"], "submit-two");
+}
+
+#[test]
+fn question_checkbox_changes_and_submit_snapshot_are_durable_actions() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let options = options(store.events("slack", "UOWNER"));
+    let session = Session {
+        user: "UBOT".into(),
+        bot_id: "BBOT".into(),
+        ..Session::default()
+    };
+    for action in [
+        json!({"type":"checkboxes","action_id":"checks","selected_options":[{"value":"chicken"}],"action_ts":"125.001"}),
+        json!({"type":"checkboxes","action_id":"checks","selected_options":[],"action_ts":"125.002"}),
+        json!({"type":"button","block_id":"sides","action_id":"submit","value":"submit","action_ts":"125.003"}),
+    ] {
+        emit_received(&json!({"type":"interactive","payload":{"type":"block_actions",
+            "user":{"id":"UOWNER"},"channel":{"id":"C1"},
+            "container":{"type":"message","channel_id":"C1","message_ts":"123.001"},
+            "message":{"ts":"123.001","user":"UBOT","bot_id":"BBOT"},
+            "state":{"values":{"sides":{"checks":{"type":"checkboxes","selected_options":[{"value":"chicken"},{"value":"salad"}]}}}},
+            "actions":[action]}}), &options, &session).unwrap();
+    }
+    let inbox = Store::open(dir.path()).unwrap().inbox();
+    assert_eq!(inbox.len(), 3);
+    for (received, (value, selected)) in inbox.iter().zip([
+        ("checks", vec!["chicken".to_owned()]),
+        ("checks", vec![]),
+        ("submit", vec!["chicken".into(), "salad".into()]),
+    ]) {
+        let Event::Action(a) = &received.event else {
+            panic!("expected action");
+        };
+        assert_eq!(a.value, value);
+        assert_eq!(a.selected, Some(selected));
+        assert!(a.own_message);
     }
 }
 
@@ -711,6 +808,7 @@ fn socket_receives_and_acks_while_send_waits_for_rate_limit() {
             markdown: "hi",
             notify: false,
             buttons: &[],
+            choices: &[],
         })
         .unwrap(),
         "456.001"
@@ -1055,6 +1153,7 @@ fn size_errors_request_resize_and_membership_errors_are_remembered() {
                 markdown: "body",
                 notify: false,
                 buttons: &[],
+                choices: &[],
             })
             .unwrap_err();
         assert_eq!(e.code, code);
@@ -1133,6 +1232,7 @@ fn oversized_markdown_blocks_request_resize() {
             markdown: "<>&",
             notify: false,
             buttons: &[],
+            choices: &[],
         })
         .unwrap_err();
     assert_eq!(e.code, "invalid_blocks");
@@ -1327,6 +1427,7 @@ fn send_retries_only_unsent_requests_and_close_interrupts_backoff() {
             markdown: "send once",
             notify: false,
             buttons: &[],
+            choices: &[],
         })
         .unwrap(),
         "123.001"
@@ -1374,6 +1475,7 @@ fn send_retries_only_unsent_requests_and_close_interrupts_backoff() {
             markdown: "do not repeat",
             notify: false,
             buttons: &[],
+            choices: &[],
         })
         .unwrap_err();
     assert_eq!(e.code, "network");

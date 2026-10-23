@@ -25,6 +25,9 @@ pub struct Action {
     pub thread: Option<String>,
     pub sender: String,
     pub value: String,
+    /// Full selection for a checkbox change or its submit; None for other buttons.
+    #[serde(default)]
+    pub selected: Option<Vec<String>>,
     pub at: f64,
     /// Checked by the adapter against the authenticated bot identity.
     pub own_message: bool,
@@ -107,12 +110,23 @@ pub struct Button {
     pub confirm: Option<Confirmation>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Choice {
+    pub label: String,
+    pub value: String,
+    pub options: Vec<Button>,
+    pub multi_select: bool,
+    pub selected: Vec<String>,
+    pub submit: Button,
+}
+
 pub struct Outgoing<'a> {
     pub channel: &'a str,
     pub thread: Option<&'a str>,
     pub markdown: &'a str,
     pub notify: bool,
     pub buttons: &'a [Button],
+    pub choices: &'a [Choice],
 }
 
 #[derive(Debug)]

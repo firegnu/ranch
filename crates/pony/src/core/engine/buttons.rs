@@ -3,6 +3,7 @@ use crate::chats::{Action, Button, ButtonStyle};
 use std::io::Read;
 
 pub(super) struct ButtonOffer {
+    pub form: Option<super::super::state::QuestionForm>,
     pub button: Button,
     pub status: Status,
     pub screen: Option<String>,
@@ -118,6 +119,7 @@ impl Engine {
             .and_then(|mut file| file.read_exact(&mut bytes))
             .map_err(|_| Error::new("random_unavailable", "不能生成按钮记号"))?;
         Ok(Some(ButtonOffer {
+            form: None,
             button: Button {
                 value: bytes.iter().map(|b| format!("{b:02x}")).collect(),
                 label: label.into(),
@@ -141,7 +143,7 @@ impl Engine {
             .state
             .buttons
             .iter()
-            .position(|b| b.address.kind == kind && b.value() == action.value)
+            .position(|b| b.address.kind == kind && b.matches(&action.value))
         else {
             if action.own_message
                 && self.configs.iter().any(|c| {
@@ -211,6 +213,9 @@ impl Engine {
         {
             return self.finish_button(i, &reason, false, at);
         }
+        if content.form.is_some() {
+            return self.question_action(i, action, corral, at);
+        }
         if content.status.state == "blocked" {
             let screen = match corral.read(&status.name) {
                 Ok(screen) => screen,
@@ -248,18 +253,25 @@ impl Engine {
         self.finish_button(i, &text, true, at)
     }
 
-    fn finish_button(&mut self, i: usize, text: &str, used: bool, at: f64) -> Result<()> {
+    pub(super) fn finish_button(
+        &mut self,
+        i: usize,
+        text: &str,
+        used: bool,
+        at: f64,
+    ) -> Result<()> {
         self.state.buttons[i].outcome = Some(text.into());
         self.state.buttons[i].used = used;
         self.save()?;
         self.update_button(i, at)
     }
 
-    fn update_button(&mut self, i: usize, at: f64) -> Result<()> {
+    pub(super) fn update_button(&mut self, i: usize, at: f64) -> Result<()> {
         let b = &self.state.buttons[i];
-        let Some(outcome) = &b.outcome else {
+        let active_form = b.content.as_ref().and_then(|c| c.form.as_ref());
+        if b.outcome.is_none() && !active_form.is_some_and(|f| f.dirty) {
             return Ok(());
-        };
+        }
         if b.updated || !self.connected.contains(&b.address.kind) {
             return Ok(());
         }
@@ -273,7 +285,15 @@ impl Engine {
             self.state.buttons[i].finish_update();
             return self.save();
         };
-        let text = format!("{}\n{outcome}", content.text);
+        let text = match &b.outcome {
+            Some(outcome) => format!("{}\n{outcome}", content.text),
+            None => format!("{}\n{}", content.text, questions::progress(content)),
+        };
+        let choices = if b.outcome.is_none() {
+            active_form.map_or(&[][..], |f| f.choices.as_slice())
+        } else {
+            &[]
+        };
         let result = self
             .connections
             .get_mut(&b.address.kind)
@@ -286,10 +306,19 @@ impl Engine {
                     markdown: &text,
                     notify: content.notify,
                     buttons: &[],
+                    choices,
                 },
             );
         match result {
-            Ok(()) => self.state.buttons[i].updated = true,
+            Ok(()) => {
+                let b = &mut self.state.buttons[i];
+                b.update_retry = None;
+                if b.outcome.is_some() {
+                    b.updated = true;
+                } else if let Some(form) = b.content.as_mut().and_then(|c| c.form.as_mut()) {
+                    form.dirty = false;
+                }
+            }
             Err(error) => {
                 if matches!(
                     error.code.as_str(),
@@ -300,6 +329,9 @@ impl Engine {
                         | "cant_update_message"
                 ) {
                     self.state.buttons[i].updated = true;
+                    if self.state.buttons[i].outcome.is_none() {
+                        self.state.buttons[i].outcome = Some("消息无法更新，选项已失效".into());
+                    }
                 } else {
                     let retry = &mut self.state.buttons[i].update_retry;
                     let delay = retry.as_ref().map_or(2., |r| (r.delay * 2.).min(300.));
@@ -312,7 +344,7 @@ impl Engine {
                 self.record_adapter_error("button_update_failed", &error);
             }
         }
-        if self.state.buttons[i].updated {
+        if self.state.buttons[i].updated && self.state.buttons[i].outcome.is_some() {
             self.state.buttons[i].finish_update();
         }
         self.save()
@@ -335,7 +367,9 @@ pub(super) fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static 
     } else if old.state == "blocked"
         && (status.state != "blocked"
             || status.state_started != old.state_started
-            || status.last_tool != old.last_tool)
+            || status.last_tool != old.last_tool
+            || (button.content.as_ref()?.form.is_some()
+                && (status.kind != old.kind || status.questions != old.questions)))
     {
         Some("框没了或换了一个框")
     } else if !matches!(status.state.as_str(), "working" | "blocked") {
