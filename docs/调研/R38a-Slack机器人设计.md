@@ -28,7 +28,7 @@
 
 1. **主控新回复和提醒**：每一轮都发到 Slack。提醒（主控新回复、Needs you）和每一轮回复的第一段，照原设计 @ 用户。pony 不判断用户在不在电脑前；手机吵不吵，靠 Slack 自己的通知设置（频道静音、只收 @、电脑上不活跃时才推到手机等）。用户原话：「先这么定，如果以后嫌吵，咱们再改。」R38f 上线实测时，核对 Slack 有没有「电脑上不活跃时才推到手机」这类设置。
 2. **后台怎么常驻**（问题 1）：A，launchd 用户服务。
-3. **Needs you 时手机上能做到哪一步**（问题 4）：10-21 选 A，只发提醒、回答排着。10-22 经 R42 实测和 R43、R44，R45 改成只按 Esc：「停」打断或拒绝，Claude Code 提问提醒线程一回答就关框、等空闲后送；不批准任何框，仍无按钮。详见 §3.5、§3.8。
+3. **Needs you 时手机上能做到哪一步**（问题 4）：10-21 选 A，只发提醒、回答排着。10-22 经 R42 实测和 R43、R44，R45 改成只按 Esc：「停」打断或拒绝，Claude Code 提问提醒线程一回答就关框、等空闲后送；不批准任何框。R47a 加「打断」「拒绝」按钮，仍只按 Esc，见 DESIGN §10「按钮」。详见 §3.5、§3.8。
 4. **Slack 用哪个 Rust 库**（问题 2）：A，自己用 ureq + tungstenite 接。
 5. **agent 忙时又来了话**（问题 3）：A，排队；删掉还在排队的那条 Slack 消息就是撤回。
 6. **名字**：照推荐，就叫 pony。
@@ -178,6 +178,15 @@ channels = [
 
 **连法**：Socket Mode，pony 往外连 wss，本机不需要公网地址（已定）。
 
+R47a：开启交互，Socket Mode 同时收 `interactive` 信封中的 `block_actions`。
+先把共用点击事件落盘再按 `envelope_id` 回执（3 秒内），核心再核对 owner、
+消息来源、随机记号和 agent 状态。`chat.postMessage` 的 actions 块放按钮，
+`chat.update` 更新原消息去掉按钮；都只要已有的 `chat:write`，不增加权限。
+Needs you 给「拒绝」，`?` 后的本频道具名消息、pony 送话后的这一轮给「打断」；
+agy 不给。按法与「停」相同，不弹确认框，不批准任何内容。
+blocked 时读不到屏幕就不给按钮；working 时发的「打断」到同轮 blocked 时照「停」拒绝，
+不比屏幕。上线时实测 Claude Code、Codex 权限框的屏幕比对；omp 若过不了，实测后再定是否禁用。
+
 1. 用 app 级 token（`xapp-`，权限 `connections:write`）调 `apps.connections.open`，token 放在 `Authorization` 头里，拿到临时的 wss 地址。
 2. 连上后先收到 `hello`，里面有 `num_connections`。大于 1 就说明还有别的连接（另一台机器，或一份没退干净的 pony）。Slack 会把每条事件交给任意一条连接，所以 status 报 `other_connections`，paddock 显示成警告。
 3. 每个事件信封都要按 `envelope_id` 回执，否则 Slack 会重发。Events API 要求 3 秒内答复，重发最多 3 次。pony 先把这条消息记进状态文件再回执（几毫秒），重启也不丢；按消息的 `ts` 去重。别人的消息不记，直接回执、丢掉。
@@ -226,7 +235,7 @@ settings:
   event_subscriptions:
     bot_events: [message.channels, message.groups]
   interactivity:
-    is_enabled: false
+    is_enabled: true
   org_deploy_enabled: false
   socket_mode_enabled: true
   token_rotation_enabled: false
@@ -575,7 +584,7 @@ Slack 官方没有 Rust SDK。候选：
 ## 10. 第一期不做的
 
 - 在聊天里开、停 agent（第二期）。
-- 私聊机器人、斜杠命令、按钮。
+- 私聊机器人、斜杠命令、「允许」和提问选项按钮（R47a 已加「打断」「拒绝」）。
 - 附件、图片。
 - 内容过滤（已定）。
 - 多个用户（已定）。

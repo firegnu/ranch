@@ -2,8 +2,8 @@ use super::{
     Error, Result,
     config::{ChatConfig, ConfigFile, name_segment},
     state::{
-        Address, Backfill, Cursor, Expired, Interrupt, Pending, Phase, QuestionContext, Seen,
-        State, Store, Thread, Verification, Watch,
+        Address, Backfill, ButtonContent, ButtonMessage, Cursor, Expired, Interrupt, Pending,
+        Phase, QuestionContext, Seen, State, Store, Thread, Verification, Watch,
     },
 };
 use crate::{
@@ -11,6 +11,9 @@ use crate::{
     corral::{self, Agent, Corral, Questions, Status},
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+mod buttons;
+use buttons::ButtonOffer;
 
 pub struct Engine {
     pub state: State,
@@ -100,11 +103,25 @@ impl Engine {
         }
     }
     fn post(&mut self, address: &Address, text: &str, notify: bool, top: bool) -> Result<String> {
+        self.post_with_button(address, text, notify, top, None)
+    }
+    fn post_with_button(
+        &mut self,
+        address: &Address,
+        text: &str,
+        notify: bool,
+        top: bool,
+        offer: Option<ButtonOffer>,
+    ) -> Result<String> {
         let connection = self
             .connections
             .get_mut(&address.kind)
             .ok_or_else(|| Error::new("disconnected", "adapter is not connected"))?;
-        let limit = connection.limits().characters;
+        // Updating this same message must leave room for the result or expiry reason.
+        let limit = connection
+            .limits()
+            .characters
+            .saturating_sub(if offer.is_some() { 128 } else { 0 });
         let prefixed;
         let text = if !connection.limits().threads
             && let Some(t) = self.state.threads.iter().find(|t| t.address == *address)
@@ -122,6 +139,10 @@ impl Engine {
             .map(|(i, p)| (p, i, total, limit))
             .collect();
         let mut first = None;
+        let buttons = offer
+            .as_ref()
+            .map(|o| vec![o.button.clone()])
+            .unwrap_or_default();
         while let Some((part, i, total, limit)) = work.pop_front() {
             let rendered = part.render(i, total);
             let thread = if !connection.limits().threads {
@@ -136,8 +157,35 @@ impl Engine {
                 thread,
                 markdown: &rendered,
                 notify: notify && first.is_none(),
+                buttons: if first.is_none() { &buttons } else { &[] },
             }) {
                 Ok(id) => {
+                    if first.is_none()
+                        && let Some(offer) = &offer
+                    {
+                        let mut reply_to = address.clone();
+                        if top {
+                            reply_to.thread = id.clone();
+                        }
+                        self.state.buttons.push(ButtonMessage {
+                            address: reply_to,
+                            message: id.clone(),
+                            value: offer.button.value.clone(),
+                            content: Some(ButtonContent {
+                                text: rendered,
+                                notify,
+                                button: offer.button.clone(),
+                                status: offer.status.clone(),
+                                screen: offer.screen.clone(),
+                            }),
+                            created: offer.at,
+                            outcome: None,
+                            used: false,
+                            updated: false,
+                            update_retry: None,
+                        });
+                        self.store.save(&self.state, None)?;
+                    }
                     first.get_or_insert(id);
                 }
                 Err(e) if e.resize && limit > 1000 && rendered.chars().count() > 1000 => {
@@ -160,6 +208,7 @@ impl Engine {
                         thread,
                         markdown: &explanation,
                         notify: notify && first.is_none(),
+                        buttons: &[],
                     }) {
                         Ok(id) => {
                             first.get_or_insert(id);
@@ -355,9 +404,21 @@ impl Engine {
             return Ok(());
         }
         if matches!(text.trim_end(), "?" | "？") {
-            let summary = self.summary(kind, &binding.repo, &agents, corral, at)?;
+            let (mut summary, controls) = self.summary(kind, &binding.repo, &agents, corral, at)?;
+            let buttons = self
+                .connections
+                .get(kind)
+                .is_some_and(|c| c.limits().buttons);
+            if !buttons && !controls.is_empty() {
+                summary.push_str("\n要打断本频道的 agent：@pony 停 <名字>，会话留着，只停这一轮。");
+            }
             self.save()?;
             self.post(&address, &summary, false, false)?;
+            if buttons {
+                for status in controls {
+                    self.interrupt_notice(&address, &status, corral, at, true)?;
+                }
+            }
             return Ok(());
         }
         let (name, mut body) = if let Some(thread) = &known {
@@ -566,6 +627,7 @@ impl Engine {
             }
         );
         self.state.pending.push(Pending {
+            interrupt_offered: false,
             announcement: Some(announcement.clone()),
             attachments: m.attachments,
             rejection_reported: false,
@@ -654,10 +716,29 @@ impl Engine {
             used: at,
             question: known.as_ref().and_then(|t| t.question.clone()),
         });
-        let reason = if known
-            .as_ref()
-            .is_some_and(|t| !t.instance.is_empty() && t.instance != status.instance)
-        {
+        let reason = self.stop_reason(
+            &status,
+            known.as_ref().map(|t| t.instance.as_str()),
+            message.at,
+            at,
+        );
+        self.save()?;
+        if let Some(reason) = reason {
+            self.say(address, reason, false)
+        } else {
+            self.start_interrupt(address, &status, corral, at, false)
+                .map(|_| ())
+        }
+    }
+
+    fn stop_reason(
+        &self,
+        status: &Status,
+        instance: Option<&str>,
+        sent: f64,
+        at: f64,
+    ) -> Option<&'static str> {
+        if instance.is_some_and(|i| !i.is_empty() && i != status.instance) {
             Some("它重开过，没按 Esc")
         } else if status.kind.as_deref() == Some("agy") {
             Some("agy 被打断后 corral 认不出，打断不了，没按；请回电脑")
@@ -669,21 +750,14 @@ impl Engine {
             Some("启动中，没按 Esc")
         } else if !matches!(status.state.as_str(), "working" | "blocked") {
             Some("读不出 agent 当前是否在干活，没按 Esc")
-        } else if status.turn_started.is_some_and(|t| t > message.at) {
+        } else if status.turn_started.is_some_and(|t| t > sent) {
             Some("它已经开了新的一轮，没按 Esc")
-        } else if human_active(&status, at) {
+        } else if human_active(status, at) {
             Some("你刚在电脑上操作过，没按 Esc")
-        } else if self.state.interrupts.iter().any(|i| i.agent == name) {
+        } else if self.state.interrupts.iter().any(|i| i.agent == status.name) {
             Some("已经按过 Esc，正在等它停下，没再按")
         } else {
             None
-        };
-        self.save()?;
-        if let Some(reason) = reason {
-            self.say(address, reason, false)
-        } else {
-            self.start_interrupt(address, &status, corral, at, false)
-                .map(|_| ())
         }
     }
 
@@ -714,9 +788,38 @@ impl Engine {
             started: at,
             poll_at: at + 1.,
         });
+        let buttons: Vec<_> = self
+            .state
+            .buttons
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| {
+                (b.outcome.is_none()
+                    && b.content.as_ref().is_some_and(|c| {
+                        c.status.name == status.name && c.status.instance == status.instance
+                    })
+                    && buttons::stale(b, status).is_none())
+                .then_some(i)
+            })
+            .collect();
+        for &i in &buttons {
+            self.state.buttons[i].outcome = Some("已接收，Esc 是否送达待确认；没重按".into());
+        }
         // Persist before keys: a crash can lose a key, but must never repeat it.
         self.save()?;
-        if let Err(error) = corral.escape(&status.name, status.kind.as_deref() == Some("amp")) {
+        let result = corral.escape(&status.name, status.kind.as_deref() == Some("amp"));
+        for i in buttons {
+            self.state.buttons[i].outcome = Some(
+                if result.is_ok() {
+                    "已在线程里按了 Esc"
+                } else {
+                    "Esc 发送失败或结果不明，没重按"
+                }
+                .into(),
+            );
+        }
+        self.save()?;
+        if let Err(error) = result {
             self.log.push(format!("corral {}", safe_code(&error.code)));
             self.say(
                 address,
@@ -1033,7 +1136,7 @@ impl Engine {
         agents: &[Agent],
         corral: &mut dyn Corral,
         at: f64,
-    ) -> Result<String> {
+    ) -> Result<(String, Vec<Status>)> {
         let config = self
             .configs
             .iter()
@@ -1042,6 +1145,7 @@ impl Engine {
         let mut channels = config.channels.clone();
         channels.sort_by_key(|c| c.repo != local);
         let mut lines = Vec::new();
+        let mut controls = Vec::new();
         for channel in channels {
             let display = self
                 .channels
@@ -1055,6 +1159,14 @@ impl Engine {
                     .is_some_and(|(r, _)| r == channel.repo)
             }) {
                 let status = corral.status(&agent.name);
+                if channel.repo == local
+                    && let Ok(s) = &status
+                    && !s.paused
+                    && s.kind.as_deref() != Some("agy")
+                    && matches!(s.state.as_str(), "working" | "blocked")
+                {
+                    controls.push(s.clone());
+                }
                 if let Some(line) =
                     self.agent_summary(&agent.name, status, channel.repo == local, corral, at)
                 {
@@ -1062,7 +1174,7 @@ impl Engine {
                 }
             }
         }
-        Ok(lines.join("\n"))
+        Ok((lines.join("\n"), controls))
     }
     pub fn step(&mut self, corral: &mut dyn Corral, at: f64) -> Result<()> {
         if let Some(previous) = self.last_step.replace(at)
@@ -1097,6 +1209,20 @@ impl Engine {
                     b.address.kind == s.kind && b.address.channel == s.channel && s.at > b.after.at
                 })
         });
+        // Also expire unfinished button updates while every adapter is offline.
+        self.state
+            .buttons
+            .retain(|b| at - b.created <= 30. * 86400.);
+        for button in &mut self.state.buttons {
+            if button.updated
+                || button
+                    .update_retry
+                    .as_ref()
+                    .is_some_and(|r| at - r.started >= 86400.)
+            {
+                button.finish_update();
+            }
+        }
         self.state.expired.retain(|e| at - e.at <= 90. * 86400.);
         self.state.cursors.retain(|c| {
             if c.address.thread.is_empty() {
@@ -1157,13 +1283,16 @@ impl Engine {
         }
         let mut backfilled = BTreeSet::new();
         for input in self.store.inbox() {
-            if matches!(input.event, Event::Message(_) | Event::Deleted { .. })
-                && !self.connected.contains(&input.kind)
+            if matches!(
+                input.event,
+                Event::Message(_) | Event::Action(_) | Event::Deleted { .. }
+            ) && !self.connected.contains(&input.kind)
             {
                 continue;
             }
             match input.event {
                 Event::Message(m) => self.message(&input.kind, m, corral, at, false)?,
+                Event::Action(action) => self.button_action(&input.kind, action, corral, at)?,
                 Event::Ignored => self.log.push("忽略了一条别人的消息".into()),
                 Event::Connection(info) => {
                     let connected = info.connection == "connected";
@@ -1246,6 +1375,7 @@ impl Engine {
             }
         }
         self.verify_queue(at)?;
+        self.refresh_buttons(corral, at)?;
         self.poll_interrupts(corral, at)?;
         for i in 0..self.state.pending.len() {
             let pending = self.state.pending[i].clone();
@@ -1354,6 +1484,24 @@ impl Engine {
                     && p.phase == Phase::Waiting
                     && status.turn_started != p.baseline
             });
+            if status.state == "working"
+                && !status.paused
+                && status.kind.as_deref() != Some("agy")
+                && let Some(i) = waiting
+                && !self.state.pending[i].interrupt_offered
+                && !self
+                    .state
+                    .interrupts
+                    .iter()
+                    .any(|action| action.agent == agent.name)
+            {
+                self.state.pending[i].interrupt_offered = true;
+                let address = self.state.pending[i].address.clone();
+                self.save()?;
+                if let Err(error) = self.interrupt_notice(&address, &status, corral, at, false) {
+                    self.record_error("delivery_failed", error)?;
+                }
+            }
             let mut response = None;
             let mut notices = Vec::new();
             if stable
@@ -1450,7 +1598,7 @@ impl Engine {
                 self.say(&address, &text, true)?;
             }
             for (text, question) in notices {
-                self.notice(&agent.name, &status.instance, &text, question, at)?;
+                self.notice(&status, &text, question, corral, at)?;
             }
         }
         let mut i = 0;
@@ -1630,12 +1778,13 @@ impl Engine {
     }
     fn notice(
         &mut self,
-        name: &str,
-        instance: &str,
+        status: &Status,
         text: &str,
         question: Option<QuestionContext>,
+        corral: &mut dyn Corral,
         at: f64,
     ) -> Result<()> {
+        let name = &status.name;
         let repo = name.split_once('/').expect("bound agent").0;
         let addresses: Vec<_> = self
             .configs
@@ -1653,7 +1802,12 @@ impl Engine {
             })
             .collect();
         for mut address in addresses {
-            address.thread = match self.post(&address, text, true, true) {
+            let offer = if status.state == "blocked" {
+                self.button_offer(&address, status, "拒绝", corral, at)?
+            } else {
+                None
+            };
+            address.thread = match self.post_with_button(&address, text, true, true, offer) {
                 Ok(id) => id,
                 Err(error) => {
                     self.record_error("delivery_failed", error)?;
@@ -1663,7 +1817,7 @@ impl Engine {
             self.state.threads.push(Thread {
                 address,
                 agent: name.into(),
-                instance: instance.into(),
+                instance: status.instance.clone(),
                 created: at,
                 used: at,
                 question: question.clone(),

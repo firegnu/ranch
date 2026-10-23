@@ -1,6 +1,6 @@
 use super::{
-    ChannelInfo, Chat, Connect, Connection, ConnectionInfo, Event, Events, HistoryAfter, Limits,
-    Message, Outgoing, SendError,
+    Action, ChannelInfo, Chat, Connect, Connection, ConnectionInfo, Event, Events, HistoryAfter,
+    Limits, Message, Outgoing, SendError,
 };
 use crate::core::config::{ChatConfig, Problem};
 use crate::core::{Error, Result as CoreResult, now};
@@ -82,6 +82,7 @@ impl Connection for SlackConnection {
         Limits {
             characters: 10_000,
             threads: true,
+            buttons: true,
         }
     }
     fn send(&mut self, message: Outgoing<'_>) -> Result<String, SendError> {
@@ -90,22 +91,7 @@ impl Connection for SlackConnection {
                 self.api
                     .wait(Duration::from_secs(1).saturating_sub(sent.elapsed()))?;
             }
-            let text = escape(message.markdown);
-            let summary: String = text
-                .lines()
-                .next()
-                .unwrap_or("pony 回复")
-                .chars()
-                .take(200)
-                .collect();
-            let mut blocks = Vec::new();
-            if message.notify {
-                blocks.push(json!({"type":"section","text":{"type":"mrkdwn",
-                    "text":format!("<@{}> pony 新消息", self.owner)}}));
-            }
-            blocks.push(json!({"type":"markdown","text":text}));
-            let mut body = json!({"channel":message.channel,"text":summary,"blocks":blocks,
-                "unfurl_links":false,"unfurl_media":false,"parse":"none","link_names":false});
+            let mut body = message_body(&message, &self.owner);
             if let Some(thread) = message.thread {
                 body["thread_ts"] = thread.into();
             }
@@ -129,6 +115,11 @@ impl Connection for SlackConnection {
             resize: matches!(e.code.as_str(), "message_too_long" | "invalid_blocks"),
             code: e.code,
         })
+    }
+    fn update(&mut self, id: &str, message: Outgoing<'_>) -> CoreResult<()> {
+        let mut body = message_body(&message, &self.owner);
+        body["ts"] = id.into();
+        self.call("chat.update", body).map(|_| ())
     }
     fn channel(&mut self, id: &str) -> CoreResult<ChannelInfo> {
         let mut info = ChannelInfo {
@@ -237,6 +228,49 @@ impl Connection for SlackConnection {
     }
 }
 
+fn message_body(message: &Outgoing<'_>, owner: &str) -> Value {
+    let text = escape(message.markdown);
+    let summary: String = text
+        .lines()
+        .next()
+        .unwrap_or("pony 回复")
+        .chars()
+        .take(200)
+        .collect();
+    let mut blocks = Vec::new();
+    if message.notify {
+        blocks.push(json!({"type":"section","text":{"type":"mrkdwn",
+            "text":format!("<@{owner}> pony 新消息")}}));
+    }
+    blocks.push(json!({"type":"markdown","text":text}));
+    // Slack allows at most 25 elements in each actions block.
+    for chunk in message.buttons.chunks(25) {
+        let elements: Vec<_> = chunk
+            .iter()
+            .map(|button| {
+                let mut element = json!({"type":"button", "action_id":button.value,
+                "text":{"type":"plain_text","text":button.label}, "value":button.value});
+                match button.style {
+                    super::ButtonStyle::Default => {}
+                    super::ButtonStyle::Primary => element["style"] = "primary".into(),
+                    super::ButtonStyle::Danger => element["style"] = "danger".into(),
+                }
+                if let Some(confirm) = &button.confirm {
+                    element["confirm"] = json!({
+                    "title":{"type":"plain_text","text":confirm.title},
+                    "text":{"type":"plain_text","text":confirm.text},
+                    "confirm":{"type":"plain_text","text":confirm.confirm},
+                    "deny":{"type":"plain_text","text":confirm.cancel}});
+                }
+                element
+            })
+            .collect();
+        blocks.push(json!({"type":"actions", "elements":elements}));
+    }
+    json!({"channel":message.channel,"text":summary,"blocks":blocks,
+        "unfurl_links":false,"unfurl_media":false,"parse":"none","link_names":false})
+}
+
 impl Drop for SlackConnection {
     fn drop(&mut self) {
         self.close();
@@ -320,6 +354,8 @@ fn api_code(raw: &str) -> &'static str {
         "invalid_blocks" | "invalid_blocks_format" | "msg_blocks_too_long" => "invalid_blocks",
         "missing_scope" => "missing_scope",
         "thread_not_found" => "thread_not_found",
+        "message_not_found" => "message_not_found",
+        "cant_update_message" => "cant_update_message",
         "ratelimited" | "rate_limited" => "rate_limited",
         "not_allowed_token_type" => "auth_failed",
         "socket_mode_disabled" => "socket_mode_off",
@@ -465,7 +501,10 @@ impl Api {
                 return Err(error("stopped"));
             }
             let url = format!("{base}{method}");
-            let response = if matches!(method, "apps.connections.open" | "chat.postMessage") {
+            let response = if matches!(
+                method,
+                "apps.connections.open" | "chat.postMessage" | "chat.update"
+            ) {
                 self.agent
                     .post(&url)
                     .header("Authorization", format!("Bearer {token}"))
@@ -780,6 +819,33 @@ fn receive(
     Ok(())
 }
 fn emit_received(value: &Value, options: &Connect, session: &Session) -> CoreResult<()> {
+    if value["type"] == "interactive" {
+        let payload = &value["payload"];
+        if payload["type"] != "block_actions" || payload["container"]["type"] != "message" {
+            return Ok(());
+        }
+        let channel = required(&payload["channel"], "id")?;
+        let message = required(&payload["container"], "message_ts")?;
+        let sender = required(&payload["user"], "id")?;
+        let own_message = payload["message"]["user"] == session.user
+            && payload["message"]["bot_id"] == session.bot_id
+            && payload["message"]["ts"] == message
+            && payload["container"]["channel_id"] == channel;
+        if let Some(actions) = payload["actions"].as_array() {
+            for action in actions.iter().filter(|a| a["type"] == "button") {
+                options.events.emit(Event::Action(Action {
+                    channel: channel.clone(),
+                    message: message.clone(),
+                    thread: payload["message"]["thread_ts"].as_str().map(str::to_owned),
+                    sender: sender.clone(),
+                    value: required(action, "value")?,
+                    at: timestamp(&required(action, "action_ts")?)?,
+                    own_message,
+                }))?;
+            }
+        }
+        return Ok(());
+    }
     if value["type"] != "events_api" {
         return Ok(());
     }
