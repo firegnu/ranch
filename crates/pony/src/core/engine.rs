@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     chats::{ChannelInfo, Connection, ConnectionInfo, Event, HistoryAfter, Message, Outgoing},
-    corral::{self, Agent, Corral, Status},
+    corral::{self, Agent, Corral, Questions, Status},
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -498,6 +498,10 @@ impl Engine {
             }
         });
         let answer = question.is_some();
+        let reference = question
+            .as_ref()
+            .and_then(|q| q.questions.as_ref())
+            .and_then(|questions| option_reference(questions, &body));
         let close_question = answer && question_reason.is_none();
         if let Some(q) = &mut question {
             q.handled = true;
@@ -572,7 +576,7 @@ impl Engine {
             agent: name.clone(),
             instance: status.instance.clone(),
             text: if answer {
-                format!("（这是对刚才提问的回答）\n{body}")
+                format!("{}\n{body}", answer_prefix(reference.as_deref(), false))
             } else {
                 body.clone()
             },
@@ -586,7 +590,7 @@ impl Engine {
         if close_question {
             if self.start_interrupt(&address, &status, corral, at, true)? {
                 self.state.pending.last_mut().expect("just queued").text =
-                    format!("（这是对刚才提问的回答；关闭提问框不表示放弃作答）\n{body}");
+                    format!("{}\n{body}", answer_prefix(reference.as_deref(), true));
                 self.save()?;
             }
         } else if let Some(reason) = question_reason {
@@ -1425,6 +1429,7 @@ impl Engine {
                     instance: status.instance.clone(),
                     state_started: status.state_started,
                     handled: false,
+                    questions: status.questions.clone(),
                 });
                 notices.push((needs_you(&status, corral), question));
                 watch.blocked = Some(status.state_started.unwrap_or(0.));
@@ -2002,6 +2007,88 @@ fn option_letter(mut index: usize) -> String {
         index = index / 26 - 1;
     }
     letters.into_iter().rev().collect()
+}
+
+const OPTION_REFERENCE_MIN: usize = 80;
+const OPTION_REFERENCE_MAX: usize = 300;
+
+fn option_reference(questions: &Questions, answer: &str) -> Option<String> {
+    if questions.items.iter().all(|q| q.options.is_empty()) {
+        return None;
+    }
+    let budget = (answer.chars().count() * 2).clamp(OPTION_REFERENCE_MIN, OPTION_REFERENCE_MAX);
+    let numbered = questions.items.len() > 1;
+    let mut text = String::new();
+    let mut cut = false;
+    for (i, question) in questions.items.iter().enumerate() {
+        if question.options.is_empty() {
+            continue;
+        }
+        let mut segment = if numbered {
+            format!("{}. ", i + 1)
+        } else {
+            String::new()
+        };
+        let mut count = segment.chars().count();
+        let mut fitted = false;
+        for (j, option) in question.options.iter().enumerate() {
+            let token = format!(
+                "{}{} {}",
+                if fitted { " " } else { "" },
+                option_letter(j),
+                option.label.trim()
+            );
+            let token_len = token.chars().count();
+            let connector = if text.is_empty() {
+                ""
+            } else if numbered {
+                "；"
+            } else {
+                " "
+            };
+            if text.chars().count() + connector.chars().count() + count + token_len > budget {
+                cut = true;
+                break;
+            }
+            segment.push_str(&token);
+            count += token_len;
+            fitted = true;
+        }
+        if !fitted {
+            cut = true;
+            break;
+        }
+        if !text.is_empty() {
+            text.push_str(if numbered { "；" } else { " " });
+        }
+        text.push_str(&segment);
+        if cut {
+            break;
+        }
+    }
+    if text.is_empty() {
+        return cut.then(|| "对照太长，截断".to_string());
+    }
+    if questions.truncated {
+        text.push_str("；题目不完整");
+    }
+    if cut {
+        text.push_str("；对照太长，截断");
+    }
+    Some(text)
+}
+
+fn answer_prefix(reference: Option<&str>, closed: bool) -> String {
+    let mut text = String::from("（这是对刚才提问的回答");
+    if let Some(reference) = reference {
+        text.push_str("；选项：");
+        text.push_str(reference);
+    }
+    if closed {
+        text.push_str("；关闭提问框不表示放弃作答");
+    }
+    text.push('）');
+    text
 }
 
 fn corral_error(e: crate::corral::Failure) -> Error {
