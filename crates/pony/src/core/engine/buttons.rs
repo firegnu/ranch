@@ -195,7 +195,11 @@ impl Engine {
         if let Some(reason) = reason {
             return self.say(address, reason, false);
         }
-        let content = button.content.as_ref().expect("active button content");
+        let Some(content) = &button.content else {
+            self.state.buttons[i].finish_update();
+            self.save()?;
+            return self.say(address, "这个按钮已过期，没按 Esc", false);
+        };
         let mut status = match corral.status(&content.status.name) {
             Ok(s) => s,
             Err(_) => return self.finish_button(i, "读不出 agent 状态，没按 Esc", false, at),
@@ -265,7 +269,10 @@ impl Engine {
         {
             return Ok(());
         }
-        let content = b.content.as_ref().expect("pending button update content");
+        let Some(content) = &b.content else {
+            self.state.buttons[i].finish_update();
+            return self.save();
+        };
         let text = format!("{}\n{outcome}", content.text);
         let result = self
             .connections

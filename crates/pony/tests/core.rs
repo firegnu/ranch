@@ -1120,6 +1120,43 @@ fn completed_button_keeps_only_the_receipt_across_restarts() {
 }
 
 #[test]
+fn unreadable_button_content_expires_clicks_and_abandons_updates() {
+    for pending_update in [false, true] {
+        let mut f = Fixture::new();
+        let posted = f.button_notice();
+        if pending_update {
+            f.memory.borrow_mut().update_error = Some("network");
+            f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+            f.step(6.);
+        }
+        let attempts = f.memory.borrow().update_attempts;
+        let path = f._dir.path().join("state.json");
+        let mut disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        disk["state"]["buttons"][0]["button"]["style"] = "future_style".into();
+        std::fs::write(&path, serde_json::to_vec(&disk).unwrap()).unwrap();
+        f.restart();
+        if !pending_update {
+            f.click(&posted, 10.);
+        }
+        f.step(10.);
+        assert!(f.corral.escapes.is_empty());
+        assert_eq!(f.memory.borrow().update_attempts, attempts);
+        let disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk["state"]["buttons"][0]["updated"], true);
+        assert!(disk["state"]["buttons"][0].get("update_retry").is_none());
+        assert!(disk["inbox"].as_array().unwrap().is_empty());
+        f.restart();
+        f.click(&posted, 12.);
+        f.step(12.);
+        assert!(f.texts().contains("这个按钮已过期，没按 Esc"));
+        assert!(f.corral.escapes.is_empty());
+        assert_eq!(f.memory.borrow().update_attempts, attempts);
+    }
+}
+
+#[test]
 fn button_update_permanent_errors_are_abandoned_across_restarts() {
     for code in [
         "not_found",
