@@ -1,6 +1,6 @@
 # 任务：R50 没有客户端连着时，corral 也回答终端的前景色、背景色查询（OSC 10/11）
 
-2026-10-24，ranch/main 起草（草稿，未定、未派）。
+2026-10-24，ranch/main 起草。已完成：方案见 R50a（`docs/调研/R50-corral回答终端颜色查询.md`），实现见 R50b，10-24 部署（`03c265e`）；paddock 在 P5-181 接入，本机颜色设置已由 paddock 送上。
 优先：高
 
 ## 用户原话
@@ -32,3 +32,10 @@
 ## 对 paddock 的影响
 
 - 预计是兼容新增：paddock 开 agent 时把当前主题的前景色、背景色按新的公开约定传给 corral。具体格式定了写进 CONTRACT。
+
+## 结果
+
+- R50a（`docs/任务/R50a-终端颜色查询调研与方案.md`）：查明只有 Codex 因启动时问不到 OSC 10/11 而按深色；用户定了三条取舍（只用本机设置、只答 OSC 10/11、客户端不答时不补答）。
+- R50b（`docs/任务/R50b-corral回答终端颜色查询.md`）：新增 `corral terminal-colors`，pen 在没有客户端连着时回答 OSC 10/11；交叉审查可以合并，10-24 部署 `03c265e`。
+- paddock P5-181：启动、换主题时调 `corral terminal-colors`，远端开 agent 前也调；10-24 已合并安装，本机设置已是 Latte（`#4c4f69` / `#eff1f5`）。
+- 没做：Claude Code 主题设成 auto 时的表现没测（用户现在设的是 light，不问终端）；5090 没部署。
