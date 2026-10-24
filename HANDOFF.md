@@ -38,7 +38,8 @@
 
 ## 还没派的草稿
 
-- `docs/任务/R50-corral回答终端背景色查询.md`（未提交）：paddock/main 10-24 转来，corral 开的 agent 启动时问终端背景色（OSC 10/11）没人答，浅色主题下都显示成深色；要 corral 在没有客户端连着时也能回答，颜色来源和给 paddock 的公开约定待定。用户：先不做。
+- `docs/任务/R50-corral回答终端背景色查询.md`：paddock/main 10-24 转来，corral 开的 agent 启动时问终端背景色（OSC 10/11）没人答，浅色主题下都显示成深色；要 corral 在没有客户端连着时也能回答，颜色来源和给 paddock 的公开约定待定。用户：先不做。
+- `docs/任务/R51-stop与ls同时跑丢退出记录.md`：R48e 审查发现，`stop` 和同时跑的 `ls` 竞争丢退出记录；审查给了修法，改的是所有 agent 共用的 `stop` 等待。用户 10-24：记草稿，以后再做。
 - `docs/任务/R39-pony后续想法.md`：pony 后续各条，按档排好，各条写了什么时候再做；手机上答确认框那条已由 R46、R47a–R47d 做完。
 - `docs/任务/R40b-pony-setup新机器一条命令装好.md`（未提交）：新机器上 `pony setup`，要给别的机器装 pony 时再做。
 - `docs/任务/R17c-Linux上验sandbox.md`（未提交）：5090 上验 sandbox，暂缓（用户 10-19：「先不做R17c了，先把全部的在macos上跑通」）。
@@ -53,5 +54,5 @@
 - 全套测试偶有 1 个失败、再跑就过（hook 协议测试的偶发超时；`raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1` 也失败过一次）。
 - `corral start --help` 的用法行没列 `--sandbox`（CONTRACT 有）。
 - agy 的已知限制见 DESIGN §7「接入 agy」。
-- Kimi（R48c 复核的两条建议改，没做）：每轮第一次从头读主 wire 比按行 `contains` 慢约 3.5 倍（50 MB 约 129 ms，之后是微秒级）；`corral stop` 到 5 秒上限仍有残留子进程时只记在 pen.log、`exit.json`，`stop` 输出照样成功。详见 `docs/任务/R48c-审查.md`「复核 1」。
+- `corral stop` 和同时跑的 `corral ls` 竞争：`ls` 可能先删掉刚停的 agent 的 `exit.json`，`stop` 输出 `exit_code`、`stopped_by` 为 null（Kimi 的 `remaining_pids` 也丢）；所有 agent 都会碰上，开着 paddock 时约 4%。修法草稿见 R51。
 - Kimi（R48d 审查，可以不改的）：Kimi 的后台提问（`AskUserQuestion` 带 `background:true`）提问框开着、模型照样接着跑，pony 多半看不到这道题（不会给错题，只是漏）；这一轮结束后才回答时，状态会从 idle 回到 working，等下一轮结束才恢复。阶段 4 做 Slack 回答时用真 Kimi 测。详见 `docs/任务/R48d-审查.md` 第 4 条。
