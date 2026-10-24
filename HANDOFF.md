@@ -8,8 +8,8 @@
 
 ## 本机安装
 
-- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/5abf1f8`（10-24，R48d，Kimi 进派活表、题目给 pony）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/dd02e36/bin/corral`（R47c 改了钩子，记 Bash 权限框的原始命令，10-23 已切；R48c、R48d 没改钩子行为，不用换）。退回：`~/.local/share/ranch/versions/5abf1f8/bin/ranch deploy 0232198`（会自动重启 pony）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
-- 上一版 `0232198`（10-24，R48c，Kimi 基本接入；本机 `~/.kimi-code/config.toml` 装了 corral 的标记块）、再上一版 `dd4d661`（10-23，R47c + R47d）、`dd02e36`（R47c）、`a04f7dd`（R47a + R47b）。本机派活表写了 `kimi` 的段时，退到 R48d 之前要先删掉这些段（见 CONTRACT）。再往前退回用 `versions/5abf1f8/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；helper 退到 R47c（`dd02e36`）之前时，pony 拿不到原始命令，只是不给 Bash 的「允许」按钮，一般不用退 helper；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`。
+- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/8a6b239`（10-24，R48e，Kimi 首读速度、`stop` 报残留；只有 corral 程序变了）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/dd02e36/bin/corral`（R47c 改了钩子，记 Bash 权限框的原始命令，10-23 已切；R48c、R48d 没改钩子行为，不用换）。退回：`~/.local/share/ranch/versions/8a6b239/bin/ranch deploy 5abf1f8`（会自动重启 pony）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
+- 上一版 `5abf1f8`（10-24，R48d，Kimi 进派活表、题目给 pony）、`0232198`（10-24，R48c，Kimi 基本接入；本机 `~/.kimi-code/config.toml` 装了 corral 的标记块）、再上一版 `dd4d661`（10-23，R47c + R47d）、`dd02e36`（R47c）、`a04f7dd`（R47a + R47b）。本机派活表写了 `kimi` 的段时，退到 R48d 之前要先删掉这些段（见 CONTRACT）。再往前退回用 `versions/8a6b239/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；helper 退到 R47c（`dd02e36`）之前时，pony 拿不到原始命令，只是不给 Bash 的「允许」按钮，一般不用退 helper；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`。
 - 旧版本目录都保留，不删。
 - 技能：corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）装在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/`；技能内容编进程序，改技能要先打新版本再重装。
 - 全局插件：amp 在 `~/.config/amp/plugins/corral.ts`；agy 在 `~/.gemini/config/plugins/corral/`。两个 `integration status` 都是 same。
