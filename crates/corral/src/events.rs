@@ -294,6 +294,10 @@ pub(crate) fn observe_transcript(
     s: &mut Value,
     adapter: &dyn crate::agents::Adapter,
 ) -> Result<()> {
+    let original = s.clone();
+    for event in adapter.transcript_events(s) {
+        update(s, &event);
+    }
     let needs_transcript = match s["state"].as_str() {
         Some("working" | "blocked") => s["turn_open"] == true || s["interrupted"] == true,
         Some("idle") => s["turn_open"] == true,
@@ -301,6 +305,8 @@ pub(crate) fn observe_transcript(
     };
     if needs_transcript && let Some(t) = adapter.transcript_interrupt(s) {
         update(s, &json!({"ev":"Interrupt", "t":t}));
+    }
+    if *s != original {
         state::write(&dir.join("cursor"), s)?;
     }
     Ok(())

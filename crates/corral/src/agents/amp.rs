@@ -38,6 +38,7 @@ impl Adapter for Amp {
             files: &[("", include_str!("../../resources/amp_plugin.ts"))],
             enabled: None,
             helper: false,
+            block: None,
         })
     }
 }

@@ -29,6 +29,7 @@ mod agy;
 mod amp;
 mod claude;
 mod codex;
+mod kimi;
 mod omp;
 mod pi;
 
@@ -40,6 +41,7 @@ static ADAPTERS: &[&dyn Adapter] = &[
     &omp::Omp,
     &amp::Amp,
     &agy::Agy,
+    &kimi::Kimi,
 ];
 
 pub(crate) trait Adapter: Sync {
@@ -49,6 +51,10 @@ pub(crate) trait Adapter: Sync {
     fn hook_args(&self, launch: &Launch) -> Result<Vec<String>>;
     /// Steps the pen follows to stop the agent (it always ends with SIGKILL).
     fn quit_steps(&self) -> Value;
+    /// Keep tracking this agent's actual descendants when they use separate process groups.
+    fn stop_descendants(&self) -> bool {
+        false
+    }
     /// Which of corral's skill places (`skills::TARGETS`) this agent reads skills from.
     fn skill_targets(&self) -> &'static [&'static str] {
         &[]
@@ -56,6 +62,14 @@ pub(crate) trait Adapter: Sync {
     /// Whether `corral start --prompt` can pass a first prompt on the command line.
     fn prompt(&self) -> bool {
         true
+    }
+    /// Send the first prompt through the PTY once the editor is ready, instead of argv.
+    fn prompt_via_terminal(&self) -> bool {
+        false
+    }
+    /// An input editor that is ready even before the first session exists.
+    fn input_ready(&self, _screen: &str) -> bool {
+        false
     }
     /// The arguments that pass the first prompt, after the user's own: by default after `--`, so
     /// options taking several values cannot swallow it and it may start with `-`.
@@ -66,6 +80,9 @@ pub(crate) trait Adapter: Sync {
     /// given the hook's input; `hooks` adds the fields every event has.
     fn hook(&self, _event: &str, _input: &Value) -> Vec<Value> {
         vec![]
+    }
+    fn hook_output(&self) -> &'static str {
+        "{}\n"
     }
     /// Whether the terminal title says the agent waits for the user while its hooks say it works or
     /// is idle; for agents whose hooks cannot report that.
@@ -89,6 +106,10 @@ pub(crate) trait Adapter: Sync {
     /// An explicit interruption in the current turn's transcript, when hooks cannot report it.
     fn transcript_interrupt(&self, _snapshot: &Value) -> Option<f64> {
         None
+    }
+    /// Authoritative lifecycle evidence from the main transcript for agents with ambiguous hooks.
+    fn transcript_events(&self, _snapshot: &mut Value) -> Vec<Value> {
+        vec![]
     }
     /// The list of directories the agent trusts, for an agent that trusts only the directories
     /// listed there, not what lies under them (R13).
@@ -128,6 +149,9 @@ pub(crate) struct Global {
     pub enabled: Option<fn(&Path) -> Option<bool>>,
     /// The files run `__hook <kind>:<event>` through `$CORRAL_HELPER`, which the pen then sets.
     pub helper: bool,
+    /// A shared file: exact opening/closing markers enclosing the single file's body.
+    /// Without this, the existing whole-file/directory ownership rules apply.
+    pub block: Option<(&'static str, &'static str)>,
 }
 
 /// Where an agent keeps the directories it trusts: a JSON object file, given HOME, and its field
@@ -250,6 +274,7 @@ pub fn argv(argv: &[String], dir: &Path, prompt: Option<&str>) -> Result<Vec<Str
     out.extend_from_slice(&argv[1..]);
     if let Some(p) = prompt {
         match find(&kind(&argv[0])) {
+            Some(a) if a.prompt_via_terminal() => {}
             Some(a) => out.extend(a.prompt_args(p)),
             None => out.extend(["--".into(), p.into()]),
         }
@@ -326,9 +351,14 @@ mod tests {
         for state in ["blocked", "starting", "unknown", "stopped"] {
             assert!(!waits_on_terminal(&Screened, state, "", asking));
         }
-        // Only agy reads its screen (R8), only amp its title.
+        // agy and kimi read their screens; only amp its title.
         for a in all() {
-            assert_eq!(reads_screen(a.kind()), a.kind() == "agy", "{}", a.kind());
+            assert_eq!(
+                reads_screen(a.kind()),
+                matches!(a.kind(), "agy" | "kimi"),
+                "{}",
+                a.kind()
+            );
             assert!(!waits_on_terminal(a, "working", "", asking), "{}", a.kind());
             assert_eq!(
                 waits_on_terminal(a, "working", "◆ Input needed: x", None),

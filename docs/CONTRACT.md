@@ -120,15 +120,16 @@ ranch dispatch reset <名字> [--if-version <版本>]
   {"kind":"pi", …},
   {"kind":"omp", …},
   {"kind":"amp", …},
-  {"kind":"agy", …}
+  {"kind":"agy", …},
+  {"kind":"kimi", …}
 ]}
 ```
 
-- `agents`：corral 支持的每家 agent 一项，按 corral 的登记顺序（现在是 claude、codex、pi、omp、amp、agy）。以后加一家就多一项；前端照列表画，不要写死名单。
+- `agents`：corral 支持的每家 agent 一项，按 corral 的登记顺序（现在是 claude、codex、pi、omp、amp、agy、kimi）。以后加一家就多一项；前端照列表画，不要写死名单。
 - `kind`：种类，也就是 `corral start NAME -- <程序>` 认的程序名，`status`／`ls` 里的 `kind`。
 - `path`：按调用者的 PATH 找到的第一个可执行文件（只看绝对路径的目录），没找到为 `null`。从桌面启动的前端要带上登录 shell 的 PATH 再调。
 - `version`：`<path> --version` 输出的第一行非空内容（去掉首尾空白）。各家并行跑，每家最多 3 秒，超时连同它起的子进程一起杀掉。没找到程序、超时、退出码非 0、没有输出时为 `null`，不影响 `ok` 和退出码。内容是各家程序自己的格式，只用来显示。
-- `hooks`：corral 怎么给这家接上钩子。`"launch"`：corral 启动 agent 时用启动参数或 agent 状态目录里的文件挂上，不写全局配置，没有要装、要卸的东西。`"global"`（R6 起）：要在这家自己的配置目录里装一个文件或目录，见下面「要装进全局配置的 agent」。以后可能还有别的值。
+- `hooks`：corral 怎么给这家接上钩子。`"launch"`：corral 启动 agent 时用启动参数或 agent 状态目录里的文件挂上，不写全局配置，没有要装、要卸的东西。`"global"`（R6 起）：要在这家自己的配置目录里装一个文件、目录或共享文件中的标记块，见下面「要装进全局配置的 agent」。以后可能还有别的值。
 - `skills`：这家 agent 会读到的、corral 能装技能的位置，按位置顺序（`claude` 在前）；一个位置可能几家共用（比如 `~/.agents/skills` Codex、pi、omp 都读）。只看用户级位置，不看项目目录；agent 自己专有、corral 不装的目录不列。
   - `target`：装这个位置要传给 `corral install-skills --target` 的值（`claude` 是 `$CLAUDE_CONFIG_DIR` 或 `~/.claude`，`codex` 是 `~/.agents`，`gemini` 是 `~/.gemini/config`，R8 起，agy 只从这里读用户级技能）。`ranch dispatch install-skills --target` 认同样的值。
   - `path`：corral 技能文件在这个位置的路径。
@@ -195,13 +196,36 @@ ranch dispatch reset <名字> [--if-version <版本>]
 
 ## `corral integration install|uninstall`（R6）
 
+### Kimi Code 阶段 1（R48c）
+
+`integration status` 兼容新增 `kind:"kimi"`，技能位置沿用 `target:"codex"`（`~/.agents/skills`），不新增技能安装目标：
+
+```json
+{"kind":"kimi","path":"/Users/u/.kimi-code/bin/kimi","version":"2.3.1","hooks":"global",
+ "install":{"path":"/Users/u/.kimi-code/config.toml","status":"same","version":1,"format":"marked-block"},
+ "skills":[{"target":"codex","path":"/Users/u/.agents/skills/corral/SKILL.md","status":"same"}]}
+```
+
+- `install.format:"marked-block"` 表示 `install.path` 是共享配置文件，只安装、卸载 corral 的标记块；没有该字段的 amp、agy 沿用原有文件、目录方式。Kimi 的路径是 `$KIMI_CODE_HOME/config.toml`，未设时是 `~/.kimi-code/config.toml`，没有 `install.enabled` 字段。
+- 标记是 `# >>> corral kimi integration` / `# <<< corral kimi integration`。块外字节、原文件权限不变；卸载也删除 corral 为该块添加的前置换行，文件本身保留（原来不存在的文件卸载后为空）。`create` 表示未装块，`same` 表示块完整且与本版本相同；半块、重复标记、修改过或无法确认归属的块、配置文件或配置目录是符号链接均为 `foreign`，装卸不写。当前只认版本 1 的原样内容，不把用户改过的块报成 `overwrite`。
+- `--dry-run`、`--yes`、确认和结果 JSON 沿用下述命令。即使 `--yes`，写前也重读整个文件，核对内容和文件身份；发生变化报 `changed`、什么都不写。原子改名与最后核对之间仍有不合作的编辑器并发写入的微小窗口，和 R13 信任列表相同。
+- 全局钩子经 `$CORRAL_HELPER __hook kimi:<事件>`；检查 corral 环境和实际父进程链，只观察、始终空输出并成功退出，不回批准或拒绝。非 corral 启动、嵌套启动的 Kimi 不记事件；共享 helper 还是旧版时，新 Kimi 直接用启动它的这份 corral。
+- 新窗口的可输入编辑器算 `idle`，不必等创建会话，`send` 不需要 `--force`；信任、登录、加载画面不算就绪。`start --prompt` 可用，等编辑器就绪后通过 PTY 送首句并提交，首句以 `-` 开头也支持；收到输入钩子前仍为 `starting`。不改变 Kimi 的模型、权限模式或信任设置。
+- 输入和主轮工具为 `working`；主 wire 的批准、提问交互为 `blocked`，当前屏幕的批准／提问导航提示补漏。只在主会话 `agents/main/wire.jsonl` 确认这一轮 `completed` 后转 `idle` 并提供这一轮文字，排除思考和工具内容；子 agent 的 `Stop`、尚未完成的主 `Stop` 不结束主轮。未完成的新轮 `reply` 报 `no_reply`，不冒充上一轮回复。
+- 主轮 `cancelled` 沿用 `idle` 加 `interrupted:true`、`wait.result:"interrupted"`、`reply` 的 `no_reply`；提问框上的 Esc 只解除交互，仍为 `working`。主轮失败沿用 `StopFailure`，没有正常回复。阶段 1 不提供 pony 的结构化题目或批准按钮。
+- `stop` 首先 TERM、等 3 秒后 KILL，包含 Kimi 实际派生到其他进程组的命令。父进程先退也等子树清理；每次信号核对 PID 和进程出生标识，其他 agent 的停止行为不变。停止前已经完全脱离且失去父子关系的守护进程不在这份子树内。
+- Kimi 要由 R48c 及以后版本启动并操作；旧版不认识这一家、旧进程缺少所需环境，`upgrade` 只换 pen，不能补齐，需重新启动。
+- 对 paddock：兼容新增一家与可选 `install.format`，现有状态值和命令不变。列表按返回项显示；安装说明需在 paddock 自己的任务里识别 `marked-block`，说明只修改共享文件的一段、卸载保留配置文件。paddock 不读 Kimi 的内部目录。
+
+### 安装、卸载命令
+
 ```
 corral integration install   --agent <kind> [--dry-run] [--yes]
 corral integration uninstall --agent <kind> [--dry-run] [--yes]
 ```
 
 - 只对 `hooks` 为 `"global"` 的 agent；对别的种类、不认识的种类、缺 `--agent`、多余参数都报 `usage`，退出码 1。
-- 只写或删 `install.path` 那一个文件，或者那个目录和里面 corral 的文件，别的都不动（上一级目录不删）。每个文件的写都是原子的：同目录下先写临时文件再改名。目录里有几个文件时按次序写，最后写让 agent 认出插件的那个（agy 是 `plugin.json`），卸的时候它先删。计划里没有的文件只新建、不覆盖：判断之后那里冒出了别人的文件，就报错、不动它（已经写好的 corral 文件留着，再判断时整个目录算 `foreign`）。卸载删不掉目录时（比如期间有人放进了别的文件），`written` 仍为 `true`，`warnings` 里说明目录留下了。
+- 只写或删 `install.path` 那一个文件，或者那个目录和里面 corral 的文件；`install.format:"marked-block"` 时只增删文件中的 corral 块，别的都不动（上一级目录不删）。每个文件的写都是原子的：同目录下先写临时文件再改名。目录里有几个文件时按次序写，最后写让 agent 认出插件的那个（agy 是 `plugin.json`），卸的时候它先删。计划里没有的文件只新建、不覆盖：判断之后那里冒出了别人的文件，就报错、不动它（已经写好的 corral 文件留着，再判断时整个目录算 `foreign`）。卸载删不掉目录时（比如期间有人放进了别的文件），`written` 仍为 `true`，`warnings` 里说明目录留下了。
 - `--dry-run`：只报会怎样，不写。
 - 不带 `--yes`：终端里会问用户；不在终端里（前端调）报 `confirmation_required`，不写。前端要先让用户确认，再带 `--yes` 调。
 - 输出一行 JSON：

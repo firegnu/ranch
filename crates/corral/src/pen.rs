@@ -193,6 +193,10 @@ struct Pen {
     human: Option<f64>,
     recent: Vec<Value>,
     stop_steps: VecDeque<Value>,
+    #[serde(default)]
+    pending_prompt: Option<String>,
+    #[serde(default)]
+    stop_tree: Option<crate::freeze::StopTree>,
     // Pens before pausing existed leave these out of their snapshots.
     #[serde(default)]
     paused: Option<f64>,
@@ -220,6 +224,9 @@ impl Drop for Pen {
         if !self.owns || self.custody == Custody::Handoff {
             return;
         }
+        if let Some(tree) = &mut self.stop_tree {
+            tree.signal(libc::SIGKILL);
+        }
         if self.exit.is_none() && self.custody == Custody::Owner {
             // SIGKILL ends the stopped group; descendants that left it must not stay frozen.
             self.resume();
@@ -232,6 +239,35 @@ impl Drop for Pen {
     }
 }
 impl Pen {
+    fn first_prompt(&mut self) {
+        if self.pending_prompt.is_none() || self.stopping || self.paused.is_some() {
+            return;
+        }
+        let ready =
+            crate::agents::find(self.metadata["kind"].as_str().unwrap_or("")).is_some_and(|a| {
+                self.screen
+                    .as_ref()
+                    .and_then(|s| s.text())
+                    .is_some_and(|s| a.input_ready(&s))
+            });
+        if ready {
+            let text = self.pending_prompt.take().unwrap();
+            let bytes = if self.term.paste() {
+                [b"\x1b[200~".as_slice(), text.as_bytes(), b"\x1b[201~"].concat()
+            } else {
+                text.into_bytes()
+            };
+            for (bytes, delay) in [(bytes, 0.3), (vec![b'\r'], 0.0)] {
+                self.input.push_back(Chunk {
+                    bytes: bytes.into(),
+                    delay,
+                    reply: None,
+                    request_id: None,
+                    failed: false,
+                });
+            }
+        }
+    }
     fn resume(&mut self) {
         if self.paused.take().is_some() {
             crate::freeze::thaw(self.agent as i32, &self.frozen);
@@ -259,8 +295,13 @@ impl Pen {
                     Some("TERM") => libc::SIGTERM,
                     _ => libc::SIGKILL,
                 };
-                unsafe {
-                    libc::kill(-(self.agent as i32), sig);
+                if let Some(tree) = &mut self.stop_tree {
+                    tree.signal(sig);
+                }
+                if self.stop_tree.is_none() || self.exit.is_none() {
+                    unsafe {
+                        libc::kill(-(self.agent as i32), sig);
+                    }
                 }
                 self.stopped_by =
                     json!(format!("SIG{}", step["signal"].as_str().unwrap_or("KILL")));
@@ -491,6 +532,11 @@ impl Pen {
                     // A stopped process acts on HUP or TERM only once it continues.
                     self.resume();
                     self.stopping = true;
+                    if crate::agents::find(self.metadata["kind"].as_str().unwrap_or(""))
+                        .is_some_and(|a| a.stop_descendants())
+                    {
+                        self.stop_tree = Some(crate::freeze::StopTree::capture(self.agent as i32));
+                    }
                     self.stop_steps = steps.into();
                     self.stop_steps.push_back(json!({"signal":"KILL","wait":0}));
                     self.stop_step();
@@ -566,6 +612,7 @@ impl Pen {
                 self.handoff(target);
             }
             self.finish_upgrade();
+            self.first_prompt();
             let was_running = self.exit.is_none();
             self.observe_exit()?;
             if was_running && self.exit.is_some() && self.metadata["sandbox"].is_object() {
@@ -574,7 +621,10 @@ impl Pen {
                     libc::kill(-(self.agent as i32), libc::SIGKILL);
                 }
             }
-            if self.exit.is_some() && (!self.pty_open || now() - self.exit_at > 0.3) {
+            if self.exit.is_some()
+                && (!self.pty_open || now() - self.exit_at > 0.3)
+                && self.stop_tree.as_mut().is_none_or(|tree| tree.is_empty())
+            {
                 break;
             }
             if self.resize_at.is_some_and(|t| now() >= t) {
@@ -935,6 +985,10 @@ pub fn worker() -> i32 {
             human: None,
             recent: Vec::new(),
             stop_steps: VecDeque::new(),
+            pending_prompt: crate::agents::find(&kind)
+                .filter(|a| a.prompt_via_terminal())
+                .and_then(|_| cfg["prompt"].as_str().map(str::to_owned)),
+            stop_tree: None,
             paused: None,
             frozen: Vec::new(),
             resumed_at: None,

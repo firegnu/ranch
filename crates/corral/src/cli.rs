@@ -146,6 +146,13 @@ pub(crate) fn status(name: &str) -> Result<Status> {
         // session was adopted (`events::adopt`) may have lost the prompt's hook with the session
         // start; a later event than the session start shows its turn went on anyway.
         let kind = m["kind"].as_str().unwrap_or("");
+        if snap["state"] == "starting"
+            && snap["main_session"].is_null()
+            && agents::find(kind)
+                .is_some_and(|a| st["screen"].as_str().is_some_and(|s| a.input_ready(s)))
+        {
+            snap["state"] = json!("idle");
+        }
         public["interrupted"] = json!(snap["interrupted"] == true);
         let waits_for_prompt =
             !agents::adopts_session(kind) || snap["last_event"] == "SessionStart";
