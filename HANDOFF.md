@@ -8,8 +8,8 @@
 
 ## 本机安装
 
-- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/dd4d661`（10-23，R47c + R47d，Slack「允许这一次」按钮，真机实测过）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/dd02e36/bin/corral`（和 dd4d661 的 corral 相同；R47c 改了钩子，记 Bash 权限框的原始命令，10-23 已切）。退回：`~/.local/share/ranch/versions/dd4d661/bin/ranch deploy dd02e36`（会自动重启 pony）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
-- 上一版 `dd02e36`（10-23，R47c）、再上一版 `a04f7dd`（R47a + R47b）。再往前退回用 `versions/dd4d661/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；helper 退到 R47c（`dd02e36`）之前时，pony 拿不到原始命令，只是不给 Bash 的「允许」按钮，一般不用退 helper；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`。
+- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/5abf1f8`（10-24，R48d，Kimi 进派活表、题目给 pony）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/dd02e36/bin/corral`（R47c 改了钩子，记 Bash 权限框的原始命令，10-23 已切；R48c、R48d 没改钩子行为，不用换）。退回：`~/.local/share/ranch/versions/5abf1f8/bin/ranch deploy 0232198`（会自动重启 pony）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
+- 上一版 `0232198`（10-24，R48c，Kimi 基本接入；本机 `~/.kimi-code/config.toml` 装了 corral 的标记块）、再上一版 `dd4d661`（10-23，R47c + R47d）、`dd02e36`（R47c）、`a04f7dd`（R47a + R47b）。本机派活表写了 `kimi` 的段时，退到 R48d 之前要先删掉这些段（见 CONTRACT）。再往前退回用 `versions/5abf1f8/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；helper 退到 R47c（`dd02e36`）之前时，pony 拿不到原始命令，只是不给 Bash 的「允许」按钮，一般不用退 helper；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`。
 - 旧版本目录都保留，不删。
 - 技能：corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）装在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/`；技能内容编进程序，改技能要先打新版本再重装。
 - 全局插件：amp 在 `~/.config/amp/plugins/corral.ts`；agy 在 `~/.gemini/config/plugins/corral/`。两个 `integration status` 都是 same。
@@ -19,7 +19,7 @@
 ## 部署时要记得
 
 - 部署由用户在普通终端里跑 `~/.local/share/ranch/versions/<新版本>/bin/ranch deploy <新版本>`；主控先跑 `--dry-run` 给用户看计划，事后核对链接、`deploys.jsonl`、`pony status`。
-- 共用的 `~/.corral/.runtime/helper` 指 `versions/2d63ee1/bin/corral`（10-22 切），`ranch deploy` 不会跟着换。改了钩子代码（`hooks.rs`）的版本要换：部署后在普通终端跑 `corral start ranch/test-helper --label role=test -- /bin/cat`、`corral upgrade ranch/test-helper`、`corral stop ranch/test-helper`，不动用户的 agent。
+- 共用的 `~/.corral/.runtime/helper` 指 `versions/dd02e36/bin/corral`（10-23 切），`ranch deploy` 不会跟着换。改了钩子代码（`hooks.rs`）的版本要换：部署后在普通终端跑 `corral start ranch/test-helper --label role=test -- /bin/cat`、`corral upgrade ranch/test-helper`、`corral stop ranch/test-helper`，不动用户的 agent。
 - 部署前起的 pen 还是旧版，只对新开的 agent 生效；没跑过 `corral upgrade --all`。
 - pony 换程序要 `kickstart`、plist 变了要 `pony service install --yes`：`ranch deploy` 会自己判断、自己做。它在重装服务时如果被 Ctrl-C 打断，重跑不会自动把服务装回来，要手动跑目标版本的 `pony service install --yes`。
 - fence 用的 node 是 `~/.nvm/versions/node/v24.13.1/bin/node`，这个版本不能卸；srt 0.0.80。
