@@ -1,9 +1,9 @@
-description = "Kimi Code（R48f 试验草案，凭证只读时刷新受阻）；自带查资料，不注入 MCP"
+description = "Kimi Code；自带服务端搜索、读网页，不注入 MCP"
 services = ["kimi"]
 write = ["${home}/.kimi-code"]
 deny_write = [
   "${home}/.kimi-code/config.toml", "${home}/.kimi-code/tui.toml",
-  "${home}/.kimi-code/credentials", "${home}/.kimi-code/region",
+  "${home}/.kimi-code/region",
   "${home}/.kimi-code/server.token", "${home}/.kimi-code/device_id",
   "${home}/.kimi-code/mcp.json", "${home}/.kimi-code/plugins",
   "${home}/.kimi-code/AGENTS.md", "${home}/.kimi-code/skills",

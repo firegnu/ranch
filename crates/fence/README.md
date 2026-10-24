@@ -6,6 +6,8 @@
 
 `data/{profiles,agents,services,mcp}/*.toml` 编进程序，构建脚本按目录收集；增加种类、模型服务或 MCP 服务器只需增加数据。四家内置数据源于 `docs/调研/R17a-srt小试验.md`，按 `docs/调研/R17b-fence方案.md` 定稿。不是从其他仓库迁入的程序。
 
+R48f 新增第五家 Kimi，真机验收和源码依据见 `docs/任务/R48f-Kimi进sandbox.md`、DESIGN §8。Kimi 不注入 MCP，使用自带的服务端搜索、读网页，仅新增 `api.kimi.com`、`auth.kimi.com`。整个 `${home}/.kimi-code` 可写，配置及身份路径逐项禁写；credentials 按用户决定可写以自动续期，新增风险是可能改坏登录。缓存移到本次临时目录，关闭墙内 watcher、自动更新、遥测；不提供会话间隔离。
+
 `$FENCE_HOME` 默认 `~/.fence`；用户在其 `profiles/`、`agents/`、`services/`、`mcp/` 下放同名文件会整份替换内置数据。`local.toml` 是本机补充；工作区根目录的 `.fence.toml` 是仓库补充。规则来源可用 `fence profiles`、`fence check --profile dev --kind codex` 查看。
 
 合并顺序：档案 → 种类 → 模型服务 → 仓库 → 本机 → 调用方。列表取并集；环境变量以后面的为准并报告覆盖。种类默认服务可由档案和本机的 `[services]` 表整份替换，本机优先；不猜各家配置。pi/omp 的 `dev` 默认服务是 DeepSeek 和 opencode，分别放行 `api.deepseek.com` 和 `opencode.ai`。
@@ -15,6 +17,8 @@
 R30 将 R29 的 MCP 接入改为数据：`dev` 的 `mcp = ["exa"]` 默认仍用免 key、有限频的 Exa，搜索用 `web_search_exa`，已知网址用 `web_fetch_exa`，目标网页由 Exa 读取。Exa 的地址只在 `data/mcp/exa.toml`；所选 URL 的域名自动放行（非默认端口一并保留），GitHub 和 Rust 的八个域名仍在 `dev.domains`。fence 程序没有服务商分支；四家 `[mcp]` 模板决定每台服务器的参数和文件，资源只为当前种类生成，位于 `${tmp}/mcp/<服务器名字>/`，不写全局配置。同名种类或档案仍整份替换，旧自定义种类需自行补 `[mcp]` 模板。
 
 Codex 的 server 名为 `fence_exa_${run_nonce}`，避免 `-c` 与用户同名表递归合并、把旧认证字段发给 Exa；fence 不读取 Codex 配置文件。工具名为 `mcp__fence_exa_<随机值>__web_search_exa` 和 `mcp__fence_exa_<随机值>__web_fetch_exa`，应从当次工具目录发现。Claude、pi、omp 没有同类认证字段递归继承，名称保持原样；pi 用户配置中的同名 server 仍优先于扩展。
+
+R48f：指定种类没有 `[mcp]` 时跳过选中的 MCP，非空选择给出 `mcp_skipped` warning，不生成参数、文件或 MCP 域名，也不列其生效来源。key 源和链接目标仍强制禁读；不指定种类的 `check` 仍校验、预览档案 MCP。Kimi 因没有一次性 MCP 配置入口采用这一行为，其他四家模板及 `dev` 不变。
 
 用户 10-20 取消推送限制：GitHub 正常放行，Claude 的钥匙串读取照旧；是否推送由任务书约束，fence 不保证阻止 GitHub 写操作。
 

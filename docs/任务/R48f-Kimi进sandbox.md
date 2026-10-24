@@ -38,8 +38,8 @@
 
 - 用真 Kimi `corral start --sandbox dev`：
   1. 能登录、用用户的默认模型完成一个小改动（写工作区里的文件）；
-  2. 写工作区外、读 HOME 里的私有文件、改 Kimi 的配置都被拦，记进 `fence denials`；
-  3. 能用 Exa 查资料；
+  2. 写工作区外、读 HOME 里的私有文件、改 Kimi 的 config.toml 都被拦，记进 `fence denials`（用户 10-24 改用 config.toml，不要求凭证禁写）；
+  3. 能用 Kimi 自带的搜索/读网页查资料（用户 10-24 决定不注入 Exa）；
   4. 墙里开不了别的 agent；
   5. 主控设了 `child-sandbox dev` 后派 Kimi 会套墙。
 - 验证只做这些：上面五条用真 Kimi 实测（记下每条怎么看出来的）；fence 数据和改动的代码各有针对的测试（照四家已有测试的样子，先写测试确认现在失败）；`cargo test --all-targets --no-fail-fast`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各跑一次。可以加边角用例：Kimi 写自己的会话、日志目录；`server.token`、credentials 是否必须可读。觉得不够，在回复里说，不要自己加。
@@ -111,3 +111,31 @@ Kimi 种类照 Claude Code、Codex：`write` 收成整个 `${home}/.kimi-code`�
 - **新阻塞**：Kimi 首轮显示 `Skipped refreshing managed:kimi-code: EPERM` 及 `[internal] EPERM`，对象正是受保护 credentials 下的临时文件。固定版本 [oauth-manager.ts](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/oauth/src/oauth-manager.ts#L364) 的刷新流程先 `refreshImpl`，再 `storage.save`，保存成功才返回 access token；[storage.ts](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/oauth/src/storage.ts#L90) 必须创建 credentials 目录内的临时文件并 rename。目录禁写确实生效，也因此在需要刷新时无法继续使用模型。保存前已请求服务端刷新；是否影响原有登录态未验证，没有自行重试登录、复制凭证或放开写权限。
 - **待主控决定**：A：保留凭证禁写，由用户在墙外先刷新登录，再在 token 有效期间继续验收；之后到期仍需墙外刷新，必须把这一限制写清。B：修改原验收边界，允许 credentials 写入以支持自动刷新；同一进程权限下不能只允许 Kimi 自己而禁止它的工具写入。C：保持当前状态暂停。**建议 A，先保留既定保护边界**；本轮没有替用户执行墙外刷新，也没有改掉 credentials 禁写。主控尚未决定。
 - **没做／影响／踩坑**：不改 fence Rust 路径机制，不增加通配规则，不改其他仓库、用户全局配置、已装程序或技能，不部署、不合并、不推送。paddock 不用动，Kimi 数据仍标记试验草案。坑是“能到编辑器”不代表模型可用，自动刷新在首轮因凭证落盘被拒而失败；原生缓存和 watcher 则已用上述本次环境设置解决。临时源码、仓库、隔离 corral 目录和运行时辅助链接清理，fence 记录正常保留。
+
+### 主控决定（用户 10-24 定，允许凭证自动续期）
+
+从 `deny_write` 去掉 `${home}/.kimi-code/credentials`，允许墙内自动续期；config.toml、tui.toml 等其余配置和身份路径仍禁写。验收第 2 条用 config.toml 测配置禁写，不再要求凭证禁写。墙内本来就要读凭证，开放写入增加的是可能改坏登录的风险；用户接受，与 Claude Code 在墙内经钥匙串续期的使用目标一致。若上轮服务端刷新却未保存导致登录失效、Kimi 要求重新登录，停下告知主控，不自行登录、不碰凭证内容。之前已用 1 轮，累计额度仍为 5–10 轮短任务。
+
+## 完成记录
+
+2026-10-24，ranch/dev-r48f。前面的停点保留作为过程记录；最终权限与验收按上述三次主控决定执行。
+
+- **做了什么**：新增 Kimi 种类和模型服务；未带 `[mcp]` 的种类跳过所选 MCP 并给 warning，保留所有 key 源的禁读。Kimi 使用自己的 WebSearch、FetchURL，不改用户配置、不注入 Exa。credentials 从禁写表移除，其余配置／身份保护保留。修复围栏内 Kimi 全局 hook 的父进程校验：只在 Kimi 且 `FENCE_RUN == CORRAL_INSTANCE` 时容许多一级 runner，macOS 用 `proc_pidinfo` 读取两级父 PID，仍过滤嵌套 Kimi。同步 DESIGN §8、CONTRACT、fence README 和两份技能的 Kimi 派活段落。
+- **五条真实验收**：使用 Kimi 2.3.1、真实 srt 0.0.80 和本分支 debug corral/fence，`CORRAL_FENCE` 指向新 fence；所有 agent 带 `role=test`，cwd 在 worktree 外的临时 Git 仓库、CORRAL_HOME 隔离，不指定模型。
+
+  | 项目 | 实测证据 |
+  | --- | --- |
+  | ① 现有登录、默认模型、小改动 | 放开凭证写入后未要求重新登录。实例 `b94c87402c8f` 用默认 K2.8 Preview / max 创建 `hello.txt`，墙外回读为 `R48F_OK\n`；后续实例均可正常调用模型。没有读取、复制或手改凭证。 |
+  | ② 越界读写、配置禁写与 denials | 实例 `f98495fc6a6f` 由 Kimi 的 Bash 前台运行工作区 Rust 探针：读 HOME 自建诱饵、创建 HOME 另一个临时文件、以不截断的写方式打开 config.toml，均为 EPERM；`fence denials --agent ranch/test-r48f-native --instance f98495fc6a6f` 分别记下 `file-read-data`、`file-write-create`、`file-write-data`。tui.toml、region、server.token、device_id 的同样打开操作也返回 EPERM，不读其内容；这些快速连续拒绝没有全部出现在 srt 文件日志中，不把日志当完整审计。config.toml、tui.toml 前后 SHA-256 相同，诱饵内容未变、越界目标未创建。 |
+  | ③ 自带搜索与读网页 | `f98495fc6a6f` 的真实终端显示 `Used WebSearch (Rust 2024 edition official release date)`，返回发布日期与 Rust 官方博客链接；`b5fd99c38b95` 的 `status.last_tool` 为 `FetchURL`、`wait` 返回 idle、`reply` 返回 Example Domain 标题及摘要。搜索／读网页未出现新增网络拒绝。此前同一围栏中的 curl 直连 example.com 为 HTTP 403，`denials` 明记 `example.com:443` 不在 allow list，证明未额外开放目标网页。 |
+  | ④ 墙内不能再开 agent | 上述 Rust 探针执行新 corral 的 `start ranch/test-r48f-nested --no-sandbox --label role=test -- /bin/cat`，返回退出码 6、`error:sandbox`、`running inside fence`，没有创建嵌套 agent；探针总退出码 0。 |
+  | ⑤ 继承 child-sandbox | 隔离主控 `ranch/test-r48f-controller`（`/bin/cat`，实例 `bb0116c149ae`）设 `child-sandbox dev`；以该主控的 CORRAL_NAME／CORRAL_INSTANCE 调 `start`，未带 `--sandbox` 或 `--no-sandbox`，新 Kimi `ranch/test-r48f-child` 实例 `6ee901baf6b1` 的 start、status 均为 `sandbox:{profile:dev}`，fence 记录 kind=kimi。它创建 `child.txt` 为 `CHILD_WALLED\n`，再前台运行同一边界探针，退出码 0；wait、reply 正常。 |
+
+- **额度和收尾**：总计 **6 轮短任务**：第 1 轮为上次凭证保存被拒的失败；第 2 轮写 hello；第 3 轮边界探针；第 4 轮 WebSearch；第 5 轮 FetchURL；第 6 轮继承围栏后写 child 并复用探针。无额外模型调试轮。原 hook 失效时 send 因 starting 未提交，第 4 轮用测试 agent 的 keys 输入并提交一次；诊断退出用 `/exit`，不计模型轮。所有测试 agent 均已退出（native 退出码 0，其余按任务 stop），隔离 `corral ls` 为空，三个最终 fence 记录均 `running:false`；HOME 诱饵已删除。仅为定位 hook 临时替换隔离 CORRAL_HOME 的 helper 链接，已还原，未切用户共用 helper。实测用的 runner/runtime/srt 辅助链接已撤掉；fence 运行记录正常保留。
+- **最终放行与理由**：Kimi 自己只新增 `api.kimi.com`、`auth.kimi.com`，由前轮零域名启动的拒绝记录确认；`dev` 既有 GitHub／Rust 域名不变，不加入任意互联网、CDN、遥测或目标网页域名。写路径只有 `${home}/.kimi-code` 一条，支持 `workspaces.json` 的同目录随机临时文件以及 sessions、session_index、user-history、logs、cache、file-history、search-index、locks、oauth 的运行数据；凭证目录按用户决定可写，供 OAuth 刷新保存。config.toml、tui.toml、region、server.token、device_id、mcp.json、plugins、AGENTS.md、skills、agents、workspace-trust、bin 禁写，理由及源码位置见前述 B 记录。原生缓存移到本次 `${tmp}/kimi-cache`，仅本次禁用 watcher、自动更新和遥测；不额外读 HOME 技能、shell 配置或 Library 缓存，不提供会话间隔离。
+- **拿主意的地方**：完整执行三次主控决定：无一次性 MCP 入口，所以不接 Exa；选择 B 开整个 Kimi 根目录写并保护配置／身份；为自动续期放开 credentials 写入。墙内本来就能读凭证，增加的风险是可改坏登录，用户已接受；Claude Code 墙内也能经钥匙串续期。fence Rust 只加已获准的缺模板跳过逻辑，没有改路径机制、进程权限或加通配规则。Kimi hook 的小改位于任务已允许的 corral 范围，其他家行为不变，没有新增待主控决定的事项。
+- **针对验证**：fence 种类、无模板 MCP 跳过与 key 源保护均先 RED 后 GREEN，四家原有 MCP 回归通过；credentials 可写断言在仍禁写时先失败，再移除禁写后通过。hook 最初以多一级 runner 的合成测试复现 starting；真机进一步发现 macOS `/bin/ps` 执行被拒，用 `sandbox-exec` 明确禁止该命令补强测试，实收 RED 后改用系统接口，再 GREEN。最新 corral 针对测试为 Kimi 10 通过（1 个原有合成子进程 fixture 按原样 ignored）、sandbox 16 通过，包含围栏主会话落事件、嵌套会话无事件与 hook 空输出。没有缩短现有超时、删除测试或放宽断言。
+- **全量检查**：按任务各跑一次，均在前台结束、退出码 0：`cargo test --all-targets --no-fail-fast` 共 **477 通过、0 失败、16 按原设定 ignored**；`cargo clippy --all-targets -- -D warnings` 零警告；`cargo fmt --check` 通过。均使用独立 `.target/r48f`；`git diff --check` 也通过。自查没有越过任务允许的文件范围，没有留下诊断代码、临时探针或运行中的测试 agent。
+- **没做的事**：未做 Linux；未改其他家的数据、dev 档案、fence 路径机制、用户 Kimi 配置、fence 本机配置或 keys；未读取凭证、token、device_id、server.token 内容。凭证写入仅由 Kimi 运行时按用户授权自动续期。未改其他仓库、安装技能、打包、部署、合并或推送；只在 r48f 提交。
+- **对 paddock 的影响**：新增可用的 Kimi sandbox 种类、模型服务和技能说明，保持命令、参数、JSON 字段和退出码兼容；paddock 不用动。需由后续部署新 corral/fence 才在用户日常启动生效，本任务没有部署。
+- **踩过的坑**：工作区索引必须在根目录原子写，零散文件放行不够；只读 credentials 能进入编辑器却在首轮自动续期保存时失败；macOS 的 setuid `/bin/ps` 在墙内无法执行，单纯补 runner 层数的合成测试不足，加入实际拒绝条件后才锁住 bug。原生缓存／watcher 已用官方环境入口处理。实测的开发目录 runtime 会干扰已有 `runtime_missing` 测试，已先撤掉再跑全量检查；没有改变断言来容纳实测环境。

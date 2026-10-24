@@ -79,7 +79,6 @@ fn kimi_uses_native_research_and_keeps_configuration_read_only() {
     for path in [
         "config.toml",
         "tui.toml",
-        "credentials",
         "region",
         "server.token",
         "device_id",
@@ -98,6 +97,7 @@ fn kimi_uses_native_research_and_keeps_configuration_read_only() {
     }
     assert!(write.contains(&json!(root.join(".kimi-code"))));
     assert!(read.contains(&json!(root.join(".kimi-code"))));
+    assert!(!denied.contains(&json!(root.join(".kimi-code/credentials"))));
     assert_eq!(v["env"]["KIMI_CODE_CACHE_DIR"], "<运行时才有>/kimi-cache");
     assert_eq!(v["env"]["KIMI_CODE_WATCH"], "0");
 }
