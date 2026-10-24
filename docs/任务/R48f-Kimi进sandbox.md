@@ -140,3 +140,12 @@ Kimi 种类照 Claude Code、Codex：`write` 收成整个 `${home}/.kimi-code`�
 - **对 paddock 的影响**：新增可用的 Kimi sandbox 种类、模型服务和技能说明，保持命令、参数、JSON 字段和退出码兼容；paddock 不用动。需由后续部署新 corral/fence 才在用户日常启动生效，本任务没有部署。
 - **踩过的坑**：工作区索引必须在根目录原子写，零散文件放行不够；只读 credentials 能进入编辑器却在首轮自动续期保存时失败；macOS 的 setuid `/bin/ps` 在墙内无法执行，单纯补 runner 层数的合成测试不足，加入实际拒绝条件后才锁住 bug。原生缓存／watcher 已用官方环境入口处理。实测的开发目录 runtime 会干扰已有 `runtime_missing` 测试，已先撤掉再跑全量检查；没有改变断言来容纳实测环境。
 - **审查后补文档（用户 10-24 定）**：按交叉审查的三条「建议改」补清所有 Kimi 会话可读写及墙外恢复风险、身份与跨项目数据的读暴露和种类不支持 `deny_read` 的限制，并修正有 `[mcp]` 模板的种类及自定义无模板种类的域名约定，仅改文字，验证只运行 `git diff --check`，未重跑全套。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48f-1`（Codex gpt-6-astra / xhigh）。中途停了三次，都交用户定：不注入 Exa、改用 Kimi 自带搜索；整个 `~/.kimi-code` 可写、配置身份逐项禁写（Claude Code、Codex 也是这种写法）；credentials 可写以便墙里自动续期。另外按任务允许的范围修了 Kimi 全局 hook 在墙里的父进程校验（macOS 墙内执行不了 `/bin/ps`）。
+- 看了 diff，只动了允许的目录；`local.toml` 的 `mcp` 类型错误在前面就报 `invalid_data`，碰不到新代码的 `unwrap`。在 r48f 上重跑 `cargo test --all-targets --no-fail-fast`：477 通过、0 失败、16 跳过，和 dev 说的一致。五项真 Kimi 验收看完成记录，共 6 轮，在额度内。
+- 交叉审查 `ranch/review-r48f-1`（Claude Code opus[1m] / xhigh）：可以合并，0 必须改；3 条建议改都是文档（会话不隔离、墙里可读的东西、README 的「四家」说法），用户定补完再合并，dev 补在 `be50d0f`，主控看过；4 条可以不改的不采纳，理由见审查文件。
+- 留给以后：会话间不隔离、种类不支持 `deny_read`，要不要另做由用户定。
+结果：一次过
