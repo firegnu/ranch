@@ -95,3 +95,10 @@
 - 可以不改的 3 条：Kimi 后台提问（`background:true`）pony 多半看不到这道题，记进 HANDOFF 已知问题，阶段 4 用真 Kimi 测；Kimi 提问线程里回「停」只关框、模型接着跑，是 R45 原有行为，阶段 4 再看；测试里 `resolved` 的键名和真实 wire 不同，不影响结果，下次改到再换。
 - 对 paddock 的影响：兼容新增可选 `env`、`kimi` 格，以及 Kimi 的 `status.questions`；现有调用不用改，设置页显示 `env` 在 paddock 自己的任务里接。
 结果：一次过
+
+## 部署后实测
+
+2026-10-24，装的 `5abf1f8`，用户在场，用真 Kimi（用户的账号和默认模型），测试 agent 都带 `role=test`、在临时目录，用完已 stop，没有残留进程。
+- 派活：照 `ranch dispatch cell kimi` 的命令开 `ranch/test-kimi-1`（`--env KIMI_CODE_TRUST_WORKSPACE=1`，`-- kimi --auto`），没弹信任框，写对了文件，回复末行 DONE，状态回到 idle、没有 `questions`。
+- 题目给 pony：普通模式开 `ranch/test-kimi-q-1` 弹单选题。`corral status` 为 `blocked`、带题目；Slack #ranch 的提醒列出题目和 A/B/C 选项，末尾「请回电脑回答；这里的回复会等它处理完再送」，没有按钮。用户在线程回「A 红」，pony 回「在等你处理对话框，处理完再送」，提问框仍开着、没有送话或按键。用户在电脑上选「蓝」，Kimi 回「你选的是：蓝」；空下来后 pony 把「A 红」当普通消息送进去，Kimi 复述，回复贴回线程。
+- 第一次（`ranch/test-kimi-ask-1`）主控没交代清楚在哪里答，电脑上先答了，分不出线程回复的作用，作废重测。
