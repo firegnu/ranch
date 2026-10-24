@@ -63,3 +63,13 @@
 - **对 paddock 的影响**：`stop.remaining_pids` 是兼容新增的可选字段，无残留时不出现，paddock 现有调用不用改；如需显示残留，可直接用命令输出，无须读内部目录。
 - **踩过的坑**：没有。
 - **审查后补充（2026-10-24，用户已定）**：仅补 CONTRACT 的 Kimi `stop` 说明及 DESIGN §7 对应文字：`stopped_by:null` 表示没取到本次退出记录（可能被并发 `corral ls` 清掉），不能用缺少 `remaining_pids` 判断没有残留；有残留时停止约需 8 秒，调用方的 `--timeout` 要留够。未改代码，验证只跑 `git diff --check`，通过。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48e-1`（Codex gpt-6-astra / xhigh），交叉审查 `ranch/review-r48e-1`（Claude Code opus[1m] / xhigh），意见在 `docs/任务/R48e-审查.md`。
+- 提交 `554f9e4`：只动了允许的文件；看过 diff，两条验收各有针对测试，第 2 条先红后绿。主控在 r48e 上跑全套：465 通过、15 跳过、0 失败；clippy、fmt 通过，和 dev 说的一致。首读用时 dev 测 145.7 → 28.3 ms（旧基线 28.3），审查另测 150 → 35 ms（旧基线 35），回到旧水平。
+- 交叉审查：可以合并，必须改 0 条。建议改 1 条：`stop` 和同时跑的 `corral ls` 竞争，`ls` 可能先删掉 `exit.json`，`stop` 输出 `exit_code`、`stopped_by` 为 null，`remaining_pids` 也丢（R48e 之前就有，所有 agent 都会碰上）。可以不改 1 条：Kimi 有残留时停止要 8 秒以上，短 `--timeout` 会先报超时。
+- 用户决定：两条都在 CONTRACT 补说明，由 dev 改（`369f24a`，只改文字，主控看过 diff）；竞争的修法另记草稿 `docs/任务/R51-stop与ls同时跑丢退出记录.md`，以后再做。dev 的取舍主控和审查都同意。
+- 对 paddock 的影响：`stop.remaining_pids` 是兼容新增可选字段，现有调用不用改。
+结果：一次过
