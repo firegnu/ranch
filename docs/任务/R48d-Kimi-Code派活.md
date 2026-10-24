@@ -78,3 +78,9 @@
 - 没做的事：未做 Kimi 的 Slack 回答、按钮、自动送答案、Claude 式 Esc 核对或 sandbox；未做真实 Slack 发消息测试，展示用合成 status 验证。未部署、打包、安装技能、切 helper、改用户模型/钩子配置/本机派活表，未操作用户已有 agent，未合并或推送。
 - 对 paddock 的影响：兼容新增可选 `env`、`kimi` 格，以及 Kimi 提供 `status.questions`；现有调用无需修改，设置页可另接环境变量展示，题目可沿用 R43 格式。含 `env` 的本机覆盖表需用新版 ranch 读写；看到 `questions` 不代表能用 Claude 的回答按键。
 - 踩过的坑：原派活测试写死 12 格，pony 展示写死 claude，分别向主控取得上述范围决定。新增 reset 保留检查起初把格子前的分隔空行算进家模板，toml_edit 删除格子时会一起删该空行；检查改为核对家模板段的原文，未改旧测试断言。Clippy 首跑要求简化新增的布尔表达式，修正并格式化后复验通过。
+
+## 采纳审查建议记录
+
+- 改了什么：采纳审查意见第 1、2、3 条。CONTRACT 补充本机表含 Kimi 家或格子时，退回 R48d 之前的 ranch 会整表报 `invalid_data`，须先删掉这些段，包含 paddock 设置页 `edit` 写入的 `[cells.kimi]`；派活技能补全 amp 命令里的读表 `env` 参数，并将通用 `env` 说明挪到示意命令后；DESIGN §10「提醒」补充 Kimi 列题目、提示回电脑回答和线程回复排队，不走 R45 / R47b 的回答和按钮。本轮只改说明文字，paddock 不用动。
+- 验证了什么：`CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r48d cargo test -p ranch-dispatch` 前台跑完，21 条测试通过，0 失败，文档测试 0 条；`git diff --check` 通过。未增加其他验证。
+- 踩过的坑：没有。

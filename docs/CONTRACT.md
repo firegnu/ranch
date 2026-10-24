@@ -24,7 +24,7 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 R48d：家模板增加可选 `env`（`KEY=VALUE` 字符串数组），在 `table.agents.<家>`、`cell` / `table` 的 `choices[]`（含 `review.choices[]`）原样给出；未定义时字段缺省，旧家的行为和输出不变。每项用第一个 `=` 分隔，键非空，键和值不含 NUL；值可为空、含空格或 `=`，不做模板或 shell 展开，格式错误报 `invalid_data`。调用方每项各传一个 corral `--env` 参数；`argv` / `command` 仍只含 agent 命令，不内嵌环境变量。本机表按字段覆盖，`env` 整个数组替换，`env = []` 清空。`edit` / `reset` 仍只改格子，保留家的 `env`。
 
-内置新增 `agents.kimi` 与 `cells.kimi`，只在用户或任务文件点名 Kimi 时使用：`argv:["kimi","--auto"]`、`env:["KIMI_CODE_TRUST_WORKSPACE=1"]`、`labels:[]`，不指定模型、强度，沿用用户默认。没有默认档位引用 Kimi。启动时逐项传环境变量并照常带 `--prompt`；不写 Kimi 信任记录。对 paddock：兼容新增可选字段和一个格子，设置页可在后续任务显示 `env`，名称仍按返回数据读取。含 `env` 的本机覆盖表需使用 R48d 及以后 ranch 读写，旧版会报未知字段；新版接受没有该字段的旧表。
+内置新增 `agents.kimi` 与 `cells.kimi`，只在用户或任务文件点名 Kimi 时使用：`argv:["kimi","--auto"]`、`env:["KIMI_CODE_TRUST_WORKSPACE=1"]`、`labels:[]`，不指定模型、强度，沿用用户默认。没有默认档位引用 Kimi。启动时逐项传环境变量并照常带 `--prompt`；不写 Kimi 信任记录。对 paddock：兼容新增可选字段和一个格子，设置页可在后续任务显示 `env`，名称仍按返回数据读取。含 `env` 的本机覆盖表需使用 R48d 及以后 ranch 读写，旧版会报未知字段；新版接受没有该字段的旧表。本机表写了 `kimi` 的家或格子（包括 paddock 设置页 `edit` kimi 格写进去的 `[cells.kimi]`）时，退回 R48d 之前的 ranch 会整张表报 `invalid_data`，退回前要先删掉这些段。
 
 本机文件格式（以下只说明覆盖用法，不代表默认分工调整）：
 

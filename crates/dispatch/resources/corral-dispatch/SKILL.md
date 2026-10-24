@@ -228,13 +228,13 @@ model = "用户选定的模型"
 
 - 名字用 AGENTS.md 规定的前缀，`--cwd` 指向它的 worktree。把读表选中的 `choices` 项的完整 `command` 放在 `--` 后，每条 `labels` 各加一个 `--label`（空数组就不带）。下面是拼接示意，占位符须替换为实际返回值；也可以用 `argv` 逐项传参。第一句话很短，只让它去读文件：
 
-  若所选 `choices` 项有 `env`，每项原样作为一个 `--env` 的参数传在 `--` 之前，按 shell 规则引用整个 `KEY=VALUE`，不执行其中的变量或命令；缺省或空数组就不带。
-
   ```sh
   corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 env 对应的 --env 参数> <读表 labels 对应的 --label 参数> --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- <读表 command>
   ```
 
-  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- <读表 amp 的 command>`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
+  若所选 `choices` 项有 `env`，每项原样作为一个 `--env` 的参数传在 `--` 之前，按 shell 规则引用整个 `KEY=VALUE`，不执行其中的变量或命令；缺省或空数组就不带。
+
+  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 env 对应的 --env 参数> -- <读表 amp 的 command>`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
   派给 agy 照上面的样子带 `--prompt`（agy 不带它就一直是 `starting`），不带 `--label`，`--` 后用读表 agy 的 `command`。
   派给 Kimi 同样带 `--prompt`，用 `kimi` 格的 `command`，把该项 `env` 每项各传一个 `--env`；内置值为 `KIMI_CODE_TRUST_WORKSPACE=1`，只对这次启动生效，不写 Kimi 的信任记录。内置命令为 `kimi --auto`，不加模型、强度，标签为空；`--auto` 不会打开提问框，需要提问的普通模式按 corral 技能启动。
 
