@@ -74,3 +74,13 @@
 - 踩过的坑：首次精确过滤用了测试名前缀，实际运行 0 项，已修正过滤并取得真实 RED。CLI read 会剥掉 ANSI，最初半截查询等待因此超时，改用现有 pen read 的原始字节后确认了升级缺失回答的 RED，真 Codex 也用同一只读方法观察颜色。嵌套快照测试的 json! 超过宏递归上限，拆成 pen 与外层两份 JSON，没有提高编译器限制。
 
 2026-10-24 审查后补改（主控决定）：采纳审查意见第 1–3 条，第 4、5 条不改，审查文件只读。partial 合成 agent 改为收到完整 2 MiB 输入加回答后继续观察 200 毫秒，读取总上限 10 秒；父测试留 12 秒等读取及结果序列化，原逐字节相等和及时回答断言不变。新建 CORRAL_HOME、`.runtime` 使用与 hooks::helper 一致的递归 DirBuilder／0700，已有目录不改权限。只查时无效 JSON、字段或颜色返回 `invalid_settings`、退出码 1，信息带设置文件路径，CONTRACT 已说明；命令参数错误仍是 usage，start 原有 warning 处理不变。先补权限和坏文件测试，分别确认旧实现建成 0755、坏颜色误报 usage 的 RED，修正后 `cargo test -p corral-core --test protocol terminal_colors` 为 7 通过、1 个合成子程序入口跳过（由 PTY 测试实际启动）。按意见先编译 protocol，再同时运行三份 `--exact terminal_colors_reply_bypasses_send_delay_but_never_splits_a_chunk`，三份均通过（各约 6 秒）；修改前同样跑三份在当时负载下未复现超时，未加额外压力轮次。`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 均通过，没有重跑全套或真 Codex。对 paddock：设置调用无需变更，只查坏文件可与旧版不支持区分；没有其他待主控决定的事。未修改审查文件、未合并或推送。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r50b-1`（Codex gpt-6-astra / xhigh），交叉审查 `ranch/review-r50b-1`（Claude Code opus[1m] / xhigh），意见在 `docs/任务/R50b-审查.md`。
+- 提交 `6cfb24f`：只动了 `crates/corral/` 和两份文档；看过 diff，回答在解析到查询时按有无写者判断一次，回答队列不插进已开始写的块，快照新字段都 `serde(default)`、`SCHEMA` 不变。主控在 r50b 上跑全套：472 通过、16 跳过、0 失败；clippy、fmt、`git diff --check` 通过。真 Codex 两次（浅色设置下浅底色、未设置时深色）看完成记录，主控没有重开。
+- 交叉审查：可以合并，必须改 0 条；建议改 3 条，可以不改 2 条（`color_replies` 没上限、块与块之间可以插回答）。主控采纳 3 条建议改，交原 dev 改（`99400a5`）：2 MiB 测试读够字节再收尾、上限放宽到约 10 秒；`terminal-colors` 建目录用 0700；只查时坏设置报 `invalid_settings`、CONTRACT 补说明。主控看过 diff，颜色相关 7 个测试通过，按审查的复现办法同时跑 3 份都过。dev 的取舍主控和审查都同意。
+- 审查顺带发现 `lifecycle.rs` 原有测试跑完会在 `/tmp` 留一个空目录（和本件无关，未改）。
+- 对 paddock 的影响：兼容新增命令 `corral terminal-colors`；paddock 在启动、换主题时、远端开 agent 前调用，旧版报 `usage` 忽略。需求由用户转给 paddock。
+结果：一次过
