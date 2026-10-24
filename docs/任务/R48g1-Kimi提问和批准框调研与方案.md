@@ -101,3 +101,11 @@ ranch/dev-r48g1（Claude Code），2026-10-24。
   - 改成看 wire 和 `corral status` 来判断。报告 §2.4 写了这对方案的影响。
 - `corral stop` 会删掉 agent 的状态目录，events 文件没来得及整份留下，只留了中途摘的 `r1-events.txt`、`r6-events-tail.txt`。
 - 有一条轮询命令里误带了一句什么也不做的 `python3 -c 1`，之后没再用；工具和测试都没有用 Python。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48g1-1`（Claude Code opus[1m] / xhigh）。提交 `5b46eed`：只动了报告和本文件；`git diff --check` 通过。报告回答了「要做的」6 条，每条标了实测或源码依据，没测到的列在「未知」。真 Kimi 10 轮，在额度上限内；测试 agent 已停。
+- 本轮另发现 pony 现在在 Kimi 批准框上的「拒绝」和「停」只按一次 Esc，停不下来，已并进方案。
+- 报告「要用户定的」5 条，用户都选推荐（已补进报告末尾「用户的决定」）；实现另写 R48g2 需求单给用户看过再派。
+结果：一次过
