@@ -6,7 +6,9 @@
 
 `data/{profiles,agents,services,mcp}/*.toml` 编进程序，构建脚本按目录收集；增加种类、模型服务或 MCP 服务器只需增加数据。四家内置数据源于 `docs/调研/R17a-srt小试验.md`，按 `docs/调研/R17b-fence方案.md` 定稿。不是从其他仓库迁入的程序。
 
-R48f 新增第五家 Kimi，真机验收和源码依据见 `docs/任务/R48f-Kimi进sandbox.md`、DESIGN §8。Kimi 不注入 MCP，使用自带的服务端搜索、读网页，仅新增 `api.kimi.com`、`auth.kimi.com`。整个 `${home}/.kimi-code` 可写，配置及身份路径逐项禁写；credentials 按用户决定可写以自动续期，新增风险是可能改坏登录。缓存移到本次临时目录，关闭墙内 watcher、自动更新、遥测；不提供会话间隔离。
+R48f 新增第五家 Kimi，真机验收和源码依据见 `docs/任务/R48f-Kimi进sandbox.md`、DESIGN §8。Kimi 不注入 MCP，使用自带的服务端搜索、读网页，仅新增 `api.kimi.com`、`auth.kimi.com`。整个 `${home}/.kimi-code` 可写，配置及身份路径逐项禁写；credentials 按用户决定可写以自动续期，新增风险是可能改坏登录。缓存移到本次临时目录，关闭墙内 watcher、自动更新、遥测。
+
+不提供会话间隔离：墙内能读写所有 Kimi 会话的历史、批准记录和定时任务，墙外恢复这些会话时会生效；套过墙的会话不要在墙外直接恢复。`${home}/.kimi-code` 下的 server.token、device_id、credentials/mcp/、别的项目的会话、user-history、file-history 墙里都可读；种类数据目前不支持 `deny_read`。
 
 `$FENCE_HOME` 默认 `~/.fence`；用户在其 `profiles/`、`agents/`、`services/`、`mcp/` 下放同名文件会整份替换内置数据。`local.toml` 是本机补充；工作区根目录的 `.fence.toml` 是仓库补充。规则来源可用 `fence profiles`、`fence check --profile dev --kind codex` 查看。
 
@@ -48,11 +50,11 @@ R48f：指定种类没有 `[mcp]` 时跳过选中的 MCP，非空选择给出 `m
    mcp = ["research"]
    ```
 
-   这一列表整份替换档案的选择，四家一起生效，不用复制 `dev` 或各家种类文件；`mcp = []` 关闭，删掉该行恢复档案默认值，多个名字可同时选择。URL 域名自动放行，不必再写 `domains`。
+   这一列表整份替换档案的选择，对有 `[mcp]` 模板的种类生效，不用复制 `dev` 或各家种类文件；`mcp = []` 关闭，删掉该行恢复档案默认值，多个名字可同时选择。URL 域名自动放行，不必再写 `domains`。
 
 3. 要 key 才做：在墙外创建 `~/.fence/keys/research`，文件只放 key 本身（单行，可有末尾换行）；建议 `keys/` 权限 0700、文件 0600。文件名与服务器数据名相同，`FENCE_HOME` 被改时这些路径也相应改变。没有该文件就按免 key 连接；有文件但缺少 `auth.header`、key 为空或无效则启动失败。
 
-4. `fence check --profile dev --kind codex` 可查看选中的 `mcp` 来源和域名；随后新启动的四家套 `dev` 墙的 agent 使用新服务。`check` 不读取 key，参数里的认证头为空，不能用它验证 key 或连接；key 只在 `run` 时读取并装配。
+4. `fence check --profile dev --kind codex` 可查看选中的 `mcp` 来源和域名；随后新启动的 agent 中，有 `[mcp]` 模板的种类套 `dev` 墙时使用新服务。`check` 不读取 key，参数里的认证头为空，不能用它验证 key 或连接；key 只在 `run` 时读取并装配。
 
 key 只支持不含 `$` 的普通 ASCII HTTP 请求头字面值；组合后的 `prefix + key` 拒绝任何 `$`（包括 `$VAR`、`${VAR}`、`$$`），也拒绝以 `!` 开头的命令求值、空 key 和非法控制字符。各家只在对应 server 配置里收到认证：Claude 的 `--mcp-config` 只带 0600 文件路径；Codex 的 `env_http_headers` 只引用本次、该服务器专用的 `FENCE_MCP_<随机值>_<序号>_<头序号>` 变量，真实值由 fence 通过进程环境传入；pi／omp 写 0600 临时文件。真实 key 不进启动 argv、shell 参数、`check` 输出或 fence 运行记录，Codex 专用环境也不进入可输出的规则 `env`。
 

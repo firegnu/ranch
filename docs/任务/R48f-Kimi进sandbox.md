@@ -139,3 +139,4 @@ Kimi 种类照 Claude Code、Codex：`write` 收成整个 `${home}/.kimi-code`�
 - **没做的事**：未做 Linux；未改其他家的数据、dev 档案、fence 路径机制、用户 Kimi 配置、fence 本机配置或 keys；未读取凭证、token、device_id、server.token 内容。凭证写入仅由 Kimi 运行时按用户授权自动续期。未改其他仓库、安装技能、打包、部署、合并或推送；只在 r48f 提交。
 - **对 paddock 的影响**：新增可用的 Kimi sandbox 种类、模型服务和技能说明，保持命令、参数、JSON 字段和退出码兼容；paddock 不用动。需由后续部署新 corral/fence 才在用户日常启动生效，本任务没有部署。
 - **踩过的坑**：工作区索引必须在根目录原子写，零散文件放行不够；只读 credentials 能进入编辑器却在首轮自动续期保存时失败；macOS 的 setuid `/bin/ps` 在墙内无法执行，单纯补 runner 层数的合成测试不足，加入实际拒绝条件后才锁住 bug。原生缓存／watcher 已用官方环境入口处理。实测的开发目录 runtime 会干扰已有 `runtime_missing` 测试，已先撤掉再跑全量检查；没有改变断言来容纳实测环境。
+- **审查后补文档（用户 10-24 定）**：按交叉审查的三条「建议改」补清所有 Kimi 会话可读写及墙外恢复风险、身份与跨项目数据的读暴露和种类不支持 `deny_read` 的限制，并修正有 `[mcp]` 模板的种类及自定义无模板种类的域名约定，仅改文字，验证只运行 `git diff --check`，未重跑全套。

@@ -380,9 +380,11 @@ Codex 使用每次运行独立的 `fence_exa_${run_nonce}` server 名；`${run_n
 
 R30 替代 R29 的固定资源：`data/mcp/` 提供 HTTP MCP 服务器，`$FENCE_HOME/mcp/` 同名整份替换；档案顶层 `mcp` 数组决定选择，本机 `local.toml` 顶层同名数组整份替换，空数组关闭。内置 `dev` 仍选 Exa，URL 带搜索与读网页两个工具，域名由服务器 URL 自动加入。各家接入改由种类 `[mcp]` 的参数及文件模板生成，临时资源位于 `${tmp}/mcp/<服务器名字>/`。旧自定义种类需自行补模板；不自动改用户配置。
 
-R48f：指定种类没有 `[mcp]` 时，所选 MCP 不生成参数、文件，不额外放行其域名，`layers` 不列其 MCP 来源；选择非空时 `warnings` 给出 `mcp_skipped: <种类> 没有 [mcp] 模板，跳过所选 MCP`。所有 key 源及链接目标仍强制禁读；不指定种类的 `check` 仍验证、预览档案的 MCP。已有四家内置模板不变。Kimi 按用户决定使用自带服务端搜索、读网页，不走 Exa：2.3.1 的 [commands.ts](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/apps/kimi-code/src/cli/commands.ts) 没有一次性 MCP 配置参数，[configLoader.ts](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/agent-core-v2/src/app/mcpConfig/configLoader.ts) 只加载固定用户／项目路径。不改用户全局配置。
+R48f：指定种类没有 `[mcp]` 时，所选 MCP 不生成参数、文件，不额外放行其域名，`layers` 不列其 MCP 来源；选择非空时 `warnings` 给出 `mcp_skipped: <种类> 没有 [mcp] 模板，跳过所选 MCP`。自定义的无模板种类不再自动放行 MCP 域名，需要的在种类 `domains` 里自己写。所有 key 源及链接目标仍强制禁读；不指定种类的 `check` 仍验证、预览档案的 MCP。已有四家内置模板不变。Kimi 按用户决定使用自带服务端搜索、读网页，不走 Exa：2.3.1 的 [commands.ts](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/apps/kimi-code/src/cli/commands.ts) 没有一次性 MCP 配置参数，[configLoader.ts](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/agent-core-v2/src/app/mcpConfig/configLoader.ts) 只加载固定用户／项目路径。不改用户全局配置。
 
-Kimi 可显式 `--sandbox dev`，也继承主控的 `child-sandbox dev`；墙内不能再开 agent。整个 `${home}/.kimi-code` 可写以支持会话、索引及同目录原子写，config.toml、tui.toml、region、server.token、device_id、mcp.json、plugins、AGENTS.md、skills、agents、workspace-trust、bin 禁写。用户 10-24 允许 credentials 写入以自动续期：墙内原本就要读凭证，新增风险是可能改坏登录；Claude Code 经钥匙串也能在墙内续期。其余配置和身份路径仍禁写。原生缓存放本次临时目录，关闭墙内文件 watcher、自动更新和遥测；不提供 Kimi 会话间隔离。Kimi 模型服务只新增实测所需的 `api.kimi.com`、`auth.kimi.com`，不额外放行搜索、读网页的目标域名。
+Kimi 可显式 `--sandbox dev`，也继承主控的 `child-sandbox dev`；墙内不能再开 agent。整个 `${home}/.kimi-code` 可写以支持会话、索引及同目录原子写，config.toml、tui.toml、region、server.token、device_id、mcp.json、plugins、AGENTS.md、skills、agents、workspace-trust、bin 禁写。用户 10-24 允许 credentials 写入以自动续期：墙内原本就要读凭证，新增风险是可能改坏登录；Claude Code 经钥匙串也能在墙内续期。其余配置和身份路径仍禁写。原生缓存放本次临时目录，关闭墙内文件 watcher、自动更新和遥测。Kimi 模型服务只新增实测所需的 `api.kimi.com`、`auth.kimi.com`，不额外放行搜索、读网页的目标域名。
+
+不提供会话间隔离：墙内能读写所有 Kimi 会话的历史、批准记录和定时任务，墙外恢复这些会话时会生效；套过墙的会话不要在墙外直接恢复。`${home}/.kimi-code` 下的 server.token、device_id、credentials/mcp/、别的项目的会话、user-history、file-history 墙里都可读；种类数据目前不支持 `deny_read`。
 
 Kimi 全局 hook 在 `FENCE_RUN` 与实例匹配时，父进程校验容许多一层 runner；macOS 用系统进程信息接口核对父 PID，避免墙内不能执行的 setuid `/bin/ps`。嵌套 Kimi 仍不记事件，其他家的 hook 行为不变。新增种类／服务及技能说明保持兼容，命令、JSON 字段和退出码不变，paddock 不用动。
 
