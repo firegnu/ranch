@@ -70,3 +70,34 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么（真 Kimi 用了几轮）、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+ranch/dev-r48g1（Claude Code），2026-10-24。
+
+**做了什么**：读了 R42、R45–R48d 的资料，pony 和 corral 里相关的代码，还有 Kimi Code 2.3.1 的源码（`684bae9`，只读）。开了两个测试 agent（`ranch/test-r48g1-q`、`ranch/test-r48g1-bg`），用真 Kimi 测了提问框、批准框、后台提问和打断。写了 `docs/调研/R48g-Kimi提问和批准框.md`：任务书要的 6 条、「未知」，以及 5 件要用户定的事。
+
+**验证了什么**：真 Kimi 用了 10 轮，到了额度上限。每轮送的话和之后按的键都列在报告「依据与边界」的轮次表里；另外在空闲时按了 `esc esc` 和 `esc`，这两下只按键，不算轮。报告里每条实测结论都和 worktree 外 scratchpad `raw/` 里的原始输出片段对过；Kimi 和 ranch 的源码行号也逐条重新对过。两个测试 agent 都已 `corral stop`，按记下的 PID 查过，没有残留进程。`~/.kimi-code/config.toml`、`tui.toml` 测前测后 sha256 一样。`git diff --check` 通过。
+
+**拿主意的地方**：
+- 隔离的 `CORRAL_HOME` 放在 `/tmp/r48g1.XXXXXX` 下，没放 scratchpad（原因见下面踩过的坑），用完已删。
+- 第 10 轮另开了一个 agent，在干净的会话里测关掉后台提问，免得第 1–9 轮的回退记录和排队的框混进来。
+- 方案里的推荐写在报告 §5，都列进了「要用户定的」，没有替用户定：
+  - 前台提问按两次 Esc，再送文字；
+  - 后台提问等它空下来，在框里按键答；
+  - 「拒绝」按两次 Esc；
+  - 「允许」只给 Bash 命令框，核对用 wire 里的结构化字段，不读屏。
+- 没有要超额度、改 Kimi 配置或要用 Slack 才能验证的事，没有主控的决定要记。
+
+**没做的事**：
+- 没写实现代码，没改 `crates/`，没碰 Slack 和 pony 服务。
+- 这些没测，报告里写成了「未知」：后台提问开着、它又在干活时按 Esc；两个同类的框同时开；计划模式、子 agent、联网、MCP 的批准框；「Reject with feedback」；别的窗口大小下读屏规则还认不认得出。
+
+**踩过的坑**：
+- 隔离的 `CORRAL_HOME` 起初放在 scratchpad 里，corral 起不来，报 socket path is too long。改用 `/tmp` 下的短目录。
+- `corral read` 的屏幕末尾在 Kimi 上靠不住：
+  - 批准框弹出 10 秒后，Kimi 补了一行「Press Ctrl+B to run in background」，`last_output` 跟着变了，框也不在末尾了；
+  - Write 框也停在屏幕中间。
+  - 改成看 wire 和 `corral status` 来判断。报告 §2.4 写了这对方案的影响。
+- `corral stop` 会删掉 agent 的状态目录，events 文件没来得及整份留下，只留了中途摘的 `r1-events.txt`、`r6-events-tail.txt`。
+- 有一条轮询命令里误带了一句什么也不做的 `python3 -c 1`，之后没再用；工具和测试都没有用 Python。
