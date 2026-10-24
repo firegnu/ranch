@@ -136,6 +136,12 @@
 - Claude Code 框上打断和题目（R43，用户 10-22）：R24 的读取门槛扩到 `blocked`，包括权限框、AskUserQuestion、ExitPlanMode 被 Esc，以及批准后仍残留 blocked 的运行中打断；仍只认同一轮的明确对话标记，框开着不猜。仅 AskUserQuestion 的 PermissionRequest 钩子保留题目白名单，`status.questions` 只在该提问框 blocked 时给出题干、选项说明和多选标志，序列化总量最多 16 KiB，截断显式标记；不记其他工具参数。事件保持 v1，cursor 升版后新旧 reader 各自重放；旧钩子没有题目时留空。公开字段是兼容新增，paddock 可以不接，打断状态修正无需适配。来历：`docs/任务/R43-corral认出框上被Esc和记下提问题目.md`。
 - omp 被人打断（R25，用户 10-19）：omp 在生成回复或调用工具时按 Esc 会中止整轮，最后一条 assistant 消息带 `stopReason: "aborted"`、`errorMessage: "Interrupted by user"` 和 `errorId` 的 UserInterrupt 位（67108864）。reader 在最终 `agent_end`（不是 `willContinue`）的最后一条 assistant 三个标记齐全时按 `Interrupt` 处理，其余中止、出错、重试照旧；跑命令时 Esc 只停命令、模型接着正常结束的不算打断。采集器早已原样记下 `messages`，只改 reader，omp 不用重开，helper 不用切。内部 cursor 缓存 7 → 8。来历：`docs/任务/R25-omp被打断后主控认得出.md`。
 - agy 被人打断（R26 摸底，用户 10-19）：agy 1.4.2 的钩子说明写着用户取消时 `Stop` 带 `USER_CANCELED`（corral 早已转成 `Interrupt`），但写字时、命令在跑时按 Esc 实测都不发 `Stop`，对话记录没有取消标记，只有 agy 自己的诊断日志记一句 `Cancelling conversation <会话号>`。日志不是约定格式、会轮转，没接；agy 被打断仍认不出，`interrupted: false` 不保证没被打断。来历：`docs/调研/R26-agy被打断时报什么.md`。
+- 接入 Kimi Code（R48，用户 10-24）：
+  - 用户 10-24：「我觉得要做到现在已经接入的agent的所有功能（但是可以分阶段做…）」；「继续使用我现在的账号」，接受 Kimi 自己刷新配置和令牌；用户自己改默认模型，corral 不管。
+  - 分阶段：0 补测（R48b，已做）→ 1 基本接入（R48c：适配器、钩子安装、状态、回复、首句、停止）→ 2 派活（分工表、提问题目给 pony）→ 3 sandbox → 4 Slack 按钮（可选）。每阶段单独派、单独验收。
+  - 钩子装法（用户 10-24 同意）：Kimi 不能为一次运行挂钩子；它的钩子只能写在自己的 `~/.kimi-code/config.toml`（`$KIMI_CODE_HOME/config.toml`）的 `[[hooks]]` 里，或者做成插件、登记进共用的 `plugins/installed.json`，两处都是和用户共用的文件。照 herdr（0.9.5 已接 Kimi，同样做法）在 `config.toml` 里放一段 corral 自己的、首尾有注释标记的块，块外一个字节都不动。这放宽了 R6「只动自己那块」：原来「自己那块」只指整个文件或目录，现在也可以是共用文件里有标记的一段。条件照 R6 并加严：经用户确认才装；块里的钩子不在 corral 启动的 Kimi 里就什么都不做、不输出；装、卸只动这一段；写之前重读、比对，原子写；标记缺一半、重复、块里内容不是 corral 写的，都算 `foreign`，不动；能卸干净。herdr 的块和 corral 的块并存，各认各的环境变量。
+  - 补测的事实（`docs/调研/R48b-Kimi-Code补测.md`）：钩子的父进程是 Kimi、祖父是 pen；Kimi 收到第一句话才建会话；子 agent 的 `Stop` 和主会话的 `Stop` 分不出来，`Stop` 也早于这一轮真正结束，完成要以主会话的 `agents/main/wire.jsonl` 为准，回复也从那里取；TERM、HUP 只停得掉 Kimi 自己，它跑的命令在另一个进程组里，会留下来。
+  - 来历：`docs/调研/R48-接入Kimi-Code.md`、`docs/调研/R48b-Kimi-Code补测.md`、`docs/任务/R48c-Kimi-Code基本接入.md`。
 
 ## 8. sandbox（用户 10-18）
 
