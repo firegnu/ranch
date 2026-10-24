@@ -28,7 +28,7 @@
 
 - worktree：`/Users/firegnu/Developer/personal_projs/ranch-worktrees/r48d`，分支 `r48d`（已从 main 建好）。
 - 编译目录：命令前加 `CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r48d`。
-- 只动 `crates/dispatch/`、`crates/corral/`、`crates/ranch/` 里和派活表有关的部分（主控 10-24 开工后补：派活表的测试在 `crates/ranch/tests/dispatch_table.rs`）、`docs/DESIGN.md`、`docs/CONTRACT.md`、本任务文件末尾。
+- 只动 `crates/dispatch/`、`crates/corral/`、`crates/ranch/` 里和派活表有关的部分（主控 10-24 开工后补：派活表的测试在 `crates/ranch/tests/dispatch_table.rs`）；`crates/pony/` 里题目展示的部分（主控 10-24 开工后补：pony 写死只给 claude 显示题目；只放开展示，回答、按钮、自动送答案、Esc 核对仍只对 claude）、`docs/DESIGN.md`、`docs/CONTRACT.md`、本任务文件末尾。
 
 ## 要做的
 
