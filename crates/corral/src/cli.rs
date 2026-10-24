@@ -433,7 +433,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
     let op = args.first().map(String::as_str).unwrap_or("");
     if matches!(op, "--help" | "-h") {
         println!(
-            "corral start|send|keys|status|wait|reply|where|ls|read|attach|stop|pause|resume|upgrade|recover|after|guide|install-skills|integration"
+            "corral start|send|keys|status|wait|reply|where|ls|read|attach|stop|pause|resume|upgrade|recover|after|guide|install-skills|integration|terminal-colors"
         );
         return Ok(None);
     }
@@ -443,6 +443,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         ),
         "send" => Some("NAME TEXT [--force] [--timeout SECONDS] [--after NAME] [--request-id ID]"),
         "child-sandbox" => Some("NAME [PROFILE | --clear]"),
+        "terminal-colors" => Some("[--fg COLOR --bg COLOR | --clear]"),
         "keys" => Some("NAME KEY [KEY ...]"),
         "status" | "reply" | "where" | "pause" | "resume" => Some("NAME"),
         "wait" => Some("NAME [--timeout SECONDS] [--quiet SECONDS]"),
@@ -477,6 +478,24 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
     }
     if op != "guide" && std::env::var_os("CODEX_SANDBOX").is_some() {
         return Err(Error::new(6, "sandbox", "running inside a Codex sandbox"));
+    }
+    if op == "terminal-colors" {
+        let p = Args::parse(&args[1..], &["--clear"], &["--fg", "--bg"])?;
+        p.count(0)?;
+        let colors = match (p.get("--fg"), p.get("--bg"), p.has("--clear")) {
+            (Some(fg), Some(bg), false) => {
+                let colors = crate::terminal_colors::Colors::new(fg, bg)?;
+                crate::terminal_colors::set(Some(&colors))?;
+                Some(colors)
+            }
+            (None, None, true) => {
+                crate::terminal_colors::set(None)?;
+                None
+            }
+            (None, None, false) => crate::terminal_colors::read()?,
+            _ => return Err(usage("use --fg and --bg together, or --clear")),
+        };
+        return Ok(Some(json!({"ok":true,"terminal_colors":colors})));
     }
     if op == "guide" {
         if args.len() != 1 {
@@ -634,9 +653,25 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                 Some(profile) => crate::sandbox::check(profile, &argv[0], &cwd, name, &extra)?,
                 None => Value::Null,
             };
-            pen::start(
-                json!({"name":name,"unique":parsed.has("--unique"),"cwd":cwd,"argv":argv,"prompt":parsed.get("--prompt"),"env":extra,"labels":labels,"sandbox":sandbox}),
-            )?
+            let (colors, warning) = match crate::terminal_colors::read() {
+                Ok(colors) => (colors, None),
+                Err(e) => (
+                    None,
+                    Some(format!(
+                        "cannot read terminal-colors.json: {}; starting without terminal colors",
+                        e.value["message"].as_str().unwrap_or("invalid settings")
+                    )),
+                ),
+            };
+            let mut ready = pen::start(
+                json!({"name":name,"unique":parsed.has("--unique"),"cwd":cwd,"argv":argv,"prompt":parsed.get("--prompt"),"env":extra,"labels":labels,"sandbox":sandbox,"terminal_colors":colors}),
+            )?;
+            if let Some(warning) = warning {
+                let mut warnings = ready["warnings"].as_array().cloned().unwrap_or_default();
+                warnings.push(json!(warning));
+                ready["warnings"] = json!(warnings);
+            }
+            ready
         }
         "status" => status(name)?.public,
         "pause" | "resume" => {

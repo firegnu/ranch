@@ -265,6 +265,8 @@ struct Chunk {
     reply: Option<(i32, u64)>,
     request_id: Option<String>,
     failed: bool,
+    #[serde(default)]
+    started: bool,
 }
 #[derive(Serialize, Deserialize)]
 struct Pen {
@@ -289,6 +291,10 @@ struct Pen {
     last_output: Option<f64>,
     input: VecDeque<Chunk>,
     next_input: f64,
+    #[serde(default)]
+    terminal_colors: Option<crate::terminal_colors::Colors>,
+    #[serde(default)]
+    color_replies: VecDeque<u8>,
     stopping: bool,
     stop_at: Option<f64>,
     stopped_by: Value,
@@ -382,6 +388,7 @@ impl Pen {
                     reply: None,
                     request_id: None,
                     failed: false,
+                    started: false,
                 });
             }
         }
@@ -403,6 +410,7 @@ impl Pen {
                         reply: None,
                         request_id: None,
                         failed: false,
+                        started: false,
                     });
                 }
                 self.stopped_by = json!("keys");
@@ -518,6 +526,7 @@ impl Pen {
                     reply: None,
                     request_id: None,
                     failed: false,
+                    started: false,
                 });
             } else if typ == b'r' && bytes.len() == 4 {
                 let rows = u16::from_be_bytes(bytes[..2].try_into().unwrap()).max(1);
@@ -613,6 +622,7 @@ impl Pen {
                             reply: (i + 1 == values.len()).then_some((fd, self.clients[&fd].order)),
                             request_id: req["request_id"].as_str().map(str::to_owned),
                             failed: false,
+                            started: false,
                         });
                     }
                     Some(out)
@@ -772,7 +782,9 @@ impl Pen {
                 poll.push(libc::pollfd {
                     fd: self.master.as_raw_fd(),
                     events: libc::POLLIN
-                        | if !self.input.is_empty() && now() >= self.next_input {
+                        | if !self.color_replies.is_empty()
+                            || (!self.input.is_empty() && now() >= self.next_input)
+                        {
                             libc::POLLOUT
                         } else {
                             0
@@ -832,7 +844,14 @@ impl Pen {
                             Ok(0) => self.pty_open = false,
                             Ok(n) => {
                                 self.last_output = Some(now());
-                                self.term.feed(&data[..n]);
+                                let queries = self.term.feed(&data[..n]);
+                                if self.writer.is_none()
+                                    && let Some(colors) = &self.terminal_colors
+                                {
+                                    for (osc, bel) in queries {
+                                        self.color_replies.extend(colors.reply(osc, bel));
+                                    }
+                                }
                                 if let Some(s) = &mut self.screen {
                                     s.feed(&data[..n]);
                                 }
@@ -857,11 +876,26 @@ impl Pen {
                             Err(_) => self.pty_open = false,
                         }
                     }
+                    // Finish a partially written input block before answering. Otherwise replies
+                    // take precedence, including during the delay between send's blocks.
                     if item.revents & libc::POLLOUT != 0
+                        && !self.color_replies.is_empty()
+                        && !self.input.front().is_some_and(|c| c.started)
+                    {
+                        match self.master.write(self.color_replies.make_contiguous()) {
+                            Ok(n) => {
+                                self.color_replies.drain(..n);
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                            Err(_) => self.color_replies.clear(),
+                        }
+                    } else if item.revents & libc::POLLOUT != 0
+                        && now() >= self.next_input
                         && let Some(c) = self.input.front_mut()
                     {
                         match self.master.write(c.bytes.make_contiguous()) {
                             Ok(n) => {
+                                c.started |= n > 0;
                                 c.bytes.drain(..n);
                             }
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
@@ -970,6 +1004,12 @@ pub fn worker() -> i32 {
         if unsafe { libc::dup2(log.as_raw_fd(), 2) } < 0 {
             return Err(std::io::Error::last_os_error().into());
         }
+        let terminal_colors: Option<crate::terminal_colors::Colors> =
+            serde_json::from_value(cfg["terminal_colors"].clone())?;
+        eprintln!(
+            "terminal colors: {}",
+            serde_json::to_string(&terminal_colors)?
+        );
         let instance = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
         let raw: Vec<String> = cfg["argv"]
             .as_array()
@@ -1111,6 +1151,8 @@ pub fn worker() -> i32 {
             last_output: None,
             input: VecDeque::new(),
             next_input: 0.0,
+            terminal_colors,
+            color_replies: VecDeque::new(),
             stopping: false,
             stop_at: None,
             stopped_by: Value::Null,

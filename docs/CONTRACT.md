@@ -4,6 +4,39 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 前端读这里写的字段，遇到没写的字段要忽略，遇到不认识的取值（比如 `hooks`、`status` 的新值）要能显示、不报错。
 
+## `corral terminal-colors [--fg COLOR --bg COLOR | --clear]`（R50）
+
+设定本机新开的 agent 在没有客户端连着时，corral 拿什么颜色回答终端前景色、背景色查询（OSC 10、OSC 11）。
+
+- `corral terminal-colors --fg '#4c4f69' --bg '#eff1f5'`：设定。COLOR 是 `#rrggbb`，大小写都行，输出一律小写；`--fg`、`--bg` 要一起给。
+- `corral terminal-colors --clear`：清除。
+- `corral terminal-colors`：只查。
+
+成功都输出一行 JSON、退出码 0：
+
+```json
+{"ok":true,"terminal_colors":{"fg":"#4c4f69","bg":"#eff1f5"}}
+```
+
+没有设定时 `terminal_colors` 为 `null`。颜色格式不对、只给一个颜色、`--clear` 和颜色同时给，报 `usage`、退出码 1，原设置不变。设置存在 `$CORRAL_HOME/.runtime/terminal-colors.json`，写入是原子的。
+
+只查时，设置文件的 JSON 或颜色内容无效，返回 `ok:false`、`error:"invalid_settings"`、退出码 1，message 包含文件路径和原因，原文件不变；这不表示命令不受支持。
+
+从下一次 `corral start` 起生效，不管是谁调的（paddock、派活的 agent、终端里的用户），已经在跑的 agent 不变。start 起 pen 前只读一次；设置文件读不了或格式坏，当作没设置，启动照常成功，在原有 `warnings` 中提示。pen.log 记录本次颜色，不给 start、status、ls 增加颜色字段。
+
+agent 启动后，pen 解析出 OSC 10/11 单色查询的那一刻，没有客户端 attach 且有颜色时才回答；BEL 结尾用 BEL 回，ST 结尾用 ST 回，格式如 `ESC ] 11 ; rgb:efef/f1f1/f5f5 ST`。有客户端 attach 就照旧由客户端回答，客户端不答时不补答。设置颜色的 OSC、多色连问及其他终端查询一概不答；没有设定时行为和以前一样。回答不受 send 的块间延时影响，也不插入正在写的块，不算人在打字。
+
+`corral upgrade` 保留启动时颜色、待写回答和未完成的查询，不重新读取本机设置。快照 SCHEMA 不变：旧版升级到新版的 agent 没有颜色，继续不答；新版退回旧版时旧版忽略新增字段、不再回答。socket、attach、现有命令参数和 JSON 格式不变；旧 CLI 与新 pen、新 CLI 与旧 pen 可混用。
+
+对 paddock：兼容新增，接入在 paddock 自己的任务做。
+
+1. 启动时、终端主题变化时（包括跟随系统深浅变化），调用 `corral terminal-colors --fg <主题前景色> --bg <主题背景色>`；取回答 OSC 10/11 的 foreground、background，格式 `#rrggbb`。
+2. 在远端机器开 agent 前，对那台机器的 corral 也调一次；每台机器各存一份。
+3. 旧版不认识此命令，返回 `usage`、退出码 1；前端当作不支持，照常开 agent。
+4. start、attach 等现有调用不用改。可在 Settings 说明已经在跑的 Codex 不跟随主题变化，要重开。
+
+主控派活的 agent 读取同一份设置，不用改派活技能。本机从没设置过，就不答，和以前一样。
+
 ## `ranch dispatch cell` / `table`（R31）
 
 只读，不调用路由服务、不启动 agent、不写文件。每次重新读取 `$HOME/.ranch/dispatch.toml`，不存在则用编入 ranch 的默认表。成功 stdout 一行 JSON、`ok:true`、退出码 0；数据错误退出码 1，`{"ok":false,"error":"invalid_data","message":"<文件路径>: <位置和原因>"}`；未知格子同样退出码 1，`error:"unknown_cell"`。命令参数错误沿用 ranch 的 `usage`、退出码 2。

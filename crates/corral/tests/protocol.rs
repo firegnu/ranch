@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/tests/protocol.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/tests/protocol.rs` at commit `a31dea2`; ranch has changed it since.
 //! Public CLI and v1 pen transport, using only isolated synthetic agents.
 mod common;
 use serde_json::{Value, json};
@@ -98,6 +98,51 @@ impl Lab {
             path.to_str().unwrap(),
         ]);
     }
+    fn color_agent(&self, mode: &str) -> Value {
+        let start = self.json(&[
+            "start",
+            "lab/main",
+            "--cwd",
+            self.root.path().to_str().unwrap(),
+            "--env",
+            &format!("R50B_DIR={}", self.root.path().display()),
+            "--env",
+            &format!("R50B_MODE={mode}"),
+            "--",
+            std::env::current_exe().unwrap().to_str().unwrap(),
+            "--exact",
+            "terminal_colors_synthetic_agent",
+            "--ignored",
+            "--nocapture",
+        ]);
+        eventually(|| self.root.path().join("ready").exists());
+        start
+    }
+    fn color_result(&self) -> Value {
+        let path = self.root.path().join("result");
+        // Allow the partial-input child its full read deadline plus result serialization.
+        let deadline = Instant::now() + Duration::from_secs(12);
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "color agent did not finish reading"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+    }
+    fn raw_output(&self) -> Vec<u8> {
+        use base64::{Engine, engine::general_purpose::STANDARD as B64};
+        let mut socket = UnixStream::connect(self.root.path().join("pens/lab/main/sock")).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        writeln!(socket, "{}", json!({"op":"read","bytes":16000})).unwrap();
+        let mut reply = Vec::new();
+        socket.read_to_end(&mut reply).unwrap();
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        B64.decode(reply["data"].as_str().unwrap()).unwrap()
+    }
 }
 impl Drop for Lab {
     fn drop(&mut self) {
@@ -117,6 +162,277 @@ fn eventually(mut check: impl FnMut() -> bool) {
         assert!(Instant::now() < end);
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+#[test]
+fn terminal_colors_cli_sets_reads_clears_and_rejects_invalid_arguments() {
+    let lab = Lab::new();
+    let unset = json!({"ok":true,"terminal_colors":null});
+    assert_eq!(lab.json(&["terminal-colors"]), unset);
+    let colors = json!({"ok":true,"terminal_colors":{"fg":"#4c4f69","bg":"#eff1f5"}});
+    assert_eq!(
+        lab.json(&["terminal-colors", "--fg", "#4C4F69", "--bg", "#EFF1F5"]),
+        colors
+    );
+    assert_eq!(lab.json(&["terminal-colors"]), colors);
+    for args in [
+        vec!["--fg", "#123456"],
+        vec!["--bg", "#123456"],
+        vec!["--fg", "#123", "--bg", "#abcdef"],
+        vec!["--fg", "123456", "--bg", "#abcdef"],
+        vec!["--fg", "#123456", "--bg", "#abcdeg"],
+        vec!["--fg", "#123456", "--bg", "#abcdef", "--clear"],
+        vec!["--fg"],
+        vec!["--clear", "extra"],
+        vec!["--unknown"],
+    ] {
+        let mut command = vec!["terminal-colors"];
+        command.extend(args);
+        let out = lab.out(&command);
+        assert_eq!(out.status.code(), Some(1), "{command:?}");
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["error"], "usage", "{command:?}: {value}");
+        assert_eq!(lab.json(&["terminal-colors"]), colors);
+    }
+    assert_eq!(lab.json(&["terminal-colors", "--clear"]), unset);
+    assert_eq!(lab.json(&["terminal-colors"]), unset);
+    assert_eq!(lab.json(&["terminal-colors", "--clear"]), unset);
+    let help = lab.out(&["terminal-colors", "--help"]);
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--fg COLOR --bg COLOR | --clear"));
+}
+
+#[test]
+fn terminal_colors_creates_private_runtime_directories() {
+    use std::os::unix::process::CommandExt;
+    let lab = Lab::new();
+    let mut cmd = lab.cmd();
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::umask(0o022);
+            Ok(())
+        });
+    }
+    let out = cmd
+        .args(["terminal-colors", "--fg", "#4c4f69", "--bg", "#eff1f5"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    for dir in ["pens", "pens/.runtime"] {
+        assert_eq!(
+            fs::metadata(lab.root.path().join(dir))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700,
+            "{dir}"
+        );
+    }
+}
+
+#[test]
+fn terminal_colors_read_reports_invalid_settings_without_changing_the_file() {
+    let lab = Lab::new();
+    let path = lab.root.path().join("pens/.runtime/terminal-colors.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for contents in [
+        r##"{"fg":"red","bg":"#000000"}"##,
+        "{broken",
+        r##"{"fg":"#ffffff"}"##,
+    ] {
+        fs::write(&path, contents).unwrap();
+        let out = lab.out(&["terminal-colors"]);
+        assert_eq!(out.status.code(), Some(1));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["error"], "invalid_settings", "{reply}");
+        assert!(
+            reply["message"]
+                .as_str()
+                .unwrap()
+                .contains("terminal-colors.json"),
+            "{reply}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+    }
+}
+
+const COLOR_QUERY: &[u8] = b"\x1b]10;?\x07\x1b]11;?\x1b\\";
+const COLOR_REPLY: &[u8] = b"\x1b]10;rgb:4c4c/4f4f/6969\x07\x1b]11;rgb:efef/f1f1/f5f5\x1b\\";
+const COLOR_PARTIAL_INPUT_BYTES: usize = 2 * 1024 * 1024;
+
+#[test]
+#[ignore = "synthetic PTY child for terminal color tests"]
+fn terminal_colors_synthetic_agent() {
+    let Some(dir) = std::env::var_os("R50B_DIR").map(PathBuf::from) else {
+        return;
+    };
+    let mode = std::env::var("R50B_MODE").unwrap();
+    unsafe {
+        let mut term = std::mem::zeroed();
+        assert_eq!(libc::tcgetattr(0, &mut term), 0);
+        libc::cfmakeraw(&mut term);
+        assert_eq!(libc::tcsetattr(0, libc::TCSANOW, &term), 0);
+    }
+    if mode == "upgrade" {
+        std::io::stdout().write_all(b"\x1b]11;?").unwrap();
+        std::io::stdout().flush().unwrap();
+    }
+    fs::write(dir.join("ready"), b"").unwrap();
+    eventually(|| dir.join("go").exists());
+    let mut received = Vec::new();
+    if matches!(mode.as_str(), "delayed" | "partial") {
+        let mut first = [0];
+        std::io::stdin().read_exact(&mut first).unwrap();
+        received.extend(first);
+    }
+    let begin = Instant::now();
+    std::io::stdout()
+        .write_all(if mode == "upgrade" {
+            b"\x1b\\"
+        } else {
+            COLOR_QUERY
+        })
+        .unwrap();
+    std::io::stdout().flush().unwrap();
+    let mut deadline = begin + Duration::from_millis(if mode == "partial" { 10000 } else { 400 });
+    let mut received_all = false;
+    let mut last_read_ms = None;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let mut fd = libc::pollfd {
+            fd: 0,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        if unsafe { libc::poll(&mut fd, 1, remaining.as_millis() as i32) } > 0 {
+            let mut bytes = [0; 65536];
+            let n = std::io::stdin().read(&mut bytes).unwrap();
+            if n == 0 {
+                break;
+            }
+            received.extend_from_slice(&bytes[..n]);
+            last_read_ms = Some(begin.elapsed().as_millis());
+            if mode == "partial"
+                && !received_all
+                && received.len() >= COLOR_PARTIAL_INPUT_BYTES + COLOR_REPLY.len()
+            {
+                // Keep observing after the expected bytes to catch duplicates or extra input.
+                deadline = deadline.min(Instant::now() + Duration::from_millis(200));
+                received_all = true;
+            }
+        }
+    }
+    fs::write(
+        dir.join("result.tmp"),
+        serde_json::to_vec(&json!({"bytes":received,"last_read_ms":last_read_ms})).unwrap(),
+    )
+    .unwrap();
+    fs::rename(dir.join("result.tmp"), dir.join("result")).unwrap();
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+#[test]
+fn terminal_colors_reply_promptly_only_without_attached_clients() {
+    for (configured, attached) in [(true, false), (false, false), (true, true)] {
+        let lab = Lab::new();
+        if configured {
+            lab.json(&["terminal-colors", "--fg", "#4c4f69", "--bg", "#eff1f5"]);
+        }
+        lab.color_agent("normal");
+        let client = attached.then(|| lab.attach(40, 120).0);
+        fs::write(lab.root.path().join("go"), b"").unwrap();
+        let result = lab.color_result();
+        assert_eq!(
+            result["bytes"],
+            json!(if configured && !attached {
+                COLOR_REPLY
+            } else {
+                b""
+            })
+        );
+        if configured && !attached {
+            assert!(result["last_read_ms"].as_u64().unwrap() < 250, "{result}");
+        }
+        if let Some(mut client) = client {
+            let mut bytes = vec![0; COLOR_QUERY.len()];
+            client.read_exact(&mut bytes).unwrap();
+            assert_eq!(bytes, COLOR_QUERY);
+        }
+        let status = lab.json(&["status", "lab/main"]);
+        assert!(status["last_human_input"].is_null());
+        assert_eq!(status["recent_sends"], json!([]));
+    }
+}
+
+#[test]
+fn terminal_colors_start_warns_on_bad_settings_without_failing() {
+    let lab = Lab::new();
+    let path = lab.root.path().join("pens/.runtime/terminal-colors.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, b"{broken").unwrap();
+    let start = lab.color_agent("normal");
+    assert!(
+        start["warnings"].as_array().is_some_and(|warnings| warnings
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("terminal-colors"))),
+        "{start}"
+    );
+    fs::write(lab.root.path().join("go"), b"").unwrap();
+    assert_eq!(lab.color_result()["bytes"], json!([]));
+}
+
+#[test]
+fn terminal_colors_reply_bypasses_send_delay_but_never_splits_a_chunk() {
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
+    for (mode, size) in [("delayed", 1), ("partial", COLOR_PARTIAL_INPUT_BYTES)] {
+        let lab = Lab::new();
+        lab.json(&["terminal-colors", "--fg", "#4c4f69", "--bg", "#eff1f5"]);
+        lab.color_agent(mode);
+        fs::write(lab.root.path().join("go"), b"").unwrap();
+        let mut sending = UnixStream::connect(lab.root.path().join("pens/lab/main/sock")).unwrap();
+        let mut expected = vec![b'x'; size];
+        writeln!(sending, "{}", json!({"op":"send","request_id":"colors-queued","chunks":[{"data":B64.encode(&expected),"delay":3.0},{"data":B64.encode(b"later")}]})).unwrap();
+        expected.extend_from_slice(COLOR_REPLY);
+        let result = lab.color_result();
+        let bytes: Vec<u8> = serde_json::from_value(result["bytes"].clone()).unwrap();
+        assert_eq!(
+            bytes.len(),
+            expected.len(),
+            "{mode}: missing or extra bytes"
+        );
+        assert!(bytes == expected, "{mode}: reply split the input chunk");
+        if mode == "delayed" {
+            assert!(result["last_read_ms"].as_u64().unwrap() < 250, "{result}");
+        }
+        let status = lab.json(&["status", "lab/main"]);
+        assert!(status["last_human_input"].is_null());
+        assert_eq!(status["recent_sends"].as_array().unwrap().len(), 1);
+        assert_eq!(status["recent_sends"][0]["request_id"], "colors-queued");
+    }
+}
+
+#[test]
+fn terminal_colors_upgrade_keeps_start_colors_and_partial_query() {
+    let lab = Lab::new();
+    lab.json(&["terminal-colors", "--fg", "#4c4f69", "--bg", "#eff1f5"]);
+    lab.color_agent("upgrade");
+    eventually(|| lab.raw_output().ends_with(b"\x1b]11;?"));
+    lab.json(&["terminal-colors", "--clear"]);
+    let target = lab.root.path().join("new-corral");
+    common::copy_exe(&lab.core, &target);
+    let upgraded = lab.json(&["upgrade", "lab/main", "--exe", target.to_str().unwrap()]);
+    assert_eq!(upgraded["result"], "complete", "{upgraded}");
+    fs::write(lab.root.path().join("go"), b"").unwrap();
+    assert_eq!(
+        lab.color_result()["bytes"],
+        json!(b"\x1b]11;rgb:efef/f1f1/f5f5\x1b\\".as_slice())
+    );
 }
 #[test]
 fn attachments_share_one_writer_and_transfer_ownership_without_restarting() {

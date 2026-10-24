@@ -17,6 +17,7 @@ mod screen;
 mod skills;
 mod state;
 mod terminal;
+mod terminal_colors;
 mod trust;
 mod upgrade;
 use serde_json::{Value, json};
