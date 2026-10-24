@@ -145,7 +145,7 @@
   - Kimi 编辑器就绪由当前屏幕识别；无会话也可 `send`。`--prompt` 等编辑器就绪后走 PTY 的粘贴与提交，不传给 Kimi 的单次执行参数。全局钩子只观察、空输出；主 wire 确认主轮工具、交互、完成和打断，`Stop` 钩子本身不结束主轮。回复只取本轮最后一个有文字的 step，同一 step 的文字片段按顺序连接，排除思考和工具内容。技能沿用 `codex`（`~/.agents`）位置，不改默认模型。
   - 主 wire 的设备号、inode、已读位置和本轮累积结果保存在 cursor 中；查询只读新增完整行，半行等下一次。路径或文件身份变化、文件变短、`turn_started` 变化时从头重读，不增加常驻监视器。
   - 阶段 2（R48d）：点名派活见 §9。主 wire 的 `interaction.request(kind=question)` 含完整题目，只在主轮交互打开时沿用 R43 的 `status.questions` 和 16 KiB 截断；不从不能区分主/子的 `PreToolUse` 钩子直接置题目。回答、框上取消、整轮打断后清除。Kimi wire 缓存新增版本，旧缓存重放主 wire；原事件和其他家的 cursor 不变。pony 分开判断题目展示与 Claude 专用回答流程，Kimi 只展示题目并提示回电脑回答，不提供按钮、自动送答案或 Claude 的 Esc 核对。
-  - 停止专用于 Kimi：首个 TERM 前记录实际子孙及进程出生标识，后续信号前重新核对，跟踪存活子孙继续派生的进程；即使 Kimi 先退出，pen 仍等子树退出或到时 KILL。最后一步 KILL 后最多再等子树 5 秒，残留 PID 写进 `pen.log` 和 `exit.json` 的 `remaining_pids` 后退出；R48e 起，`corral stop` 的 JSON 也带上同一实例的非空 `remaining_pids` 数组，仍为 `ok:true`、命令退出码不变，没有残留则输出逐字不变。Kimi 本身仍未退出时 `exit_code` 保持未知，清理也不再阻塞等待它。别家停止步骤和输出不变，不按进程名字找目标。对 paddock：兼容新增可选字段，现有调用不用改。
+  - 停止专用于 Kimi：首个 TERM 前记录实际子孙及进程出生标识，后续信号前重新核对，跟踪存活子孙继续派生的进程；即使 Kimi 先退出，pen 仍等子树退出或到时 KILL。最后一步 KILL 后最多再等子树 5 秒，残留 PID 写进 `pen.log` 和 `exit.json` 的 `remaining_pids` 后退出；R48e 起，`corral stop` 的 JSON 也带上同一实例的非空 `remaining_pids` 数组，仍为 `ok:true`、命令退出码不变，没有残留则输出逐字不变。`stopped_by` 为 `null` 表示这次没取到退出记录，不能据此把缺少 `remaining_pids` 当成没有残留；有残留时停止约需 8 秒（TERM 后 3 秒 KILL，再最多等 5 秒），调用方的 `--timeout` 要留够。Kimi 本身仍未退出时 `exit_code` 保持未知，清理也不再阻塞等待它。别家停止步骤和输出不变，不按进程名字找目标。对 paddock：兼容新增可选字段，现有调用不用改。
   - 来历：`docs/调研/R48-接入Kimi-Code.md`、`docs/调研/R48b-Kimi-Code补测.md`、`docs/任务/R48c-Kimi-Code基本接入.md`。
 
 ## 8. sandbox（用户 10-18）
