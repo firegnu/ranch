@@ -38,7 +38,6 @@
 
 ## 还没派的草稿
 
-- `docs/任务/R50-corral回答终端背景色查询.md`：paddock/main 10-24 转来，corral 开的 agent 启动时问终端背景色（OSC 10/11）没人答，浅色主题下都显示成深色；要 corral 在没有客户端连着时也能回答，颜色来源和给 paddock 的公开约定待定。用户：先不做。
 - `docs/任务/R51-stop与ls同时跑丢退出记录.md`：R48e 审查发现，`stop` 和同时跑的 `ls` 竞争丢退出记录；审查给了修法，改的是所有 agent 共用的 `stop` 等待。用户 10-24：记草稿，以后再做。
 - `docs/任务/R39-pony后续想法.md`：pony 后续各条，按档排好，各条写了什么时候再做；手机上答确认框那条已由 R46、R47a–R47d 做完。
 - `docs/任务/R40b-pony-setup新机器一条命令装好.md`（未提交）：新机器上 `pony setup`，要给别的机器装 pony 时再做。
@@ -52,6 +51,7 @@
 - R18：旧运行的慢 `child-sandbox` 设定请求遇到同名重开，复核和写入之间还剩很小的窗口（CONTRACT 写明了）。
 - corral 对 Codex 在同一轮里会短暂报 idle，派活时提醒会提前到。
 - 全套测试偶有 1 个失败、再跑就过（hook 协议测试的偶发超时；`raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1` 也失败过一次）。
+- `crates/corral/tests/lifecycle.rs` 跑完会在 `/tmp` 留一个空的测试目录（`/tmp/.tmp…/pens/test/cat`，R50b 审查发现，没有进程在用）。
 - `corral start --help` 的用法行没列 `--sandbox`（CONTRACT 有）。
 - agy 的已知限制见 DESIGN §7「接入 agy」。
 - `corral stop` 和同时跑的 `corral ls` 竞争：`ls` 可能先删掉刚停的 agent 的 `exit.json`，`stop` 输出 `exit_code`、`stopped_by` 为 null（Kimi 的 `remaining_pids` 也丢）；所有 agent 都会碰上，开着 paddock 时约 4%。修法草稿见 R51。
