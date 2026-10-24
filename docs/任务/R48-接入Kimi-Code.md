@@ -83,3 +83,12 @@
 - 拿主意的地方：没有主控新增决定。发现真实运行期间 config.toml 校验和改变、credentials/kimi-code.json 的 mtime 改变后，停止继续真跑，不擅自回写配置、复制凭证或安排别的登录方式。报告提供后续自动写入边界、接入层级、全局插件/配置与正式实测选项，需主控交用户定。
 - 没查清：全局 hooks 实收、真实批准框、TERM/HUP 对实际 Bash/MCP 子树的清理、完整模型列表/强度效果、fence 实际可用性。config 变化可能与模型刷新有关，但未保存内容前后副本，不能断言具体字段；共享文件写入也不能全部归因于测试 CLI。凭证/token/device_id 的内容未读取。
 - 踩过的坑：Kimi 的 `--auto` 仍弹目录信任框；新 TUI 第一条消息前没有 session；`--prompt` 是非交互模式。`corral keys` 只认小写 enter，send 的前导连字符文本被解析为选项，keys 连送文本和 Enter 曾只插入换行。第二次输入只收到 TOOL_OK，实际没调用工具也没创建文件；提问框第一次 Esc 只关闭问题，模型继续，运行中再 Esc 才记录 cancelled。自动关闭更新/遥测也没保证 config 零写入。这些都如实列为限制，没有把尝试当作验证成功。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48-1`（`--unique` 补了后缀），Codex gpt-6-astra / high。
+- 看了 diff：只动了报告和本文件末尾；`git diff --check` 通过。7 条、「要用户定的」「对 paddock 的影响」都有，每条有标记和依据。抽查本机 `kimi --help` 的 `--auto`、`--yolo`、`-p`、`-m`、`--skills-dir`、`--session`，程序里有 `KIMI_CODE_HOME`、`KIMI_CODE_TRUST_WORKSPACE`，`~/.kimi-code/plugins` 不存在，与报告一致；测试 agent 已关，`/tmp` 无残留。
+- 真跑 4 轮，在 10 轮额度内。Kimi 运行时自己改了 `~/.kimi-code/config.toml`（2416 → 2418 字节）、碰了凭证文件的 mtime；对方没有手工改，发现后停下，处理得当，已转告用户（报告「要用户定的」第 3 条）。
+- 对方列的取舍：发现自动写入就停、不回写、不复制凭证，同意。
+结果：一次过
