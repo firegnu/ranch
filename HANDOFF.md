@@ -52,3 +52,4 @@
 - 全套测试偶有 1 个失败、再跑就过（hook 协议测试的偶发超时；`raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1` 也失败过一次）。
 - `corral start --help` 的用法行没列 `--sandbox`（CONTRACT 有）。
 - agy 的已知限制见 DESIGN §7「接入 agy」。
+- Kimi（R48c 复核的两条建议改，没做）：每轮第一次从头读主 wire 比按行 `contains` 慢约 3.5 倍（50 MB 约 129 ms，之后是微秒级）；`corral stop` 到 5 秒上限仍有残留子进程时只记在 pen.log、`exit.json`，`stop` 输出照样成功。详见 `docs/任务/R48c-审查.md`「复核 1」。
