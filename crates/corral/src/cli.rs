@@ -790,7 +790,17 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             }
             let e = state::read(state::dir(name)?.join("exit.json"));
             let matched = e["instance"] == s["instance"];
-            json!({"ok":true,"name":name,"instance":s["instance"],"exit_code":if matched{e["code"].clone()}else{Value::Null},"stopped_by":if matched{e["stop_step"].clone()}else{Value::Null}})
+            let mut result = json!({"ok":true,"name":name,"instance":s["instance"],"exit_code":if matched{e["code"].clone()}else{Value::Null},"stopped_by":if matched{e["stop_step"].clone()}else{Value::Null}});
+            if matched
+                && agents::find(m["kind"].as_str().unwrap_or(""))
+                    .is_some_and(|a| a.stop_descendants())
+                && let Some(pids) = e["remaining_pids"]
+                    .as_array()
+                    .filter(|pids| !pids.is_empty())
+            {
+                result["remaining_pids"] = json!(pids);
+            }
+            result
         }
         _ => unreachable!(),
     };

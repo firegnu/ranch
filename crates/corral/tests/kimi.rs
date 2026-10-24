@@ -119,16 +119,17 @@ fn only_the_main_wire_finishes_a_turn_and_supplies_its_reply() {
         json!({"transcript_path":wire,"source":"startup"}),
     );
     lab.event("UserPromptSubmit", json!({"prompt":"first","t":1000.0}));
+    let noise = json!({"type":"model.context","data":"上下文🦀".repeat(4096)});
     let append = |value: Value| {
-        writeln!(
-            fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&wire)
-                .unwrap(),
-            "{value}"
-        )
-        .unwrap();
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&wire)
+            .unwrap();
+        writeln!(file, "{noise}\n{value}").unwrap();
+        // Matching keywords must not make malformed UTF-8 into a valid wire event.
+        file.write_all(b"{\"type\":\"turn.ended\",\"agentId\":\"main\",\"turnId\":1,\"time\":1000010,\"reason\":\"cancelled\",\"bad\":\"\xff\"}\n")
+            .unwrap();
     };
     append(
         json!({"type":"turn.prompt","agentId":"main","turnId":0,"time":1,"input":[{"type":"text","text":"old"}]}),
@@ -153,6 +154,10 @@ fn only_the_main_wire_finishes_a_turn_and_supplies_its_reply() {
     );
     assert_eq!(lab.status()["state"], "blocked");
     append(json!({"type":"interaction.resolved","agentId":"main","id":"approval","time":1000004}));
+    assert_eq!(lab.status()["state"], "working");
+    append(
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000004,"event":{"type":"tool.result","turnId":"1"}}),
+    );
     assert_eq!(lab.status()["state"], "working");
     append(
         json!({"type":"context.append_loop_event","agentId":"main","time":1000005,"event":{"type":"content.part","turnId":"1","part":{"type":"think","text":"hidden"}}}),
@@ -426,6 +431,7 @@ fn stop_waits_for_the_kimi_command_tree_and_leaves_unrelated_processes_alive() {
         .parse()
         .unwrap();
     lab.strays.push(child);
+    let instance = lab.status()["instance"].clone();
     let mut unrelated = Command::new("/bin/sleep").arg("60").spawn().unwrap();
     let result = lab.out(&["stop", "test/kimi", "--timeout", "8"]);
     let child_alive = alive(child);
@@ -439,6 +445,15 @@ fn stop_waits_for_the_kimi_command_tree_and_leaves_unrelated_processes_alive() {
     );
     assert!(!child_alive, "Kimi's command survived stop");
     assert!(unrelated_alive, "stop touched an unrelated process");
+    assert_eq!(
+        result.stdout,
+        format!(
+            "{}\n",
+            json!({"ok":true,"name":"test/kimi","instance":instance,
+                "exit_code":-libc::SIGTERM,"stopped_by":"SIGKILL"})
+        )
+        .into_bytes()
+    );
 }
 
 #[test]
