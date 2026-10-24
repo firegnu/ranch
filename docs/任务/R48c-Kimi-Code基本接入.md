@@ -73,3 +73,29 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、真跑了几轮、拿主意的地方、没做的事、对 paddock 的影响、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-24，ranch/dev-r48c。
+
+- **做了什么**：登记 `kimi` 适配器，技能声明复用 `codex` 位置。增加共享配置标记块安装方式，Kimi 的 `config.toml` 只增删 corral 块，保留块外字节和权限；钩子经过现有环境、父进程检查，空输出、成功退出。接通无会话就绪、普通 send 的输入确认、PTY 首句、主 wire 状态和回复、批准／提问读屏兜底、运行中打断，以及带出生标识核对的 Kimi 子树停止。DESIGN §7 Kimi 条与 CONTRACT 已补齐，amp、agy 沿用原安装方式与停止步骤。
+- **验证了什么**：就绪、主 wire 状态、首句和停止均先跑到目标失败，再实现通过；停止的 RED 是独立进程组中的命令活过了 `corral stop`。新增 7 条生命周期测试、2 条安装测试和 1 条写前竞争测试，覆盖所列标记损坏／重复／修改、符号链接、判断后文件变化、块外保留、主子会话、半行、两种取消和无关进程保护；合成命令入口虽标为 ignored，停止测试会作为子进程实际调用。`cargo test --all-targets` 完整跑一次通过；Clippy 首次指出比较时的多余字符串分配，改为解析数字轮次后，Kimi 测试重跑通过，`cargo clippy --all-targets -- -D warnings` 和 `cargo fmt --check` 均通过。未启用项目原有需要外部基线或真实 srt 的 ignored 测试，未删测试、放宽断言或缩短超时。
+- **真跑了几轮**：真实 Kimi Code 2.3.1 共 **5 次短输入**，另有 2 次 Enter 批准、2 次 Esc，合计 9 次输入操作；两个不带首句的启动用于检查就绪（首个发现规则过严后停止重开）。只使用 `ranch/test-r48c-ready`、`ranch/test-r48c-main`，始终最多一个，带 `role=test`、`CAIRN_DISABLE=1`；工作目录和 `CORRAL_HOME` 都是临时目录，复用真实账号，未切默认模型。无会话普通 send 与 `--prompt` 都成功收到前导 `-` 的首句；Bash 真正写入并回读 marker，`reply` 分别返回指定文本；提问框 Esc 后为 working，随后运行中 Esc 为 interrupted 且无旧回复。最后确认 Kimi → Bash → sleep 确实在运行，Bash/sleep 的 PGID 与 Kimi 不同，stop 后三个 PID 均消失，测试命名空间为空。
+- **真实配置收尾**：安装前备份真实 `config.toml`，用本分支 corral 安装、实测、卸载；卸载后 `cmp` 与备份逐字节相同，块外差异为零，没有拿备份整份覆盖。测试块已卸掉，共享 helper、PATH 上安装的程序和用户原有 agent 均未改动；Kimi 自己正常写入的会话、缓存保留。未读取凭证、token、device_id 或 server.token。
+- **拿主意的地方**：无身份区分的工具、权限和结束钩子只记录观察，由主 wire 判状态，避免子 agent 抢状态或 Stop 提前报完成；每次状态查询逐行读主 wire，只保留本轮文字和最新状态，没有新增常驻监视器。标记块当前只认版本 1 原样内容，修改过的块为 foreign；新增 `install.format:"marked-block"`，不改变已有家的字段含义。新文件用硬链接只新建，已有共享文件写前比较全部内容、设备号、inode 和权限，原子替换；保留设计已有的最后核对与改名之间的并发窗口。没有需要主控决定的事项。
+- **没做的事**：没有做派活分工表、两份技能内容、pony 题目／按钮、fence、打包或部署，没有合并或推送。验证严格限于任务场景，没有额外扩展真实子 agent、后台轮、运行中追发／steer 或 Linux 真机测试；子 agent Stop 的隔离由合成主／子 wire 测试覆盖。
+- **对 paddock 的影响**：兼容增加 kimi 一项与可选 `install.format`，状态值和命令保持不变。paddock 自己的任务可补充“只改共享配置中的 corral 块、卸载保留配置文件”的安装说明；不需要读取 Kimi 内部目录，也不增加技能位置。
+- **踩过的坑**：源码页脚说明提到权限模式，但真实默认模式并不显示它，初版就绪规则导致 starting；改为识别空编辑器和实际 context 状态行后重跑通过。旧的 `finds_programs_and_reads_versions_without_hanging` 在一次并发针对性回归里没有读到合成 Claude 版本，单独重跑和随后的完整标准测试都通过，未改其断言或超时。首个 send 合成程序只回显、不报输入钩子，确认阶段正确报 not_delivered，补成真正调用全局 hook 的合成程序后通过。
+
+### 返工 1
+
+2026-10-24，按用户指定处理主仓库 `docs/任务/R48c-审查.md` 对 `154c2fb` 的第 1–6 条；审查文件只读，第 7、8、9 条不改。
+
+- **卸载换行（1）**：仅在含前置换行的块位于文件开头、块前一字节为换行、或块位于文件末尾时连前置换行一起删除；其他情况留下行间分隔。新增无末尾换行后紧接 `[x]`、删除块前空行后的等价输入、herdr 标记及文件首尾对照。原有“块后有空行”的断言按新规则精确保留前置换行，CONTRACT 和 DESIGN 同步。
+- **目录 key（2）**：每段连续的不允许字符替换成一个 `-`，不再依据前一个输出字符判断；trim、截长、hash 顺序不变。用 6 组写死的目录与完整 key 对照，包括 `foo - bar`、`a-(b)`、`my-项目x`、大小写、全中文和连续标点。
+- **wire 增量读取（3）**：cursor 保存路径、dev、ino、文件长度、完整行 offset、原始 `turn_started` 及本轮 turn／step／文字／工具／交互／最新状态；只读追加的完整行，逐行筛选改为按字节查找。路径或身份变化、文件变短或输入时间变化时重读；重复查询和迟到的观察钩子仍使用已累积的结果。测试覆盖不重读旧字节、追加、半行、同长度替换 inode、原 inode 截短、同一毫秒内输入时间变化和新轮清除旧回复。
+- **停止上限（4）**：最后一步 KILL 后最多再等子树 5 秒，残留 PID 追加到 `pen.log` 并写入 `exit.json.remaining_pids`；Kimi 自身未退出时保持 `code:null`，超时后的 Drop 用非阻塞 waitpid，避免退出清理重新卡住。CONTRACT 和 DESIGN 补明上限。测试从最后 KILL 后的快照开始，用仍存活的合成进程模拟信号未能终止目标，分别验证父进程已退／未退两种情况，实等 5 秒并核对日志、残留 PID 和退出码；无需 root，也没有制造真正不可杀进程。
+- **写前核对（5）**：Plan 保存配置目录，apply 沿用该目录做符号链接检查，不重新读取 HOME。竞争测试的临时目录 canonicalize 后分别断言内容变化、同内容替换 inode 的 `configuration changed; nothing written`，以及符号链接变化的专用错误；另测计划目录边界和装卸保持 0640 权限。
+- **最终回复（6）**：出现新 step 的文字时清空前一步文字，同一 step 的片段继续连接。公开生命周期测试先写工具前说明，再写工具后的两段最终文字，确认 `reply` 只返回后者；CONTRACT 和 DESIGN 写清取最后一个有文字的 step。
+- **验证**：上述六项各先获得目标行为的失败证据，再修复通过；旧竞争测试在收紧错误断言后也实际通过内容核对分支。只跑直接相关的 19 项唯一测试：`--lib integration::block::tests`（2）、`--lib workdir_keys_match_kimi_23`（1）、`--lib final_kill_wait_is_bounded`（1）、`--test kimi`（8）、`--test integration kimi_`（3）、`--test integration installs_and_removes_only_`（与前者重复 1 项，另有 amp／agy 2 项）、`--test protocol stop_timeout_does_not_cancel_pen_owned_shutdown`（1）、`--test protocol agent_exit_drains_last_output_to_attached_client`（1）；全部通过。命令均为 `cargo test -p corral-core` 加所列筛选，均使用 r48c 独立编译目录。Kimi 测试中的 ignored 项只是由停止测试实际调用的合成子进程入口。`cargo clippy -p corral-core --lib --test integration --test kimi -- -D warnings`、`cargo fmt --check`、`git diff --check` 均通过。没有跑全套，没有再真跑 Kimi，没有放宽断言或缩短等待时限。
+- **范围与决定**：只按这次明确选择实现，不需主控另作决定；未修改第 7–9 条、主仓库审查文件、真实配置或其他仓库，没有打包、部署、合并或推送。paddock 无需代码适配，现有命令与状态字段不变；残留 PID 只在异常停止时兼容增加到内部退出记录。停止测试的快照用于覆盖无法安全制造的失败信号场景，普通 Kimi 子树停止及无关进程保护仍由公开命令测试覆盖。

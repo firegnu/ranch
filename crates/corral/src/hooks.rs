@@ -11,8 +11,11 @@ use std::{
 pub fn run(event: &str) {
     if let Some((kind, event)) = event.split_once(':') {
         let _ = global(kind, event);
-        // A globally installed hook answers with JSON, even when it records nothing.
-        println!("{{}}");
+        // Some observers require silence, including when they record nothing.
+        print!(
+            "{}",
+            crate::agents::find(kind).map_or("{}\n", |a| a.hook_output())
+        );
         return;
     }
     let _ = (|| -> crate::Result<()> {

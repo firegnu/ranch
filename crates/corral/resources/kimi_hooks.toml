@@ -1,0 +1,52 @@
+
+# >>> corral kimi integration
+# CORRAL_INTEGRATION = 1
+[[hooks]]
+event = "SessionStart"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:SessionStart; fi"
+timeout = 10
+[[hooks]]
+event = "UserPromptSubmit"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:UserPromptSubmit; fi"
+timeout = 10
+[[hooks]]
+event = "TurnStarted"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:TurnStarted; fi"
+timeout = 10
+[[hooks]]
+event = "PreToolUse"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:PreToolUse; fi"
+timeout = 10
+[[hooks]]
+event = "PostToolUse"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:PostToolUse; fi"
+timeout = 10
+[[hooks]]
+event = "PostToolUseFailure"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:PostToolUseFailure; fi"
+timeout = 10
+[[hooks]]
+event = "PermissionRequest"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:PermissionRequest; fi"
+timeout = 10
+[[hooks]]
+event = "PermissionResult"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:PermissionResult; fi"
+timeout = 10
+[[hooks]]
+event = "Stop"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:Stop; fi"
+timeout = 10
+[[hooks]]
+event = "Interrupt"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:Interrupt; fi"
+timeout = 10
+[[hooks]]
+event = "StopFailure"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:StopFailure; fi"
+timeout = 10
+[[hooks]]
+event = "SessionEnd"
+command = "if [ \"$CORRAL_KIND\" = kimi ] && [ -x \"$CORRAL_HELPER\" ]; then exec \"$CORRAL_HELPER\" __hook kimi:SessionEnd; fi"
+timeout = 10
+# <<< corral kimi integration

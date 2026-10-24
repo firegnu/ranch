@@ -32,6 +32,7 @@ impl Lab {
             )
             .env_remove("CLAUDE_CONFIG_DIR")
             .env_remove("XDG_CONFIG_HOME")
+            .env_remove("KIMI_CODE_HOME")
             .env_remove("CODEX_SANDBOX");
         c
     }
@@ -85,6 +86,119 @@ fn alive(pid: i32) -> bool {
 }
 
 #[test]
+fn kimi_installs_and_removes_only_its_marked_block() {
+    let lab = Lab::new();
+    let original =
+        "# mine\r\ndefault_model = \"mine\"\r\n\n[[hooks]]\nevent = \"Stop\"\ncommand = \"true\"";
+    lab.write(".kimi-code/config.toml", original);
+    let path = lab.path(".kimi-code/config.toml");
+    let args = ["integration", "install", "--agent", "kimi"];
+    let (_, dry) = lab.json(&[&args[..], &["--dry-run"]].concat());
+    assert_eq!(dry["status"], "create");
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    let (_, no) = lab.json(&args);
+    assert_eq!(no["error"], "confirmation_required");
+    let (_, yes) = lab.json(&[&args[..], &["--yes"]].concat());
+    assert_eq!(yes["written"], true);
+    let installed = fs::read_to_string(&path).unwrap();
+    assert!(installed.starts_with(original));
+    let kimi = lab.status()["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["kind"] == "kimi")
+        .unwrap()
+        .clone();
+    assert_eq!(kimi["install"]["status"], "same");
+    assert_eq!(kimi["install"]["format"], "marked-block");
+    assert_eq!(kimi["skills"][0]["target"], "codex");
+    let (_, same) = lab.json(&[&args[..], &["--yes"]].concat());
+    assert_eq!(same["written"], false);
+    // Another writer may append its own configuration after our block.
+    let after = "\n[unrelated]\nvalue = 42\n";
+    fs::write(&path, format!("{installed}{after}")).unwrap();
+    let (_, removed) = lab.json(&["integration", "uninstall", "--agent", "kimi", "--yes"]);
+    assert_eq!(removed["written"], true);
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        format!("{original}\n{after}")
+    );
+}
+
+#[test]
+fn kimi_uninstall_preserves_the_newline_separating_other_configuration() {
+    let lab = Lab::new();
+    let body = include_str!("../resources/kimi_hooks.toml");
+    let path = lab.path(".kimi-code/config.toml");
+    for (before, after, expected) in [
+        (
+            "default_model = \"mine\"",
+            "[x]\n",
+            "default_model = \"mine\"\n[x]\n",
+        ),
+        (
+            "default_model = \"mine\"\n",
+            "[x]\n",
+            "default_model = \"mine\"\n[x]\n",
+        ),
+        (
+            "default_model = \"mine\"",
+            "# >>> herdr kimi integration\n# <<< herdr kimi integration\n",
+            "default_model = \"mine\"\n# >>> herdr kimi integration\n# <<< herdr kimi integration\n",
+        ),
+        ("", "[x]\n", "[x]\n"),
+        ("default_model = \"mine\"", "", "default_model = \"mine\""),
+        ("", "", ""),
+    ] {
+        // The first case also represents an editor removing the blank line before the block.
+        lab.write(".kimi-code/config.toml", &format!("{before}{body}{after}"));
+        let (code, result) = lab.json(&["integration", "uninstall", "--agent", "kimi", "--yes"]);
+        assert_eq!(code, Some(0), "{result}");
+        assert_eq!(result["written"], true);
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    }
+}
+
+#[test]
+fn kimi_refuses_damaged_blocks_and_symlinks_and_respects_its_home() {
+    let lab = Lab::new();
+    let body = include_str!("../resources/kimi_hooks.toml");
+    let path = lab.path(".kimi-code/config.toml");
+    for content in [
+        body.replace("# <<< corral kimi integration", ""),
+        body.replace("# >>> corral kimi integration", ""),
+        format!("{body}{body}"),
+        body.replace("timeout = 10", "timeout = 20"),
+    ] {
+        lab.write(".kimi-code/config.toml", &content);
+        for action in ["install", "uninstall"] {
+            let (_, v) = lab.json(&["integration", action, "--agent", "kimi", "--yes"]);
+            assert_eq!(
+                (&v["status"], &v["written"]),
+                (&json!("foreign"), &json!(false))
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        }
+    }
+    fs::remove_file(&path).unwrap();
+    lab.write("linked.toml", body);
+    symlink(lab.path("linked.toml"), &path).unwrap();
+    let (_, v) = lab.json(&["integration", "uninstall", "--agent", "kimi", "--yes"]);
+    assert_eq!(v["status"], "foreign");
+    assert_eq!(fs::read_to_string(lab.path("linked.toml")).unwrap(), body);
+    let output = lab
+        .cmd(&["integration", "install", "--agent", "kimi", "--yes"])
+        .env("KIMI_CODE_HOME", lab.path("custom"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read_to_string(lab.path("custom/config.toml")).unwrap(),
+        body
+    );
+}
+
+#[test]
 fn lists_every_registered_agent_in_order_even_when_none_is_installed() {
     let lab = Lab::new();
     let s = lab.status();
@@ -110,6 +224,9 @@ fn lists_every_registered_agent_in_order_even_when_none_is_installed() {
              "install":{"path":format!("{home}/.gemini/config/plugins/corral"),"status":"create","version":null,"enabled":true},
              "skills":[
                 {"target":"gemini","path":format!("{home}/.gemini/config/skills/corral/SKILL.md"),"status":"create"}]},
+            {"kind":"kimi","path":null,"version":null,"hooks":"global",
+             "install":{"path":format!("{home}/.kimi-code/config.toml"),"status":"create","version":null,"format":"marked-block"},
+             "skills":[{"target":"codex","path":format!("{home}/.agents/skills/corral/SKILL.md"),"status":"create"}]},
         ]})
     );
 }
@@ -152,6 +269,7 @@ fn finds_programs_and_reads_versions_without_hanging() {
             (json!("omp"), json!(format!("{bin}/omp")), Value::Null),
             (json!("amp"), Value::Null, Value::Null),
             (json!("agy"), Value::Null, Value::Null),
+            (json!("kimi"), Value::Null, Value::Null),
         ]
     );
     // The hanging program and the child it left behind were both killed.

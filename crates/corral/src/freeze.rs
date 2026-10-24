@@ -15,6 +15,62 @@ struct Proc {
     /// Stopped, or already exiting; either way it does nothing more.
     still: bool,
     zombie: bool,
+    born: (u64, u64),
+}
+
+/// A stop operation retains process identities before the parent exits. Unlike freezing, this
+/// never expands membership by a shared session: only actual descendants may receive a signal.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct StopTree {
+    members: BTreeMap<i32, (u64, u64)>,
+}
+impl StopTree {
+    pub fn capture(agent: i32) -> Self {
+        let processes = table();
+        let mut tree = Self {
+            members: processes
+                .get(&agent)
+                .map(|p| (agent, p.born))
+                .into_iter()
+                .collect(),
+        };
+        tree.refresh(&processes);
+        tree
+    }
+    fn refresh(&mut self, processes: &BTreeMap<i32, Proc>) {
+        self.members.retain(|pid, born| {
+            processes
+                .get(pid)
+                .is_some_and(|p| !p.zombie && p.born == *born)
+        });
+        loop {
+            let before = self.members.len();
+            for (&pid, p) in processes {
+                if !p.zombie && self.members.contains_key(&p.ppid) {
+                    self.members.insert(pid, p.born);
+                }
+            }
+            if before == self.members.len() {
+                break;
+            }
+        }
+    }
+    pub fn signal(&mut self, signal: i32) {
+        self.refresh(&table());
+        for &pid in self.members.keys() {
+            unsafe {
+                libc::kill(pid, signal);
+            }
+        }
+    }
+    pub fn is_empty(&mut self) -> bool {
+        self.refresh(&table());
+        self.members.is_empty()
+    }
+    pub fn remaining(&mut self) -> Vec<i32> {
+        self.refresh(&table());
+        self.members.keys().copied().collect()
+    }
 }
 
 /// Whether the process has exited, even if nobody has reaped it yet.
@@ -154,6 +210,7 @@ fn table() -> BTreeMap<i32, Proc> {
                     sid,
                     still: matches!(info.pbi_status, libc::SSTOP | libc::SZOMB),
                     zombie: info.pbi_status == libc::SZOMB,
+                    born: (info.pbi_start_tvsec, info.pbi_start_tvusec),
                 };
                 (pid, proc)
             })
@@ -177,6 +234,7 @@ fn table() -> BTreeMap<i32, Proc> {
             let ppid = fields.next()?.parse().ok()?;
             let _pgrp = fields.next()?;
             let sid = fields.next()?.parse().ok()?;
+            let born = (fields.nth(15)?.parse().ok()?, 0);
             let still = matches!(state, "T" | "t" | "Z" | "X");
             let zombie = matches!(state, "Z" | "X");
             Some((
@@ -186,6 +244,7 @@ fn table() -> BTreeMap<i32, Proc> {
                     sid,
                     still,
                     zombie,
+                    born,
                 },
             ))
         })

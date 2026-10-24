@@ -64,6 +64,10 @@ prompt from it. `install-skills --target gemini` installs the skill for agy in
 
 ## Source
 
+`resources/kimi_hooks.toml` and `src/agents/kimi.rs` are new in ranch (R48c).
+Kimi uses a marked block in its shared `config.toml`; its main wire confirms completed
+turns and replies. It reads both ranch skills from the existing `~/.agents/skills` location.
+
 Moved from Saddle `crates/corral-core` at commit `a31dea2` (unchanged since `9648ff0`).
 Each Rust file names its original path. `resources/` and `tests/collectors.mjs` were
 byte-for-byte copies without a header, because the resources are compiled into the

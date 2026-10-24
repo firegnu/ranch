@@ -62,6 +62,7 @@ impl Adapter for Agy {
             ],
             enabled: Some(enabled),
             helper: true,
+            block: None,
         })
     }
     /// agy's hook input has no prompt or reply; both come from its transcript.

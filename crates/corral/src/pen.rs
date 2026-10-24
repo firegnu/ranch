@@ -121,6 +121,69 @@ mod tests {
             "waited {elapsed:?}"
         );
     }
+
+    #[test]
+    fn final_kill_wait_is_bounded_and_records_remaining_processes() {
+        use std::time::{Duration, Instant};
+        for parent_exited in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let listener = UnixListener::bind(dir.path().join("sock")).unwrap();
+            let master = File::open("/dev/null").unwrap();
+            let lock = File::create(dir.path().join("lock")).unwrap();
+            let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
+            let pid = child.id() as i32;
+            // A live process at the post-KILL boundary models a signal that could not stop it.
+            // The snapshot exercises the actual loop without requiring root or an unkillable process.
+            let before = Instant::now();
+            let mut pen: Pen = serde_json::from_value(json!({
+                "agent":pid,"master":master.as_raw_fd(),"listener":listener.as_raw_fd(),
+                "lock":lock.as_raw_fd(),"custody":"owner","observer":false,
+                "upgrade":Upgrade::default(),"dir":dir.path(),"metadata":{"kind":"kimi"},
+                "labels":{},"instance":"stop-deadline-test","started":now(),
+                "clients":{},"ring":[],"last_output":null,"input":[],"next_input":0.0,
+                "stopping":true,"stop_at":null,"stopped_by":"SIGKILL",
+                "exit":if parent_exited { Some(0) } else { None },"exit_at":0.0,
+                "pty_open":false,"writer":null,"next_order":0,"size":[40,120],
+                "resize_at":null,"term":crate::terminal::Terminal::default(),
+                "human":null,"recent":[],"stop_steps":[],
+                "stop_tree":crate::freeze::StopTree::capture(pid),"stop_deadline":now()+5.0
+            }))
+            .unwrap();
+            // Always clean up our exact child, including on a regression or assertion panic.
+            let (done, wait) = std::sync::mpsc::channel();
+            let cleanup = std::thread::spawn(move || {
+                let _ = wait.recv_timeout(Duration::from_secs(10));
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+            let result = pen.run();
+            let elapsed = before.elapsed();
+            let still_running = unsafe { libc::kill(pid, 0) == 0 };
+            let _ = done.send(());
+            cleanup.join().unwrap();
+            result.unwrap();
+            assert!(
+                still_running,
+                "pen waited until the cleanup guard killed the residual process"
+            );
+            assert!(
+                elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(7),
+                "{elapsed:?}"
+            );
+            let exit = state::read(dir.path().join("exit.json"));
+            assert_eq!(exit["remaining_pids"], json!([pid]));
+            assert_eq!(exit["stop_step"], "SIGKILL");
+            assert_eq!(
+                exit["code"],
+                if parent_exited { json!(0) } else { Value::Null }
+            );
+            let log = fs::read_to_string(dir.path().join("pen.log")).unwrap();
+            assert!(
+                log.contains("SIGKILL") && log.contains(&pid.to_string()),
+                "{log}"
+            );
+        }
+    }
 }
 #[derive(PartialEq, Serialize, Deserialize)]
 
@@ -193,6 +256,12 @@ struct Pen {
     human: Option<f64>,
     recent: Vec<Value>,
     stop_steps: VecDeque<Value>,
+    #[serde(default)]
+    pending_prompt: Option<String>,
+    #[serde(default)]
+    stop_tree: Option<crate::freeze::StopTree>,
+    #[serde(default)]
+    stop_deadline: Option<f64>,
     // Pens before pausing existed leave these out of their snapshots.
     #[serde(default)]
     paused: Option<f64>,
@@ -220,18 +289,56 @@ impl Drop for Pen {
         if !self.owns || self.custody == Custody::Handoff {
             return;
         }
+        if let Some(tree) = &mut self.stop_tree {
+            tree.signal(libc::SIGKILL);
+        }
         if self.exit.is_none() && self.custody == Custody::Owner {
             // SIGKILL ends the stopped group; descendants that left it must not stay frozen.
             self.resume();
             unsafe {
                 libc::kill(-(self.agent as i32), libc::SIGKILL);
-                libc::waitpid(self.agent as i32, std::ptr::null_mut(), 0);
+                // A failed KILL must not turn the bounded shutdown into an unbounded Drop.
+                let flags = if self.stop_deadline.is_some_and(|t| now() >= t) {
+                    libc::WNOHANG
+                } else {
+                    0
+                };
+                libc::waitpid(self.agent as i32, std::ptr::null_mut(), flags);
             }
         }
         let _ = fs::remove_file(self.dir.join("sock"));
     }
 }
 impl Pen {
+    fn first_prompt(&mut self) {
+        if self.pending_prompt.is_none() || self.stopping || self.paused.is_some() {
+            return;
+        }
+        let ready =
+            crate::agents::find(self.metadata["kind"].as_str().unwrap_or("")).is_some_and(|a| {
+                self.screen
+                    .as_ref()
+                    .and_then(|s| s.text())
+                    .is_some_and(|s| a.input_ready(&s))
+            });
+        if ready {
+            let text = self.pending_prompt.take().unwrap();
+            let bytes = if self.term.paste() {
+                [b"\x1b[200~".as_slice(), text.as_bytes(), b"\x1b[201~"].concat()
+            } else {
+                text.into_bytes()
+            };
+            for (bytes, delay) in [(bytes, 0.3), (vec![b'\r'], 0.0)] {
+                self.input.push_back(Chunk {
+                    bytes: bytes.into(),
+                    delay,
+                    reply: None,
+                    request_id: None,
+                    failed: false,
+                });
+            }
+        }
+    }
     fn resume(&mut self) {
         if self.paused.take().is_some() {
             crate::freeze::thaw(self.agent as i32, &self.frozen);
@@ -259,13 +366,21 @@ impl Pen {
                     Some("TERM") => libc::SIGTERM,
                     _ => libc::SIGKILL,
                 };
-                unsafe {
-                    libc::kill(-(self.agent as i32), sig);
+                if let Some(tree) = &mut self.stop_tree {
+                    tree.signal(sig);
+                }
+                if self.stop_tree.is_none() || self.exit.is_none() {
+                    unsafe {
+                        libc::kill(-(self.agent as i32), sig);
+                    }
                 }
                 self.stopped_by =
                     json!(format!("SIG{}", step["signal"].as_str().unwrap_or("KILL")));
             }
             self.stop_at = if self.stop_steps.is_empty() {
+                if self.stop_tree.is_some() {
+                    self.stop_deadline = Some(now() + 5.0);
+                }
                 None
             } else {
                 Some(now() + step["wait"].as_f64().unwrap_or(3.0).clamp(0.0, 60.0))
@@ -491,6 +606,11 @@ impl Pen {
                     // A stopped process acts on HUP or TERM only once it continues.
                     self.resume();
                     self.stopping = true;
+                    if crate::agents::find(self.metadata["kind"].as_str().unwrap_or(""))
+                        .is_some_and(|a| a.stop_descendants())
+                    {
+                        self.stop_tree = Some(crate::freeze::StopTree::capture(self.agent as i32));
+                    }
                     self.stop_steps = steps.into();
                     self.stop_steps.push_back(json!({"signal":"KILL","wait":0}));
                     self.stop_step();
@@ -561,11 +681,13 @@ impl Pen {
             screen.feed(b);
             self.screen = Some(screen);
         }
+        let mut remaining_pids = Vec::new();
         loop {
             if let Some(target) = self.pending_upgrade.take() {
                 self.handoff(target);
             }
             self.finish_upgrade();
+            self.first_prompt();
             let was_running = self.exit.is_none();
             self.observe_exit()?;
             if was_running && self.exit.is_some() && self.metadata["sandbox"].is_object() {
@@ -574,7 +696,16 @@ impl Pen {
                     libc::kill(-(self.agent as i32), libc::SIGKILL);
                 }
             }
-            if self.exit.is_some() && (!self.pty_open || now() - self.exit_at > 0.3) {
+            if self.stop_deadline.is_some_and(|t| now() >= t) {
+                if let Some(tree) = &mut self.stop_tree {
+                    remaining_pids = tree.remaining();
+                }
+                break;
+            }
+            if self.exit.is_some()
+                && (!self.pty_open || now() - self.exit_at > 0.3)
+                && self.stop_tree.as_mut().is_none_or(|tree| tree.is_empty())
+            {
                 break;
             }
             if self.resize_at.is_some_and(|t| now() >= t) {
@@ -732,7 +863,7 @@ impl Pen {
                 }
             }
         }
-        // The agent is gone; nothing it froze may stay frozen.
+        // Nothing this agent froze may stay frozen, even if it could not be killed.
         self.resume();
         untrust(self.trust.as_deref(), &self.instance);
         // Match v1 shutdown: bounded flushing lets attached readers receive the last PTY bytes.
@@ -751,10 +882,22 @@ impl Pen {
                 e.code().or_else(|| e.signal().map(|n| -n))
             }
         });
-        state::write(
-            &self.dir.join("exit.json"),
-            &json!({"instance":self.instance,"code":code,"t":now(),"stop_step":self.stopped_by}),
-        )?;
+        let mut exit =
+            json!({"instance":self.instance,"code":code,"t":now(),"stop_step":self.stopped_by});
+        if !remaining_pids.is_empty() {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut log = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(self.dir.join("pen.log"))?;
+            writeln!(
+                log,
+                "stop: processes still running 5 seconds after final SIGKILL: {remaining_pids:?}"
+            )?;
+            exit["remaining_pids"] = json!(remaining_pids);
+        }
+        state::write(&self.dir.join("exit.json"), &exit)?;
         Ok(())
     }
 }
@@ -935,6 +1078,11 @@ pub fn worker() -> i32 {
             human: None,
             recent: Vec::new(),
             stop_steps: VecDeque::new(),
+            pending_prompt: crate::agents::find(&kind)
+                .filter(|a| a.prompt_via_terminal())
+                .and_then(|_| cfg["prompt"].as_str().map(str::to_owned)),
+            stop_tree: None,
+            stop_deadline: None,
             paused: None,
             frozen: Vec::new(),
             resumed_at: None,

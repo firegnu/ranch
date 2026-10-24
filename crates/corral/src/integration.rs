@@ -4,6 +4,7 @@
 //! (`agents::Global`), and nothing else.
 use crate::{Error, Result, agents, agents::Global, skills};
 use serde_json::{Value, json};
+mod block;
 use std::{
     fs,
     io::{IsTerminal, Read, Write},
@@ -44,6 +45,9 @@ pub fn status() -> Result<Value> {
             let p = plan(&g, &home, false)?;
             item["hooks"] = json!("global");
             item["install"] = json!({"path":p.path,"status":p.status,"version":p.version});
+            if g.block.is_some() {
+                item["install"]["format"] = json!("marked-block");
+            }
             if let Some(enabled) = g.enabled {
                 item["install"]["enabled"] = json!(enabled(&home));
             }
@@ -135,6 +139,8 @@ fn targets(g: &Global, root: &Path) -> Vec<(PathBuf, &'static str)> {
 
 /// What installing (or removing) an agent's global hook file, or directory of them, would do.
 struct Plan {
+    /// Configuration directory used for the ownership check when this plan was made.
+    dir: PathBuf,
     /// The file or directory.
     path: PathBuf,
     /// `create`, `same` or `overwrite` (`absent` or `remove` when removing), or `foreign` for
@@ -146,6 +152,7 @@ struct Plan {
     present: Vec<bool>,
     /// Temporary files an interrupted install left in corral's directory.
     temps: Vec<PathBuf>,
+    block: Option<block::File>,
 }
 
 /// Whether `path` is a temporary file corral writes before moving it into place.
@@ -157,15 +164,20 @@ fn temporary(path: &Path) -> bool {
 }
 
 fn plan(g: &Global, home: &Path, remove: bool) -> Result<Plan> {
+    if g.block.is_some() {
+        return block::plan(g, home, remove);
+    }
     let dir = (g.dir)(home);
     let root = dir.join(g.path);
     let files = targets(g, &root);
     let foreign = Ok(Plan {
+        dir: dir.clone(),
         path: root.clone(),
         status: "foreign",
         version: None,
         present: vec![],
         temps: vec![],
+        block: None,
     });
     if skills::linked(&root, &dir) || files.iter().any(|(p, _)| skills::linked(p, &dir)) {
         return foreign;
@@ -216,11 +228,13 @@ fn plan(g: &Global, home: &Path, remove: bool) -> Result<Plan> {
         (_, false) => "overwrite",
     };
     Ok(Plan {
+        dir,
         path: root,
         status,
         version,
         present,
         temps,
+        block: None,
     })
 }
 
@@ -287,6 +301,9 @@ pub fn install(kind: &str, remove: bool, dry: bool, yes: bool) -> Result<Value> 
 /// planned as new is only linked into place, which fails if one has appeared since. Returns a
 /// warning when the directory could not be removed.
 fn apply(g: &Global, p: &Plan, remove: bool) -> Result<Option<String>> {
+    if g.block.is_some() {
+        return block::apply(g, p, remove).map(|()| None);
+    }
     let path = &p.path;
     let files = targets(g, path);
     if remove {
