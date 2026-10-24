@@ -65,6 +65,14 @@
 - 对前端：满足下面的部署条件后，Saddle 不跟也能用（暂停的 agent 显示原来的状态，send 收到 `paused`），用户 10-07 定不跟；paddock 在 P5-33 接界面。
 - 兼容边界（交叉审查 R6 指出）：旧版 corral 的命令行和后台提醒进程不读 `paused`，对暂停中的 agent 会误判：旧 `wait` 报 idle 或 stopped-quiet，旧 `send --after` 提前送或把等待记成 unknown（旧 send 被拒、旧 stop 正常）。新版无法替旧客户端纠正，所以靠部署次序保证不混用：只有换成新 pen 的 agent 才能暂停；先切 `~/.local/bin/corral`，再 `corral upgrade --all`（同一条命令把 pen 和持久提醒都交给新版），逐项 complete；还要确认没有旧版 corral 的进程还在跑（`ps` 查旧版本目录下 `corral` 的 `wait`、`__after` 等进程：切链接前就起的 `wait` 不会被换掉，无记录的旧提醒也不在 `upgrade --all` 能发现的范围内），有就等它们结束或让发起者用新入口重开。这些都满足之后才开始用暂停。Saddle 默认按 PATH 找 `corral`，切链接后即是新版；配置里固定了旧版本路径的不在保护之内。用户 10-07 同意先切链接、再 upgrade 的处理（“R6 我同意”），复核补上“确认没有旧版进程还在跑”后再次同意。
 
+### 无客户端时的终端颜色查询（R50，用户 10-24）
+
+本机颜色只从 `corral terminal-colors --fg '#rrggbb' --bg '#rrggbb'` 设置，存在 `$CORRAL_HOME/.runtime/terminal-colors.json`；不加 start 参数或环境变量。start 起 pen 前读一次，坏文件当没设置、在原有 warnings 中提示，不挡启动；pen.log 记录本次颜色。之后改设置不影响已启动的 agent。
+
+pen 解析到 OSC 10/11 的单色查询时，若此刻没有 writer（没有客户端 attach）且有颜色，就用 16 位 `rgb:rrrr/gggg/bbbb` 回答，保留查询的 BEL 或 ST 结尾；有客户端就只原样转发，客户端不答也不补答。设置形式、连问多个颜色和其他查询都不答：DA1 等回答取决于真实客户端能力，不能替它猜。回答走独立队列，优先于尚未开始的输入块、不受 send 的块间延时影响，但不插进已开始写的块；不算人在打字、不记 recent。
+
+升级快照以默认值兼容新增颜色、待写回答和写入进度，SCHEMA 保持 1；旧快照进新版没有颜色，新版之间保留本次颜色，退回旧版忽略新增字段、不再回答。socket、attach、status、ls、start 的公开格式不变。paddock 后续在启动、主题变化和远端开 agent 前调用新命令，旧版报 usage 就忽略；本任务不改 paddock。方案和理由见 `docs/调研/R50-corral回答终端颜色查询.md`。
+
 ## 7. agent 适配器（用户 10-14）
 
 用户 10-14（paddock P5-94「Settings 里一键适配 agent」讨论时，经 paddock/main 转达）：“各个agent是按照这插件的方式接入到ranch的（代码级别的插件类型）。”“先恢复适配器结构，全局配置可以放宽。”任务 `docs/任务/R3-corral恢复适配器结构.md`。

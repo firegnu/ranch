@@ -766,6 +766,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn terminal_colors_snapshot_accepts_legacy_and_preserves_pending_io() {
+        let pen = json!({
+                "agent":1,"master":3,"listener":4,"lock":5,
+                "custody":"owner","observer":false,"upgrade":Upgrade::default(),
+                "dir":"/unused","metadata":{},"labels":{},"instance":"colors",
+                "started":0.0,"clients":{},"ring":[],"last_output":null,
+                "input":[{"bytes":[120],"delay":3.0,"reply":null,"request_id":null,"failed":false}],
+                "next_input":0.0,"stopping":false,"stop_at":null,"stopped_by":null,
+                "exit":null,"exit_at":0.0,"pty_open":true,"writer":null,
+                "next_order":0,"size":[40,120],"resize_at":null,
+                "term":{"title":"","modes":{},"kitty":[],"keypad":false,"modify":0,"pending":[27,93,49,49,59,63]},
+                "human":null,"recent":[],"stop_steps":[]
+        });
+        let mut value = json!({"schema":1,"descriptors":[],"lock_ino":0,"lock_dev":0,"pen":pen});
+        let legacy: Snapshot = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(legacy.schema, SCHEMA);
+        assert!(legacy.pen.terminal_colors.is_none());
+        assert!(legacy.pen.color_replies.is_empty());
+        assert!(!legacy.pen.input[0].started);
+
+        value["pen"]["terminal_colors"] = json!({"fg":"#4c4f69","bg":"#eff1f5"});
+        value["pen"]["color_replies"] = json!(b"\x1b]10;rgb:4c4c/4f4f/6969\x07".as_slice());
+        value["pen"]["input"][0]["started"] = json!(true);
+        let snapshot: Snapshot = serde_json::from_value(value.clone()).unwrap();
+        let mut resumed: Snapshot =
+            serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
+        assert_eq!(resumed.schema, SCHEMA);
+        let restored = serde_json::to_value(&resumed).unwrap();
+        for key in ["terminal_colors", "color_replies", "input", "term"] {
+            assert_eq!(restored["pen"][key], value["pen"][key], "{key}");
+        }
+        assert_eq!(resumed.pen.term.feed(b"\x1b\\"), vec![(11, false)]);
+    }
+
+    #[test]
     fn descriptor_identity_survives_peer_disconnect() {
         let (socket, peer) = UnixStream::pair().unwrap();
         let saved = descriptor(socket.as_raw_fd()).unwrap();

@@ -42,6 +42,19 @@ coding agent or user state is required. Optional ignored interoperability tests
 accept `CORRAL_COMPAT_BIN` pointing to an unchanged external v1 baseline; this is
 only a comparison tool, never a build or runtime dependency.
 
+`corral terminal-colors --fg '#4c4f69' --bg '#eff1f5'` saves local colors for future
+starts; omit options to read them, or use `--clear` to remove them. Colors are read
+once before starting a pen from `$CORRAL_HOME/.runtime/terminal-colors.json`.
+Unreadable or invalid settings produce a start warning and leave colors unset.
+Without an attached client, the pen answers only single OSC 10/11 queries, using
+the query's BEL or ST terminator. Replies bypass send delays but never interrupt
+a partially written input block, and do not count as human input. Attached clients
+continue to receive queries unchanged and answer them themselves. Upgrade keeps
+the colors and pending I/O with schema 1; old snapshots default to no colors, and
+old binaries ignore the new fields. paddock can set these colors at startup and
+theme changes, including on remote machines; its integration is a separate task.
+See `docs/CONTRACT.md` for the compatible new command and its output.
+
 `node crates/corral/tests/collectors.mjs` exercises both shipped TypeScript
 collectors with a synthetic extension API (Node with native type stripping).
 

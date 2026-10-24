@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/src/terminal.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/src/terminal.rs` at commit `a31dea2`; ranch has changed it since.
 use regex::bytes::{Captures, Regex};
 use std::{collections::BTreeMap, sync::LazyLock};
 fn re(s: &str) -> Regex {
@@ -26,7 +26,9 @@ impl Terminal {
     pub fn paste(&self) -> bool {
         self.modes.get("2004") == Some(&b'h')
     }
-    pub fn feed(&mut self, data: &[u8]) {
+    /// Returns (OSC number, BEL terminator) for complete, single-color queries.
+    pub fn feed(&mut self, data: &[u8]) -> Vec<(u8, bool)> {
+        let mut queries = Vec::new();
         let mut b = std::mem::take(&mut self.pending);
         b.extend_from_slice(data);
         let mut i = 0;
@@ -37,6 +39,9 @@ impl Terminal {
                     .captures(&b[j..])
                     .filter(|c| c.get(0).unwrap().start() == 0)
                 {
+                    if kind == 1 && matches!(&c[1], b"10;?" | b"11;?") {
+                        queries.push((10 + c[1][1] - b'0', c[0].ends_with(b"\x07")));
+                    }
                     self.apply(kind, &c);
                     i = j + c.get(0).unwrap().end();
                     found = true;
@@ -51,6 +56,7 @@ impl Terminal {
                 i = j + 1;
             }
         }
+        queries
     }
     fn apply(&mut self, kind: u8, c: &Captures<'_>) {
         let p = &c[1];
@@ -226,6 +232,33 @@ pub fn strip(data: &[u8]) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn color_queries_preserve_terminators_and_partial_reads() {
+        let mut t = Terminal::default();
+        assert_eq!(
+            t.feed(b"\x1b]10;?\x07\x1b]11;?\x1b\\"),
+            vec![(10, true), (11, false)]
+        );
+        for query in [b"\x1b]10;?\x07".as_slice(), b"\x1b]11;?\x1b\\"] {
+            for split in 1..query.len() {
+                assert!(t.feed(&query[..split]).is_empty());
+                assert_eq!(
+                    t.feed(&query[split..]),
+                    if query.ends_with(b"\x07") {
+                        vec![(10, true)]
+                    } else {
+                        vec![(11, false)]
+                    }
+                );
+            }
+        }
+        assert!(
+            t.feed(
+                b"\x1b]10;#ffffff\x07\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;0;?\x07\x1b]12;?\x07\x1b]10;?;?\x07\x1b]2;title\x07\x1b[c\x1b[6n\x1b[?996n"
+            ).is_empty()
+        );
+        assert_eq!(t.title, "title");
+    }
+    #[test]
     fn partial_modes_replay_before_input_and_restore_on_detach() {
         let mut t = Terminal::default();
         for part in [
@@ -233,7 +266,7 @@ mod tests {
             b"4h\x1b[?25l\x1b[>1u\x1b[>4;2m\x1b]2;title\x1b",
             b"\\",
         ] {
-            t.feed(part)
+            t.feed(part);
         }
         assert_eq!(t.title, "title");
         assert!(t.paste());
