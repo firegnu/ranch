@@ -40,10 +40,14 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   保守识别可能拒绝只引用这些字样的命令。非 Bash 显示 action，只给「拒绝」。
   永不提供会话放行。收到这次框的 approved 才报告允许成功；rejected 或 10 秒没结果
   照实说明。提问／批准／后台提问框上回「停」或拒绝按两次 Esc，干活中一次，
-  空闲不按；15 秒内须确认 idle 且 interrupted。前台答案超时继续等待确认，
-  如果另开了新轮，旧答案撤掉并提示重发。
+  空闲不按；15 秒内须确认 idle 且 interrupted。原轮正常 idle、未 interrupted 且无
+  Esc 等待确认时，前台答案明确说明没送并撤出队列，让后面的消息继续；新轮也撤旧答案。
   按前核对实例、框时间、工具、题目／原始命令、无人操作、只有一个框；
-  Kimi 不读屏、不以输出变化判定框变了，后台框跨轮仍有效。
+  corral 计数包含同会话子 agent 的未解决框，但只展示主会话内容；有子框时允许、
+  后台答案、Esc 全不按，多框只提示回电脑。只认当前进程启动后出现的框，
+  恢复会话不复用旧进程框，同类框也先来先显示。新框不会清掉上一框的 resolved。
+  Kimi 不读屏、不以输出变化判定框变了，后台框跨轮仍有效。批准命令放代码块，
+  不使用 Claude 的「认不出框的样子」提示。
   答案和按键状态落盘，连点、重启不重按；电脑处理过的框撤控件并显示实际结果。
   需要调用 R48g2 corral 的新增 questions.background、command、action、interaction、
   resolved；旧 corral 缺字段时回电脑处理、不按键。无需换 Kimi 钩子或 helper。
@@ -51,8 +55,9 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   不变，paddock 不用动。真实 Slack 测试在主控部署后与用户一起做。
 - `corral.rs` 只调用公开命令。按配置、PATH、`~/.local/bin/corral` 找程序，
   启动检查 `--version` 的 contract 1；只用 ls、status、reply、send、read、keys。
-  打断／拒绝用 Esc，amp 连发两个 Esc；R47c 的 Claude Code 单次批准只发一个
-  `text:<选项号>`，不追加 Enter。
+  打断／拒绝用 Esc，amp 连发两个 Esc，Kimi 框上两个、无框 working 时一个；
+  R47c 的 Claude Code 单次批准只发一个 `text:<选项号>`，不追加 Enter。
+  R48g2 的 Kimi 后台答案在框内用 `text:`、`tab`、`enter`，最后 Submit 只按 `text:1`。
   发送参数是 `send NAME -- 正文`，不加 force，也不读 corral 的状态文件。
 - `core/engine.rs` 统一处理 owner、频道绑定、路由、线程、队列、每轮回复、
   主控新回复和 Needs you 提醒、`?`、离线补收；每 2 秒轮询，空闲须连续
@@ -138,7 +143,8 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   X 这个 agent，没按」，不转给主控。「停一下，先别提交」「停 一下」仍当普通话。
   只在 working/blocked 时按，暂停、启动中、空闲、状态读不到、已换实例或
   消息发出后另开新轮都不按；30 秒内有人在窗口输入、离线补收也不按。
-  amp 一次命令发两个 Esc，agy 不按。按前存盘，每秒检查，最多 15 秒，
+  amp 一次命令发两个 Esc；Kimi 的次数、子框降级与后台回答见上面 R48g2；agy 不按。
+  按前存盘，每秒检查，最多 15 秒，
   重启只继续确认、不重按；同线程连答、回答和「停」连发共用这次确认。
   空闲后说明「停下了」或「框已拒绝」，只合并同线程原轮的打断提醒，其他
   线程各自收到打断结果；超时照实说明，话继续排着。只改 pony 内部状态和行为，

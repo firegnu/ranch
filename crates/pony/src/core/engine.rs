@@ -899,7 +899,9 @@ impl Engine {
             Some("读不出 agent 当前是否在干活，没按 Esc")
         } else if status.kind.as_deref() == Some("kimi")
             && (status.interaction.is_none()
-                || (status.state == "blocked" && !status.kimi_dialog()))
+                || (status.state == "blocked" && !status.kimi_dialog())
+                || (status.state == "working"
+                    && status.interaction.as_ref().is_some_and(|i| i.count != 0)))
         {
             Some("无法核对 Kimi 的框，没按；请回电脑处理")
         } else if status.kind.as_deref() == Some("kimi")
@@ -1835,6 +1837,16 @@ impl Engine {
                     continue;
                 }
                 if !status.interrupted {
+                    if !status.paused && status.state == "idle" {
+                        self.state.pending.remove(i);
+                        self.save()?;
+                        self.say(
+                            &p.address,
+                            "原轮已正常结束，提问答案没送；请确认后重发",
+                            false,
+                        )?;
+                        continue;
+                    }
                     i += 1;
                     continue;
                 }
@@ -2021,7 +2033,7 @@ impl Engine {
                 {
                     text = needs_you_screen(status, offer.screen.as_deref())
                         .replace("要允许：回电脑处理", "要允许：点批准按钮并确认");
-                } else {
+                } else if status.kind.as_deref() != Some("kimi") {
                     text.push_str("\n认不出框的样子，没给按钮（允许）；要允许请回电脑处理。");
                 }
             }
@@ -2315,6 +2327,17 @@ fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
 }
 
 fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
+    if status.kind.as_deref() == Some("kimi")
+        && status
+            .interaction
+            .as_ref()
+            .is_some_and(|i| i.count > 1 || (i.count > 0 && i.kind.is_none()))
+    {
+        return format!(
+            "⚠ {} 有多个或子 agent 的对话框，请回电脑处理。",
+            status.name
+        );
+    }
     let footer = if status.kind.as_deref() == Some("agy") {
         "要回电脑上处理；在这里回的话，等它处理完再送。"
     } else {
@@ -2362,23 +2385,22 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
         return format!("{text}\n在这个线程写答案（例如『1 选 B；2 选 A、C』），会直接送过去。");
     }
     if status.kind.as_deref() == Some("kimi")
-        && let Some(action) = &status.action
-    {
-        let detail = if status.last_tool.as_deref() == Some("Bash") {
-            status.command.as_ref().unwrap_or(action)
+        && let Some(detail) = if status.last_tool.as_deref() == Some("Bash") {
+            status.command.as_ref().or(status.action.as_ref())
         } else {
-            action
-        };
+            status.action.as_ref()
+        }
+    {
         return format!(
-            "⚠ {} 要批准：{}（{}）{}\n这种框只有安全、完整的 Bash 命令能在这里允许；要允许：回电脑处理。要拒绝：点「拒绝」或回「停」。",
+            "⚠ {} 要批准（{}）{}\n```\n{}\n```\n这里只提供可核对的 Bash 单次允许；要允许：回电脑处理。要拒绝：点「拒绝」或回「停」。",
             status.name,
-            detail.text,
             status.last_tool.as_deref().unwrap_or(""),
             if detail.truncated {
                 "（内容不完整）"
             } else {
                 ""
-            }
+            },
+            detail.text,
         );
     }
     let heading = format!(

@@ -2920,15 +2920,9 @@ fn kimi_foreground_text_and_buttons_close_twice_then_wait_for_interrupted_idle()
             f.corral.sent.is_empty(),
             "Kimi must confirm interruption before sending an answer"
         );
-        f.step(25.);
-        f.step(26.);
-        assert!(
-            f.corral.sent.is_empty(),
-            "the timeout must not bypass interruption confirmation"
-        );
         f.corral.agents.get_mut("paddock/dev").unwrap().interrupted = true;
-        f.step(27.);
-        f.step(28.);
+        f.step(13.);
+        f.step(14.);
         assert_eq!(f.corral.sent.len(), 1);
         assert!(f.corral.sent[0].1.starts_with("（这是对刚才提问的回答"));
         assert!(
@@ -2956,6 +2950,43 @@ fn kimi_foreground_answer_does_not_move_to_a_new_turn() {
     assert!(f.corral.sent.is_empty());
     assert!(f.engine.state.pending.is_empty());
     assert!(f.texts().contains("原提问的答案没送"));
+}
+
+#[test]
+fn review_kimi_normal_completion_releases_answer_and_following_message() {
+    for esc in [false, true] {
+        let mut f = kimi_question(false, true);
+        let posted = f.memory.borrow().posted[0].clone();
+        if esc {
+            f.message("answer", Some(&posted.id), "B", false);
+            f.step(10.);
+        }
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+            "state":"idle","interaction":{"kind":null,"count":0,"running":false},
+            "questions":null,"last_tool":null,"interrupted":false}),
+        );
+        if !esc {
+            f.message("answer", Some(&posted.id), "B", false);
+        }
+        f.message("next", None, "dev 你好", true);
+        f.step(11.);
+        f.step(12.);
+        if esc {
+            assert!(
+                f.corral.sent.is_empty(),
+                "still waiting for Esc confirmation"
+            );
+        }
+        for t in [25., 26., 50., 51., 60., 120., 600.] {
+            f.step(t);
+        }
+        assert_eq!(f.corral.sent, [("paddock/dev".into(), "你好".into())]);
+        assert!(!f.engine.state.pending.iter().any(|p| p.question_answer));
+        assert!(f.texts().contains("原轮已正常结束，提问答案没送"));
+        assert_eq!(f.corral.escapes.len(), usize::from(esc));
+    }
 }
 
 #[test]
@@ -3309,6 +3340,84 @@ fn kimi_stop_and_reject_use_two_escapes_on_a_frame_one_working_and_none_idle_or_
     f.step(11.);
     assert_eq!(f.corral.escapes, [("paddock/dev".into(), true)]);
     assert!(f.corral.approvals.is_empty());
+}
+
+#[test]
+fn review_child_dialogs_block_approval_background_answers_and_escapes() {
+    let mut f = kimi_approval("echo main");
+    let mut posted = f.memory.borrow().posted[0].clone();
+    posted.buttons.retain(|b| b.label == "允许这一次");
+    f.corral
+        .agents
+        .get_mut("paddock/dev")
+        .unwrap()
+        .interaction
+        .as_mut()
+        .unwrap()
+        .count = 2;
+    f.click(&posted, 10.);
+    f.step(10.);
+    assert!(f.corral.approvals.is_empty());
+
+    let mut f = kimi_question(true, true);
+    f.message("answer", Some("bot-0"), "B", false);
+    f.step(10.);
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({
+        "interaction":{"kind":"question","count":2,"running":false}}),
+    );
+    f.step(11.);
+    assert!(f.corral.question_keys.is_empty());
+    assert!(f.corral.escapes.is_empty());
+
+    for (state, kind, count) in [("blocked", Some("approval"), 2), ("working", None, 1)] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+            "kind":"kimi","state":state,"interaction":{"kind":kind,"count":count,"running":true}}),
+        );
+        f.message("stop", None, "停 dev", true);
+        f.step(10.);
+        assert!(f.corral.escapes.is_empty(), "child dialog while {state}");
+    }
+}
+
+#[test]
+fn review_kimi_notices_quote_commands_and_make_multiple_dialogs_manual() {
+    let command = "printf '%s' '*_`echo word`_*'";
+    let f = kimi_approval(command);
+    assert!(f.texts().contains(&format!("```\n{command}\n```")));
+    for mut fields in [
+        serde_json::json!({"last_tool":"Bash","command":{"text":command,"truncated":false},"action":{"text":"Running command","truncated":false}}),
+        serde_json::json!({"last_tool":"AskUserQuestion","questions":{"background":true,"truncated":false,"items":[
+            {"header":"颜色","question":"选哪个？","multi_select":false,"options":[{"label":"红","description":""},{"label":"蓝","description":""}]}]}}),
+    ] {
+        let mut f = Fixture::new();
+        f.memory.borrow_mut().buttons = true;
+        fields["kind"] = serde_json::json!("kimi");
+        fields["state"] = serde_json::json!("blocked");
+        fields["interaction"] = serde_json::json!({"kind":if fields["questions"].is_null() {"approval"} else {"question"},"count":2,"running":false});
+        status_fields(f.corral.agents.get_mut("paddock/dev").unwrap(), fields);
+        f.step(2.);
+        f.step(4.);
+        let notice = &f.memory.borrow().posted[0];
+        assert!(notice.buttons.is_empty() && notice.choices.is_empty());
+        assert!(notice.text.contains("请回电脑处理"));
+        for misleading in [
+            "点「拒绝」",
+            "回『停』",
+            "答案会填进",
+            "写答案",
+            "认不出框的样子",
+        ] {
+            assert!(!notice.text.contains(misleading), "{}", notice.text);
+        }
+    }
+    let f = kimi_approval("rm -rf build");
+    assert!(!f.texts().contains("认不出框的样子"));
+    assert!(f.texts().contains("要允许：回电脑处理"));
 }
 
 impl Fixture {

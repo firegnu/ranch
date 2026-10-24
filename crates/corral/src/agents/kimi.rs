@@ -166,6 +166,7 @@ fn workdir_key(cwd: &Path) -> String {
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct WireCursor {
     version: u8,
+    started: f64,
     path: String,
     dev: u64,
     ino: u64,
@@ -246,6 +247,70 @@ fn resolved(dialog: &Value, event: &Value, at: f64) -> Value {
     out
 }
 
+// Child dialogs share the terminal with main. Read only their unresolved ids;
+// never use child text, tools or results as the main agent's state.
+fn child_dialog_count(main: &Path, started: f64) -> Option<usize> {
+    use std::{
+        collections::BTreeSet,
+        fs::OpenOptions,
+        io::{BufRead, BufReader},
+        os::unix::fs::OpenOptionsExt,
+    };
+    let parent = main.parent()?;
+    if parent.file_name()? != "main" || parent.parent()?.file_name()? != "agents" {
+        return Some(0);
+    }
+    let mut count = 0;
+    for entry in std::fs::read_dir(parent.parent()?).ok()? {
+        let entry = entry.ok()?;
+        if entry.file_name() == "main" || !entry.file_type().ok()?.is_dir() {
+            continue;
+        }
+        let file = match OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(entry.path().join("wire.jsonl"))
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        if !file.metadata().ok()?.is_file() {
+            return None;
+        }
+        let mut ids = BTreeSet::new();
+        for line in BufReader::new(file).split(b'\n') {
+            let line = line.ok()?;
+            if !line
+                .windows(b"interaction.".len())
+                .any(|w| w == b"interaction.")
+            {
+                continue;
+            }
+            let e: Value = serde_json::from_slice(&line).ok()?;
+            if e["time"].as_f64().unwrap_or(0.) / 1000. < started {
+                continue;
+            }
+            let Some(id) = e["id"].as_str() else {
+                continue;
+            };
+            match e["type"].as_str() {
+                Some("interaction.request")
+                    if matches!(e["kind"].as_str(), Some("approval" | "question")) =>
+                {
+                    ids.insert(id.to_owned());
+                }
+                Some("interaction.resolved") => {
+                    ids.remove(id);
+                }
+                _ => {}
+            }
+        }
+        count += ids.len();
+    }
+    Some(count)
+}
+
 /// Resume the main wire at the last complete line. Stop hooks run before turn.ended,
 /// so every status read checks for new durable evidence and reapplies the cached result.
 fn wire_events(s: &mut Value) -> Vec<Value> {
@@ -256,6 +321,9 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
     };
     s["kimi_status"] =
         json!({"interaction":null,"resolved":null,"questions":null,"command":null,"action":null});
+    let Some(started) = s["kimi_started"].as_f64() else {
+        return vec![];
+    };
     let Some(turn_started) = s["turn_started"].as_f64() else {
         return vec![];
     };
@@ -277,7 +345,8 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
     let mut wire = serde_json::from_value::<WireCursor>(s["kimi_wire"].take())
         .ok()
         .filter(|w| {
-            w.version == 2
+            w.version == 3
+                && w.started == started
                 && w.path == path
                 && w.dev == meta.dev()
                 && w.ino == meta.ino()
@@ -286,7 +355,8 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
                 && w.turn_started == turn_started
         })
         .unwrap_or_else(|| WireCursor {
-            version: 2,
+            version: 3,
+            started,
             path,
             dev: meta.dev(),
             ino: meta.ino(),
@@ -325,7 +395,7 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
             continue;
         };
         let t = e["time"].as_f64().unwrap_or(0.0) / 1000.0;
-        if e["agentId"] != "main" {
+        if e["agentId"] != "main" || t < started {
             continue;
         }
         // Interaction lifetime is independent of a user turn. Replay older requests too.
@@ -398,7 +468,6 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
             }
             wire.interactions.retain(|i| i["id"] != e["id"]);
             wire.interactions.push(dialog);
-            wire.resolved = Value::Null;
         }
         if e["type"] == "interaction.resolved"
             && let Some(i) = wire.interactions.iter().position(|i| i["id"] == e["id"])
@@ -499,14 +568,8 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
     }
     let mut status = json!({"resolved":wire.resolved,"interaction":{"kind":null,"count":0,
         "running":wire.running || wire.prompt_at < since},"questions":null,"command":null,"action":null});
-    if let Some(first) = wire.interactions.first() {
-        // Kimi replaces same-kind UI, but queues different kinds behind the active owner.
-        let front = wire
-            .interactions
-            .iter()
-            .rev()
-            .find(|i| i["kind"] == first["kind"])
-            .unwrap();
+    if let Some(front) = wire.interactions.first() {
+        // Both the same-kind controller and the cross-kind modal queue are FIFO.
         status["state"] = json!("blocked");
         status["state_started"] = front["at"].clone();
         status["last_tool"] = front["tool"].clone();
@@ -515,6 +578,10 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
         status["action"] = front["action"].clone();
         status["interaction"] = json!({"kind":front["kind"],"count":wire.interactions.len(),
             "running":wire.running || wire.prompt_at < since});
+    }
+    match child_dialog_count(Path::new(&wire.path), started) {
+        Some(count) => status["interaction"]["count"] = json!(wire.interactions.len() + count),
+        None => status["interaction"] = Value::Null,
     }
     s["kimi_status"] = status;
     s["kimi_wire"] = serde_json::to_value(&wire).unwrap();

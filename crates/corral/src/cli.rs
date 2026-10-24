@@ -139,6 +139,9 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             Path::new(m["cwd"].as_str().unwrap_or("")),
             agents::adopts_session(m["kind"].as_str().unwrap_or("")),
         )?;
+        if m["kind"] == "kimi" {
+            snap["kimi_started"] = st["started"].clone();
+        }
         if let Some(adapter) = agents::find(m["kind"].as_str().unwrap_or("")) {
             events::observe_transcript(&d, &mut snap, adapter)?;
         }
