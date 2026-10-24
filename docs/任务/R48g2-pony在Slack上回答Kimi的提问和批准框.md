@@ -129,3 +129,9 @@
 真机追加 **1 轮，总数 10 轮**：普通模式 Kimi 2.3.1，临时 git cwd、隔离 CORRAL_HOME、`ranch/test-r48g2-review`（role=test）。一条用户输入让主会话开后台单选、子 agent 请求 Bash 在临时目录写 child.txt。观察到主题和 agent-0 的 Bash 批准各有 request、没有 resolved，主轮结束后 status 为 blocked、count:2、running:false；未按任何批准、答案或 Esc。保留两个未解决框直接 stop，再以新实例 `--continue` 恢复同一会话（未追加用户输入／模型轮次），status 为 idle、questions／command／interaction 均 null，无幽灵框；恢复后新一轮的过滤由合成测试覆盖。child.txt 未生成，测试 agent 已再次 stop，隔离 ls 为空。config.toml、tui.toml 前后 SHA-256 相同，未读取或复制凭证和身份文件；原始证据留临时目录，不入库。
 
 取舍和边界：正常结束的旧答案撤掉并提示重发；子框仅用于阻止按键；resolved 继续只保留最近一次主框结果。第 8 条维持旧 corral 缺字段时不按键、原来 working 打断按钮的显示行为也没改。paddock 的现有调用无需修改，公开字段结构保持兼容，计数与恢复状态得到纠正。未碰真实 Slack、安装程序、服务、其他仓库，也未部署、合并或推送。踩过的坑是上述旧 FIFO 夹具，以及实例时间边界要求合成 wire 采用相对测试进程的时间；原非法 UTF-8 事件也一起移入当前时间窗，保留其原检验意义。没有新增需要主控决定的事项。
+
+### 复核后修改
+
+2026-10-24，按主控决定只修复核新问题 1、2，3、4 不改。对照仍在的审查临时测试补正式回归：`review2_bad_old_child_line_nulls_interaction_forever` 先失败于旧残缺行使 count 为 null；修为末行等换行、完整坏行跳过后通过，并覆盖分段追加新请求、换行后计数、后续 resolved。`review2_kimi_background_null_interaction_reports_unverifiable` 先失败于撤后台答案的理由不实，现明确说“无法核对 Kimi 的框”，仍撤队且不按键、不发送。`review2_kimi_command_fence_closed_by_command_content` 先复现命令里的三连反引号提前关块，现围栏取命令最长连续反引号加一、至少三个，三连／五连分别用四连／六连，原文和允许按钮保留；测试通过。DESIGN 同步这两项决定。
+
+验证只跑针对及直接相关回归：corral 的 `review2_`、`review_child_dialogs`、`review_resuming_a_session` 共 3 项通过；pony 的 `review2_`、`kimi_approval_`、`kimi_background_`、`review_child_dialogs`、`review_kimi_notices` 共 9 项通过。`cargo fmt --check`、`git diff --check` 通过，命令均前台完成，编译仍用 `.target/r48g2`。本次不用真 Kimi（累计仍为 10 轮），不跑全套；未碰真实 Slack、部署或其他仓库，只提交任务分支供主控合并。公开字段结构不变，paddock 不用动。

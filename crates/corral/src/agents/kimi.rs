@@ -279,15 +279,22 @@ fn child_dialog_count(main: &Path, started: f64) -> Option<usize> {
             return None;
         }
         let mut ids = BTreeSet::new();
-        for line in BufReader::new(file).split(b'\n') {
-            let line = line.ok()?;
+        let mut reader = BufReader::new(file);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if reader.read_until(b'\n', &mut line).ok()? == 0 || line.last() != Some(&b'\n') {
+                break;
+            }
             if !line
                 .windows(b"interaction.".len())
                 .any(|w| w == b"interaction.")
             {
                 continue;
             }
-            let e: Value = serde_json::from_slice(&line).ok()?;
+            let Ok(e) = serde_json::from_slice::<Value>(&line) else {
+                continue;
+            };
             if e["time"].as_f64().unwrap_or(0.) / 1000. < started {
                 continue;
             }

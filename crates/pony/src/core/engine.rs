@@ -2391,8 +2391,18 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
             status.action.as_ref()
         }
     {
+        let fence = "`".repeat(
+            (detail
+                .text
+                .split(|c| c != '`')
+                .map(str::len)
+                .max()
+                .unwrap_or(0)
+                + 1)
+            .max(3),
+        );
         return format!(
-            "⚠ {} 要批准（{}）{}\n```\n{}\n```\n这里只提供可核对的 Bash 单次允许；要允许：回电脑处理。要拒绝：点「拒绝」或回「停」。",
+            "⚠ {} 要批准（{}）{}\n{fence}\n{}\n{fence}\n这里只提供可核对的 Bash 单次允许；要允许：回电脑处理。要拒绝：点「拒绝」或回「停」。",
             status.name,
             status.last_tool.as_deref().unwrap_or(""),
             if detail.truncated {

@@ -64,6 +64,8 @@ fn stale(old: &Status, current: &Status) -> Option<&'static str> {
         Some("它重开过")
     } else if current.paused {
         Some("暂停中")
+    } else if current.interaction.is_none() {
+        Some("无法核对 Kimi 的框")
     } else if !current.kimi_dialog()
         || current.interaction.as_ref()?.kind.as_deref() != Some("question")
         || current.state_started != old.state_started

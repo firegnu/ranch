@@ -3221,6 +3221,24 @@ fn kimi_background_reports_mismatch_timeout_and_refuses_changed_or_human_operate
 }
 
 #[test]
+fn review2_kimi_background_null_interaction_reports_unverifiable() {
+    let mut f = kimi_question(true, true);
+    f.message("answer", Some("bot-0"), "梨", false);
+    f.step(10.);
+    assert_eq!(f.engine.state.background_answers.len(), 1);
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({"interaction":null}),
+    );
+    f.step(11.);
+    assert!(f.engine.state.background_answers.is_empty());
+    assert!(f.corral.question_keys.is_empty());
+    assert!(f.corral.escapes.is_empty() && f.corral.sent.is_empty());
+    assert!(f.texts().contains("无法核对 Kimi 的框，后台答案没送、没按"));
+    assert!(!f.texts().contains("题目已处理、已换或有别的框"));
+}
+
+#[test]
 fn kimi_approval_refuses_dangerous_incomplete_non_bash_and_changed_commands() {
     for command in [
         "rm -rf tmp",
@@ -3381,6 +3399,29 @@ fn review_child_dialogs_block_approval_background_answers_and_escapes() {
         f.message("stop", None, "停 dev", true);
         f.step(10.);
         assert!(f.corral.escapes.is_empty(), "child dialog while {state}");
+    }
+}
+
+#[test]
+fn review2_kimi_command_fence_closed_by_command_content() {
+    for (command, fence) in [
+        (
+            "cat > notes.md <<'EOF'\n```\n**说明** _a_ `b`\n```\nEOF",
+            "````",
+        ),
+        ("printf '%s' '`````'", "``````"),
+    ] {
+        let f = kimi_approval(command);
+        let notice = f.memory.borrow().posted[0].clone();
+        assert!(
+            notice
+                .text
+                .contains(&format!("\n{fence}\n{command}\n{fence}\n")),
+            "{}",
+            notice.text
+        );
+        assert_eq!(notice.text.matches(fence).count(), 2);
+        assert!(notice.buttons.iter().any(|b| b.label == "允许这一次"));
     }
 }
 

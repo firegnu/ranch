@@ -173,6 +173,66 @@ fn review_child_dialogs_count_without_changing_main_state_or_command() {
 }
 
 #[test]
+fn review2_bad_old_child_line_nulls_interaction_forever() {
+    let lab = Lab::new("exec /bin/cat", None);
+    let main = lab.path("s/agents/main/wire.jsonl");
+    let child = lab.path("s/agents/agent-0/wire.jsonl");
+    fs::create_dir_all(child.parent().unwrap()).unwrap();
+    // A previous process was killed while writing tool output mentioning an interaction.
+    fs::write(
+        &child,
+        format!(
+            "{{\"type\":\"context.append_loop_event\",\"time\":{},\"event\":{{\"type\":\"tool.result\",\"output\":\"interaction.request",
+            lab.ms(900002)
+        ),
+    )
+    .unwrap();
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":main,"source":"resume"}),
+    );
+    lab.event(
+        "UserPromptSubmit",
+        json!({"prompt":"go","t":lab.at(1000.0)}),
+    );
+    append_wire(
+        &main,
+        json!({"type":"turn.prompt","agentId":"main","turnId":2,"time":lab.ms(1000001)}),
+    );
+    append_wire(
+        &main,
+        json!({"type":"interaction.request","agentId":"main","id":"main","kind":"approval","time":lab.ms(1000002),
+        "request":{"turnId":2,"toolName":"Bash","display":{"kind":"command","command":"echo ok"}}}),
+    );
+    let st = lab.status();
+    assert_eq!(st["state"], "blocked");
+    assert_eq!(st["interaction"]["count"], 1, "unfinished old line");
+    assert_eq!(st["command"]["text"], "echo ok");
+
+    let mut file = fs::OpenOptions::new().append(true).open(&child).unwrap();
+    writeln!(file).unwrap();
+    assert_eq!(lab.status()["interaction"]["count"], 1, "complete bad line");
+    let request = json!({"type":"interaction.request","agentId":"agent-0","id":"child","kind":"approval","time":lab.ms(1000003)}).to_string();
+    let (first, last) = request.as_bytes().split_at(request.len() / 2);
+    file.write_all(first).unwrap();
+    assert_eq!(lab.status()["interaction"]["count"], 1, "partial new line");
+    file.write_all(last).unwrap();
+    assert_eq!(lab.status()["interaction"]["count"], 1, "still no newline");
+    writeln!(file).unwrap();
+    assert_eq!(lab.status()["interaction"]["count"], 2, "now durable");
+    append_wire(
+        &child,
+        json!({"type":"interaction.resolved","agentId":"agent-0","id":"child","time":lab.ms(1000004)}),
+    );
+    assert_eq!(lab.status()["interaction"]["count"], 1);
+    append_wire(
+        &main,
+        json!({"type":"interaction.resolved","agentId":"main","id":"main","time":lab.ms(1000005),"response":{"decision":"approved"}}),
+    );
+    assert_eq!(lab.status()["interaction"]["count"], 0);
+}
+
+#[test]
 fn review_resuming_a_session_ignores_previous_process_dialogs() {
     for kind in ["foreground", "background", "approval"] {
         let lab = Lab::new("exec /bin/cat", None);
