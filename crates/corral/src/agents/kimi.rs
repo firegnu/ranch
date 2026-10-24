@@ -233,6 +233,7 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
         }
         wire.offset += line.len() as u64;
         // Avoid parsing request bodies, model context and tool output unrelated to state/text.
+        let raw = String::from_utf8_lossy(&line);
         if ![
             "turn.prompt",
             "turn.ended",
@@ -243,10 +244,8 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
             "interaction.resolved",
         ]
         .iter()
-        .any(|kind| {
-            line.windows(kind.len())
-                .any(|bytes| bytes == kind.as_bytes())
-        }) {
+        .any(|kind| raw.contains(kind))
+        {
             continue;
         }
         let Ok(e) = serde_json::from_slice::<Value>(&line) else {

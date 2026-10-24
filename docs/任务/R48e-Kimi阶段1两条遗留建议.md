@@ -49,3 +49,16 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么（含第 1 条前后用时）、拿主意的地方、没做的事、对 paddock 的影响、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-24，ranch/dev-r48e，在 `r48e` 分支完成并自查。
+
+- **做了什么**：主 wire 每个完整行只调用一次 `String::from_utf8_lossy`，合法 UTF-8 借用原字节，再以 `contains` 筛选原来的七种关键字；JSON 仍从原字节解析，损坏行不会变成有效事件。`stop` 沿用 pen 的退出记录，仅对子孙停止适配器（目前只有 Kimi）、同一实例且非空的残留数组增加 `remaining_pids`；`ok:true`、命令退出码和原有字段不变。停止步骤、`exit.json`、`pen.log` 的生产代码未改。同步更新 CONTRACT 和 DESIGN §7。
+- **针对验证**：先扩展 `final_kill_wait_is_bounded_and_records_remaining_processes`，通过隔离 HOME、CORRAL_HOME、KIMI_CODE_HOME 的子进程执行 CLI `stop` 路径。使用原有最后一次 KILL 后仍活着的 `/bin/sleep` 快照，实等 5 秒；旧代码明确因返回值缺少 `remaining_pids` 失败，修复后父进程已退出／尚未退出两种情况均通过，原来的时限、日志及退出码断言全部保留。`stop_waits_for_the_kimi_command_tree_and_leaves_unrelated_processes_alive` 补上正常停止 stdout 的逐字节比较并通过。`only_the_main_wire_finishes_a_turn_and_supplies_its_reply` 加入长 UTF-8 无关行、含关键字但 UTF-8 损坏的行及 `tool.result`，修改筛选前后均通过，状态、最后一步回复、主子轮区分和半行处理不变。
+- **首次读取用时**：临时 Rust 测试直接比较实际 `wire_events` 与审查所用旧版按行 `contains` 实现（`154c2fb`）。同一份 50,000,000 字节合成 wire，以约 64 KiB 的无关 `model.context` 行填充，包含主轮输入、工具、文字和完成事件；release 编译，预热文件读取，每次用空 cursor，交替调用各 21 次，记录中位数，不设计时断言。修改前：旧基线 **28.660 ms**、本分支 **145.705 ms**；修改后：旧基线 **28.275 ms**、本分支 **28.271 ms**，恢复至旧版水平。每次均断言相同的 Stop 事件、`final reply` 和 Bash 工具；临时测试、程序和 wire 已删除，未进入套件。
+- **全套验证**：命令均在前台执行并等到结束，编译目录统一为 `CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r48e`。一次 `cargo test --all-targets --no-fail-fast`：**465 通过、15 跳过、0 失败**（新增的 1 个 ignored 项是由停止上限测试实际调用的隔离 CLI 子进程入口）。`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`、`git diff --check` 全部通过。
+- **拿主意的地方**：没有需要主控新增决定的事。复用原有适配器的 `stop_descendants` 声明与实例匹配，不在共用 CLI 写 Kimi 名字，不改停止机制或已有公开字段的含义；继续采用现有快照模拟 KILL 后仍存活的进程，不开真 Kimi、不要求特权。
+- **没做的事**：未处理审查第 3 条的实等约 10 秒，未加计时断言；未改其他 agent 或钩子，未读写用户真实状态，未打包、部署、安装技能、切 helper、合并或推送。HANDOFF 不在本任务改动范围，留给主控合并后更新已知问题。
+- **对 paddock 的影响**：`stop.remaining_pids` 是兼容新增的可选字段，无残留时不出现，paddock 现有调用不用改；如需显示残留，可直接用命令输出，无须读内部目录。
+- **踩过的坑**：没有。

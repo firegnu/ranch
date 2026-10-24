@@ -123,13 +123,29 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "isolated CLI subprocess for the stop deadline test"]
+    fn stop_cli_reports_remaining_processes() {
+        let Ok(expected) = std::env::var("CORRAL_TEST_STOP_EXPECTED") else {
+            return;
+        };
+        let expected: Value = serde_json::from_str(&expected).unwrap();
+        let result = crate::cli::run(&["stop".into(), "test".into()])
+            .unwrap()
+            .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
     fn final_kill_wait_is_bounded_and_records_remaining_processes() {
         use std::time::{Duration, Instant};
         for parent_exited in [true, false] {
-            let dir = tempfile::tempdir().unwrap();
-            let listener = UnixListener::bind(dir.path().join("sock")).unwrap();
+            let home = tempfile::tempdir_in("/tmp").unwrap();
+            let dir = home.path().join("test");
+            fs::create_dir(&dir).unwrap();
+            let listener = UnixListener::bind(dir.join("sock")).unwrap();
+            listener.set_nonblocking(true).unwrap();
             let master = File::open("/dev/null").unwrap();
-            let lock = File::create(dir.path().join("lock")).unwrap();
+            let lock = state::lock(&dir.join("lock"), true).unwrap().unwrap();
             let mut child = Command::new("/bin/sleep").arg("30").spawn().unwrap();
             let pid = child.id() as i32;
             // A live process at the post-KILL boundary models a signal that could not stop it.
@@ -138,7 +154,7 @@ mod tests {
             let mut pen: Pen = serde_json::from_value(json!({
                 "agent":pid,"master":master.as_raw_fd(),"listener":listener.as_raw_fd(),
                 "lock":lock.as_raw_fd(),"custody":"owner","observer":false,
-                "upgrade":Upgrade::default(),"dir":dir.path(),"metadata":{"kind":"kimi"},
+                "upgrade":Upgrade::default(),"dir":dir,"metadata":{"kind":"kimi"},
                 "labels":{},"instance":"stop-deadline-test","started":now(),
                 "clients":{},"ring":[],"last_output":null,"input":[],"next_input":0.0,
                 "stopping":true,"stop_at":null,"stopped_by":"SIGKILL",
@@ -156,11 +172,36 @@ mod tests {
                 let _ = child.kill();
                 let _ = child.wait();
             });
+            state::write(&dir.join("meta.json"), &json!({"kind":"kimi"})).unwrap();
+            let cli = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "pen::tests::stop_cli_reports_remaining_processes",
+                ])
+                .env("HOME", home.path())
+                .env("CORRAL_HOME", home.path())
+                .env("KIMI_CODE_HOME", home.path().join("kimi-home"))
+                .env(
+                    "CORRAL_TEST_STOP_EXPECTED",
+                    json!({"ok":true,"name":"test","instance":"stop-deadline-test",
+                        "exit_code":if parent_exited { Some(0) } else { None },
+                        "stopped_by":"SIGKILL","remaining_pids":[pid]})
+                    .to_string(),
+                )
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
             let result = pen.run();
             let elapsed = before.elapsed();
             let still_running = unsafe { libc::kill(pid, 0) == 0 };
             let _ = done.send(());
             cleanup.join().unwrap();
+            drop(listener);
+            fs::remove_file(dir.join("sock")).unwrap();
+            drop(lock);
+            let cli = cli.wait_with_output().unwrap();
             result.unwrap();
             assert!(
                 still_running,
@@ -170,14 +211,20 @@ mod tests {
                 elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(7),
                 "{elapsed:?}"
             );
-            let exit = state::read(dir.path().join("exit.json"));
+            assert!(
+                cli.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&cli.stdout),
+                String::from_utf8_lossy(&cli.stderr)
+            );
+            let exit = state::read(dir.join("exit.json"));
             assert_eq!(exit["remaining_pids"], json!([pid]));
             assert_eq!(exit["stop_step"], "SIGKILL");
             assert_eq!(
                 exit["code"],
                 if parent_exited { json!(0) } else { Value::Null }
             );
-            let log = fs::read_to_string(dir.path().join("pen.log")).unwrap();
+            let log = fs::read_to_string(dir.join("pen.log")).unwrap();
             assert!(
                 log.contains("SIGKILL") && log.contains(&pid.to_string()),
                 "{log}"
