@@ -8,8 +8,8 @@
 
 ## 本机安装
 
-- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/03c265e`（10-24，R50b，`corral terminal-colors`、没有客户端时回答 OSC 10/11；只有 corral 程序变了）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/dd02e36/bin/corral`（R47c 改了钩子，记 Bash 权限框的原始命令，10-23 已切；R48c、R48d 没改钩子行为，不用换）。退回：`~/.local/share/ranch/versions/03c265e/bin/ranch deploy 8a6b239`（会自动重启 pony）。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
-- 上一版 `8a6b239`（10-24，R48e）、`5abf1f8`（10-24，R48d，Kimi 进派活表、题目给 pony）、`0232198`（10-24，R48c，Kimi 基本接入；本机 `~/.kimi-code/config.toml` 装了 corral 的标记块）、再上一版 `dd4d661`（10-23，R47c + R47d）、`dd02e36`（R47c）、`a04f7dd`（R47a + R47b）。本机派活表写了 `kimi` 的段时，退到 R48d 之前要先删掉这些段（见 CONTRACT）。再往前退回用 `versions/03c265e/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；helper 退到 R47c（`dd02e36`）之前时，pony 拿不到原始命令，只是不给 Bash 的「允许」按钮，一般不用退 helper；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`。
+- 现装：四个链接（`corral`、`ranch`、`fence`、`pony`）都指 `versions/25b4598`（10-24，R48f，Kimi 能套 `dev` 墙；corral、ranch、fence 变了，pony 相同）。Slack 应用已打开交互（Interactivity）。共用 helper 指 `versions/25b4598/bin/corral`（R48f 改了钩子：套墙 Kimi 的父进程校验，10-24 已切）。退回：`~/.local/share/ranch/versions/25b4598/bin/ranch deploy 03c265e`；退到 R48f 之前，helper 留在新版也不影响别家，套墙的 Kimi 本来就不支持。部署记录在 `~/.local/share/ranch/deploys.jsonl`。
+- 上一版 `03c265e`（10-24，R50b，`corral terminal-colors`）、`8a6b239`（10-24，R48e）、`5abf1f8`（10-24，R48d，Kimi 进派活表、题目给 pony）、`0232198`（10-24，R48c，Kimi 基本接入；本机 `~/.kimi-code/config.toml` 装了 corral 的标记块）、再上一版 `dd4d661`（10-23，R47c + R47d）、`dd02e36`（R47c）、`a04f7dd`（R47a + R47b）。本机派活表写了 `kimi` 的段时，退到 R48d 之前要先删掉这些段（见 CONTRACT）。再往前退回用 `versions/25b4598/bin/ranch deploy <版本>`，它会按程序内容列出要做的事；helper 退到 R47c（`dd02e36`）之前时，pony 拿不到原始命令，只是不给 Bash 的「允许」按钮，一般不用退 helper；退到 R43（`2d63ee1`）之前的版本时，helper 要另外用旧版 corral 对一个 `/bin/cat` 测试 agent 做 `corral upgrade`。
 - 旧版本目录都保留，不删。
 - 技能：corral 技能（`corral install-skills`）和 corral-dispatch 技能（`ranch dispatch install-skills`）装在 `~/.claude/skills/`、`~/.agents/skills/`、`~/.gemini/config/skills/`；技能内容编进程序，改技能要先打新版本再重装。
 - 全局插件：amp 在 `~/.config/amp/plugins/corral.ts`；agy 在 `~/.gemini/config/plugins/corral/`。两个 `integration status` 都是 same。
@@ -19,7 +19,7 @@
 ## 部署时要记得
 
 - 部署由用户在普通终端里跑 `~/.local/share/ranch/versions/<新版本>/bin/ranch deploy <新版本>`；主控先跑 `--dry-run` 给用户看计划，事后核对链接、`deploys.jsonl`、`pony status`。
-- 共用的 `~/.corral/.runtime/helper` 指 `versions/dd02e36/bin/corral`（10-23 切），`ranch deploy` 不会跟着换。改了钩子代码（`hooks.rs`）的版本要换：部署后在普通终端跑 `corral start ranch/test-helper --label role=test -- /bin/cat`、`corral upgrade ranch/test-helper`、`corral stop ranch/test-helper`，不动用户的 agent。
+- 共用的 `~/.corral/.runtime/helper` 指 `versions/25b4598/bin/corral`（10-24 切），`ranch deploy` 不会跟着换。改了钩子代码（`hooks.rs`）的版本要换：部署后在普通终端跑 `corral start ranch/test-helper --label role=test -- /bin/cat`、`corral upgrade ranch/test-helper`、`corral stop ranch/test-helper`，不动用户的 agent。
 - 部署前起的 pen 还是旧版，只对新开的 agent 生效；没跑过 `corral upgrade --all`。
 - pony 换程序要 `kickstart`、plist 变了要 `pony service install --yes`：`ranch deploy` 会自己判断、自己做。它在重装服务时如果被 Ctrl-C 打断，重跑不会自动把服务装回来，要手动跑目标版本的 `pony service install --yes`。
 - fence 用的 node 是 `~/.nvm/versions/node/v24.13.1/bin/node`，这个版本不能卸；srt 0.0.80。
@@ -38,7 +38,6 @@
 
 ## 还没派的草稿
 
-- `docs/任务/R48f-Kimi进sandbox.md`：Kimi 阶段 3，进 fence 的 sandbox；要用真 Kimi 在墙里实测定最小放行。用户 10-24：先建草稿。
 - `docs/任务/R48g-Kimi题目在Slack上回答.md`：Kimi 阶段 4（可选），pony 里回答 Kimi 的题目、加按钮，连带处理后台提问漏掉、提问线程里「停」停不下来两条已知问题。用户 10-24：先建草稿。
 - `docs/任务/R51-stop与ls同时跑丢退出记录.md`：R48e 审查发现，`stop` 和同时跑的 `ls` 竞争丢退出记录；审查给了修法，改的是所有 agent 共用的 `stop` 等待。用户 10-24：记草稿，以后再做。
 - `docs/任务/R39-pony后续想法.md`：pony 后续各条，按档排好，各条写了什么时候再做；手机上答确认框那条已由 R46、R47a–R47d 做完。
@@ -58,3 +57,4 @@
 - agy 的已知限制见 DESIGN §7「接入 agy」。
 - `corral stop` 和同时跑的 `corral ls` 竞争：`ls` 可能先删掉刚停的 agent 的 `exit.json`，`stop` 输出 `exit_code`、`stopped_by` 为 null（Kimi 的 `remaining_pids` 也丢）；所有 agent 都会碰上，开着 paddock 时约 4%。修法草稿见 R51。
 - Kimi（R48d 审查，可以不改的）：Kimi 的后台提问（`AskUserQuestion` 带 `background:true`）提问框开着、模型照样接着跑，pony 多半看不到这道题（不会给错题，只是漏）；这一轮结束后才回答时，状态会从 idle 回到 working，等下一轮结束才恢复。阶段 4 做 Slack 回答时用真 Kimi 测。详见 `docs/任务/R48d-审查.md` 第 4 条。
+- 套墙的 Kimi（R48f 审查）：墙内能读写所有 Kimi 会话（含批准记录、定时任务），墙外恢复时会生效，套过墙的会话不要在墙外直接恢复；`server.token`、`device_id`、`credentials/mcp/`、别的项目的会话墙里可读；种类数据不支持 `deny_read`。要隔离另开任务。
