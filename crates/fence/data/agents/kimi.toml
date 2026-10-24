@@ -1,18 +1,15 @@
-description = "Kimi Code（R48f 试验草案，启动路径尚未验收）；自带查资料，不注入 MCP"
+description = "Kimi Code（R48f 试验草案，凭证只读时刷新受阻）；自带查资料，不注入 MCP"
 services = ["kimi"]
-read = [
-  "${home}/.kimi-code/config.toml", "${home}/.kimi-code/tui.toml",
-  "${home}/.kimi-code/credentials/kimi-code.json", "${home}/.kimi-code/region",
-]
-write = [
-  "${home}/.kimi-code/sessions", "${home}/.kimi-code/logs",
-  "${home}/.kimi-code/cache", "${home}/.kimi-code/user-history",
-  "${home}/.kimi-code/session_index.jsonl", "${home}/.kimi-code/workspaces.json",
-]
+write = ["${home}/.kimi-code"]
 deny_write = [
   "${home}/.kimi-code/config.toml", "${home}/.kimi-code/tui.toml",
-  "${home}/.kimi-code/credentials",
+  "${home}/.kimi-code/credentials", "${home}/.kimi-code/region",
+  "${home}/.kimi-code/server.token", "${home}/.kimi-code/device_id",
+  "${home}/.kimi-code/mcp.json", "${home}/.kimi-code/plugins",
+  "${home}/.kimi-code/AGENTS.md", "${home}/.kimi-code/skills",
+  "${home}/.kimi-code/agents", "${home}/.kimi-code/workspace-trust",
+  "${home}/.kimi-code/bin",
 ]
-env = { KIMI_CODE_NO_AUTO_UPDATE = "1", KIMI_DISABLE_TELEMETRY = "1" }
+env = { KIMI_CODE_NO_AUTO_UPDATE = "1", KIMI_DISABLE_TELEMETRY = "1", KIMI_CODE_WATCH = "0", KIMI_CODE_CACHE_DIR = "${tmp}/kimi-cache" }
 [macos]
 allow_pty = true

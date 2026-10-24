@@ -57,6 +57,15 @@ fn kimi_uses_native_research_and_keeps_configuration_read_only() {
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(v["args"], json!([]));
+    for domain in ["api.kimi.com", "auth.kimi.com"] {
+        assert!(
+            v["settings"]["network"]["allowedDomains"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(domain)),
+            "{v}"
+        );
+    }
     assert!(
         !v["settings"]["network"]["allowedDomains"]
             .as_array()
@@ -67,22 +76,30 @@ fn kimi_uses_native_research_and_keeps_configuration_read_only() {
     let read = files["allowRead"].as_array().unwrap();
     let write = files["allowWrite"].as_array().unwrap();
     let denied = files["denyWrite"].as_array().unwrap();
-    for path in ["config.toml", "tui.toml", "credentials/kimi-code.json"] {
-        assert!(
-            read.contains(&json!(root.join(".kimi-code").join(path))),
-            "{v}"
-        );
-    }
-    for path in ["config.toml", "tui.toml", "credentials"] {
+    for path in [
+        "config.toml",
+        "tui.toml",
+        "credentials",
+        "region",
+        "server.token",
+        "device_id",
+        "mcp.json",
+        "plugins",
+        "AGENTS.md",
+        "skills",
+        "agents",
+        "workspace-trust",
+        "bin",
+    ] {
         assert!(
             denied.contains(&json!(root.join(".kimi-code").join(path))),
             "{v}"
         );
     }
-    assert!(write.contains(&json!(root.join(".kimi-code/sessions"))));
-    assert!(!write.contains(&json!(root.join(".kimi-code"))));
-    assert!(!read.contains(&json!(root.join(".kimi-code"))));
-    assert!(!read.contains(&json!(root.join(".kimi-code/server.token"))));
+    assert!(write.contains(&json!(root.join(".kimi-code"))));
+    assert!(read.contains(&json!(root.join(".kimi-code"))));
+    assert_eq!(v["env"]["KIMI_CODE_CACHE_DIR"], "<运行时才有>/kimi-cache");
+    assert_eq!(v["env"]["KIMI_CODE_WATCH"], "0");
 }
 
 #[test]

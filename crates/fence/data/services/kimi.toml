@@ -1,1 +1,1 @@
-domains = []
+domains = ["api.kimi.com", "auth.kimi.com"]
