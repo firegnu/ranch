@@ -99,3 +99,16 @@
 - **最终回复（6）**：出现新 step 的文字时清空前一步文字，同一 step 的片段继续连接。公开生命周期测试先写工具前说明，再写工具后的两段最终文字，确认 `reply` 只返回后者；CONTRACT 和 DESIGN 写清取最后一个有文字的 step。
 - **验证**：上述六项各先获得目标行为的失败证据，再修复通过；旧竞争测试在收紧错误断言后也实际通过内容核对分支。只跑直接相关的 19 项唯一测试：`--lib integration::block::tests`（2）、`--lib workdir_keys_match_kimi_23`（1）、`--lib final_kill_wait_is_bounded`（1）、`--test kimi`（8）、`--test integration kimi_`（3）、`--test integration installs_and_removes_only_`（与前者重复 1 项，另有 amp／agy 2 项）、`--test protocol stop_timeout_does_not_cancel_pen_owned_shutdown`（1）、`--test protocol agent_exit_drains_last_output_to_attached_client`（1）；全部通过。命令均为 `cargo test -p corral-core` 加所列筛选，均使用 r48c 独立编译目录。Kimi 测试中的 ignored 项只是由停止测试实际调用的合成子进程入口。`cargo clippy -p corral-core --lib --test integration --test kimi -- -D warnings`、`cargo fmt --check`、`git diff --check` 均通过。没有跑全套，没有再真跑 Kimi，没有放宽断言或缩短等待时限。
 - **范围与决定**：只按这次明确选择实现，不需主控另作决定；未修改第 7–9 条、主仓库审查文件、真实配置或其他仓库，没有打包、部署、合并或推送。paddock 无需代码适配，现有命令与状态字段不变；残留 PID 只在异常停止时兼容增加到内部退出记录。停止测试的快照用于覆盖无法安全制造的失败信号场景，普通 Kimi 子树停止及无关进程保护仍由公开命令测试覆盖。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48c-1`（Codex gpt-6-astra / xhigh），交叉审查 `ranch/review-r48c-1`（Claude Code opus[1m] / xhigh），审查意见和复核在 `docs/任务/R48c-审查.md`。
+- 第一次提交 `154c2fb`：只动了任务允许的目录；文档和实现对得上；现场核对真实 `~/.kimi-code/config.toml` 里没有 corral 的块，没有残留的 kimi、sleep 进程，测试 agent 已关。主控跑全套：第一次 `protocol` 的 `injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved` 失败一次（原有的测试竞态，审查第 9 条确认和本件无关），单独复跑 3 次和随后全套都过（454 通过、14 跳过）；clippy、fmt 通过。主控记一条「建议改」：每次查状态从头读 wire。
+- 交叉审查：必须改 2 条（卸载可能把块前后两行粘成一行、写坏 config.toml；`workdir_key` 和 Kimi 算法不一致，部分目录名下状态一直 working），建议改 4 条（wire 从头读、停止没上限、单测没测到比对分支、回复拼接了整轮所有 step），可以不改 3 条。主控同意全部意见，6 条一起交回返工；7–9 条不改。
+- 返工 `063622c`：主控核对两条必须改的修法，跑了相关测试、clippy、fmt；因为改了共用的 pen.rs，又跑一次全套：459 通过、0 失败、14 跳过。复核 1 结论可以合并。
+- 复核新提的建议改，不挡合并，没有改，留给用户定要不要另开一件：
+  1. 每轮第一次从头读 wire 比原来慢（50 MB 合成数据 37 ms → 129 ms），之后的查询是微秒级；改法是每行只做一次 UTF-8 转换再 `contains`。
+  2. 停止到 5 秒上限仍有残留进程时，PID 只记在 pen.log 和 `exit.json`，`corral stop` 照样返回成功，前端和派活看不出没停干净；改法是 `stop` 输出带上 `remaining_pids`（兼容新增）。
+- 对 paddock 的影响：`integration status` 兼容新增 kimi 一项和 `install.format:"marked-block"`，现有用法不用改；安装说明（只改共享文件的一段、卸载保留配置文件）在 paddock 自己的任务里补。
+结果：返工 1 次
