@@ -34,6 +34,13 @@ models = []
 argv = ["agy", "--dangerously-skip-permissions"]
 labels = []
 
+[agents.kimi]
+efforts = []
+models = []
+argv = ["kimi", "--auto"]
+labels = []
+env = ["KIMI_CODE_TRUST_WORKSPACE=1"]
+
 [cells.low-design]
 description = "低档：界面和设计"
 agents = ["pi", "omp"]
@@ -103,3 +110,7 @@ agents = ["amp"]
 [cells.agy]
 description = "只在用户或任务文件点名 agy 时使用"
 agents = ["agy"]
+
+[cells.kimi]
+description = "只在用户或任务文件点名 Kimi 时使用"
+agents = ["kimi"]

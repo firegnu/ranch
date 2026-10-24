@@ -182,7 +182,7 @@ ranch dispatch cell middle-other
 ranch dispatch table
 ```
 
-`cell <格子>` 的 `cell.choices` 是可任选的家，每项给 `agent`、完整的 `command` 和等价的 `argv`、`labels`；模型和强度在 `cell.model`、`cell.effort`，`null` 表示各自默认。`cell.review` 有交叉审查格子的名字、模型、强度和 `choices`；`cell.rework` 是返工后升档的格子名或 `null`，不会自动执行，返工仍按第 5 节。命令只读数据，不开 agent。退出码 0 且 `ok:true` 才用；读表失败就报告错误并停下，不拿旧表或记忆里的参数凑。读到所需的 `choices` 为空时（包括审查、升档），停下告诉用户，不派。
+`cell <格子>` 的 `cell.choices` 是可任选的家，每项给 `agent`、完整的 `command` 和等价的 `argv`、`labels`，还可有 `env`（`KEY=VALUE` 字符串数组）；模型和强度在 `cell.model`、`cell.effort`，`null` 表示各自默认。`cell.review` 有交叉审查格子的名字、模型、强度和 `choices`；`cell.rework` 是返工后升档的格子名或 `null`，不会自动执行，返工仍按第 5 节。命令只读数据，不开 agent。退出码 0 且 `ok:true` 才用；读表失败就报告错误并停下，不拿旧表或记忆里的参数凑。读到所需的 `choices` 为空时（包括审查、升档），停下告诉用户，不派。
 
 `table` 列出整张生效表和各家的模板，`source` 标明 `builtin` / `user`；格子和它引用的家分别标来源。用户改 `~/.ranch/dispatch.toml`，只写要改的格子或家、要改的字段，其他继承内置表；数组整项替换，也能加新格子。下一次读表就生效，不编译、不重装技能。例如只换中档「其余」格子的模型：
 
@@ -191,9 +191,9 @@ ranch dispatch table
 model = "用户选定的模型"
 ```
 
-- 用户或项目指定了家，碰要害的活照样要交叉审查，验证预算照样按影响面定。点名 pi、omp、amp、agy 做碰要害的活时，交叉审查读 `review-codex`；Claude Code、Codex 仍按上面的新表互审。
-- 只指定了家、没定模型或强度时，Claude Code 读同档「界面和设计」格，Codex 读同档「其余」格；低档点名这两家时用对应中档格补齐，强度只用 high、xhigh。pi、omp 从同类别低档格选对应一家，amp、agy 读同名格子。明确指定的模型或强度按 `table` 返回的该家模板代入，同时更新命令和标签；只补没指定的部分，禁止的配置照下文处理。
-- pi、omp 两家同类，任选，一家手上有活就开另一家，各自用默认模型，不另选模型。amp、agy 的分工还没定，只在用户或任务文件点名时派。
+- 用户或项目指定了家，碰要害的活照样要交叉审查，验证预算照样按影响面定。点名 pi、omp、amp、agy、Kimi 做碰要害的活时，交叉审查读 `review-codex`；Claude Code、Codex 仍按上面的新表互审。
+- 只指定了家、没定模型或强度时，Claude Code 读同档「界面和设计」格，Codex 读同档「其余」格；低档点名这两家时用对应中档格补齐，强度只用 high、xhigh。pi、omp 从同类别低档格选对应一家，amp、agy、Kimi 读同名格子（Kimi 为 `kimi`）。明确指定的模型或强度按 `table` 返回的该家模板代入，同时更新命令和标签；只补没指定的部分，禁止的配置照下文处理。
+- pi、omp 两家同类，任选，一家手上有活就开另一家，各自用默认模型，不另选模型。amp、agy、Kimi 的分工还没定，只在用户或任务文件点名时派。
 - 交叉审查读该格的 `review`，按实际开发者换家，见第 6 节。
 - 既要设计又要实现、又不是界面的活，拆成两步：先按「高／界面和设计」读表派人出方案，用户定（架构级的决定照第 1 节由用户拍板），再按档位和类别派人实现。新界面的设计和实现都按「界面和设计」读表。
 - 新界面、或者没有现成示意的大改，派人实现之前先给用户看样子：一张文字线框或示意，用户选定了再派。规则明确的小调整（换个颜色、加一个提示）直接做。
@@ -204,7 +204,7 @@ model = "用户选定的模型"
 - Claude Code、Codex 只用 high、xhigh；默认中档用 high，高和碰要害用 xhigh，交叉审查用 xhigh。
 - 不用 `low` 强度标签；这里的「低」是任务档位，pi、omp 用默认，不带强度标签。看板使用 high、xhigh 标签。
 - Claude Code 一律不用 `max` 强度和 `fable` 模型，Codex 一律不用 `ultra`；用户点名也先说明，不开。本机表覆盖也不绕过这条。
-- pi、omp、amp、agy 用它们的默认，不分强度。
+- pi、omp、amp、agy、Kimi 用它们的默认，不分强度。派 Kimi 不指定模型，用用户自己设的默认。
 - 模型名会随版本变，过时了改本机数据表，下一次派活重新读；实际家、模型、强度、命令和标签以读表结果为准，并遵守上面的配置限制。
 
 **影响面**：定验证预算，写进任务书「怎么算做完」。难度定模型和强度，影响面定验证，两件事分开定。
@@ -229,16 +229,19 @@ model = "用户选定的模型"
 - 名字用 AGENTS.md 规定的前缀，`--cwd` 指向它的 worktree。把读表选中的 `choices` 项的完整 `command` 放在 `--` 后，每条 `labels` 各加一个 `--label`（空数组就不带）。下面是拼接示意，占位符须替换为实际返回值；也可以用 `argv` 逐项传参。第一句话很短，只让它去读文件：
 
   ```sh
-  corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 labels 对应的 --label 参数> --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- <读表 command>
+  corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 env 对应的 --env 参数> <读表 labels 对应的 --label 参数> --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- <读表 command>
   ```
 
-  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 -- <读表 amp 的 command>`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
+  若所选 `choices` 项有 `env`，每项原样作为一个 `--env` 的参数传在 `--` 之前，按 shell 规则引用整个 `KEY=VALUE`，不执行其中的变量或命令；缺省或空数组就不带。
+
+  派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 env 对应的 --env 参数> -- <读表 amp 的 command>`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
   派给 agy 照上面的样子带 `--prompt`（agy 不带它就一直是 `starting`），不带 `--label`，`--` 后用读表 agy 的 `command`。
+  派给 Kimi 同样带 `--prompt`，用 `kimi` 格的 `command`，把该项 `env` 每项各传一个 `--env`；内置值为 `KIMI_CODE_TRUST_WORKSPACE=1`，只对这次启动生效，不写 Kimi 的信任记录。内置命令为 `kimi --auto`，不加模型、强度，标签为空；`--auto` 不会打开提问框，需要提问的普通模式按 corral 技能启动。
 
 - 本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn（工作接续记忆）：它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
   Codex 的默认启动模板还会关闭这个会话的 Codex 记忆（不改全局配置），直接使用读表返回的完整命令。`~/.codex/memories/` 是跨项目的，会把别的项目、工作上的内容带进来，旧约定也会和任务文件打架。
 
-- `--label` 使用读表返回的 `labels`，和命令里的参数一起取，不自己猜。默认 Claude Code、Codex 带强度和模型，看板靠它显示档位；pi、omp、amp、agy 不分档，默认标签数组为空。
+- `--label` 使用读表返回的 `labels`，和命令里的参数一起取，不自己猜。默认 Claude Code、Codex 带强度和模型，看板靠它显示档位；pi、omp、amp、agy、Kimi 不分档，默认标签数组为空。
 
 - 被委派的 agent 一律免确认启动，中途不弹权限框，也不会被自动检查拦下。各家的启动命令和标签在数据表里只写一次，使用第 3 节读表得到的完整命令，不再另加分档参数：
 
@@ -248,8 +251,10 @@ model = "用户选定的模型"
   | pi、omp | 所选格子的 `choices` 中任选一家；pi 本来就没有权限框 |
   | amp | `amp` 格；没有免确认的启动参数，要不要确认看用户自己的 amp 设置；卡在确认上时状态是 `blocked`，请用户去点 |
   | agy | `agy` 格；首句仍按上面的规则带 |
+  | Kimi | `kimi` 格；逐项传 `env`，首句带 `--prompt`，用用户自己的默认模型 |
 
   免确认也就没有安全网：能约束它的只剩任务文件里「不要做」那几条，所以那一节要写全。免确认跳不过「是否信任这个目录」的框，见下一条。
+  Kimi 的信任框由读表给的 `KIMI_CODE_TRUST_WORKSPACE=1` 免掉；仍一直 `starting` 时先让用户用 `corral integration status` 查钩子，没装就 `corral integration install --agent kimi`，不要自己装，见 corral 技能。
 - 开完运行 `corral wait <名字> --timeout 60`，不要用 sleep 等。60 秒到了状态还是 `starting`，就是卡在「是否信任这个目录」这类对话框上（新项目、新仓库第一次开时常见；amp、agy 还可能是 corral 的插件没装好或被停用，见 corral 技能）。这时请用户在另一个终端窗口运行 `corral attach <名字>`，或者在看板里选中它去点。不要替它点，也不要让用户在你这里用 `!` 运行。卡在启动中时，提醒不会来，不要干等。
 - 前台这次 wait 如果对方已经停了，按第 5 节收到提醒的规则查状态和回复、判断 DONE，不能当成「起来了」就结束；没写 DONE 且仍在的，回复里问要拿主意的事由主控照第 8 节处理。主控自己定的，**以用户的回答为准**：送决定前再运行一次 `corral status <名字>`；`last_human_input` 晚于这次停下的 `state_started`，或 `state` 又是 `working`，就当成用户已经在回答，主控不送，只按 corral 技能「长任务」一节重挂提醒（Claude Code 连后台 wait 一起）。`corral send` 报 `not_idle` 或 `human_active` 时同样不送、不加 `--force`，重挂提醒；没送时告诉用户 agent 问了什么、主控原本打算怎么定。第 8 节先问用户的情况、等人操作的对话框照旧按第 5 节处理并重挂提醒；被打断的照原规则处理，已经退出或不在了的不再挂。
 - 写代码都是长任务：仍在干活的，按 corral 技能「长任务」一节挂提醒（Claude Code 连后台 wait 一起），交出去就结束这一轮。
@@ -283,7 +288,7 @@ model = "用户选定的模型"
 
 只给影响面是「碰要害」的活（第 3 节）：路由的交叉审查结论是「要」，或者你判定它碰了数据模型、并发和事务、安全和隐私、核心规则。看得见、改行为的活不做；本轮不改代码的调研、设计也不做。
 
-- 另开一个 agent 只读审查，重新读原任务所选格子，使用其 `review.choices` 的完整命令和标签。交叉审查换一家：Claude Code 写的交 Codex，Codex 写的交 Claude Code。用户、项目指定或本机覆盖改变了开发者，或原格没配审查时，按实际开发者读对应的审查格：Claude Code、pi、omp、amp、agy 写的读 `review-codex`，Codex 写的读 `review-claude`。默认分别为 `gpt-6-astra` xhigh、`opus[1m]` xhigh，实际参数照读表；所需 `choices` 为空就停下告诉用户、不派。只给新审查者任务文件和 diff，不用原开发 agent。审查任务也写成文件（放主仓库工作区，派的时候给绝对路径，并写明它不在审查 worktree 里、只写这一个文件），依次写：
+- 另开一个 agent 只读审查，重新读原任务所选格子，使用其 `review.choices` 的完整命令、标签和可选环境变量。交叉审查换一家：Claude Code 写的交 Codex，Codex 写的交 Claude Code。用户、项目指定或本机覆盖改变了开发者，或原格没配审查时，按实际开发者读对应的审查格：Claude Code、pi、omp、amp、agy、Kimi 写的读 `review-codex`，Codex 写的读 `review-claude`。默认分别为 `gpt-6-astra` xhigh、`opus[1m]` xhigh，实际参数照读表；所需 `choices` 为空就停下告诉用户、不派。只给新审查者任务文件和 diff，不用原开发 agent。审查任务也写成文件（放主仓库工作区，派的时候给绝对路径，并写明它不在审查 worktree 里、只写这一个文件），依次写：
   - 背景：谁在哪个分支做了什么，主控已经审过什么；
   - 先读；
   - 要审查的代码：**它自己的 worktree**（`git worktree add --detach <审查 worktree> <分支>`；同一个分支不能在两个 worktree 里同时 checkout，git 会拒绝，所以只能 detached，顺带防它手滑提交；也不要和 dev 共用一个，它掉个文件就会挡住清理）、`git diff main...<分支>`，**只读，不改、不提交、不切分支**；写明可以跑哪些测试、不能碰什么；验证照「碰要害」那档的预算，不录屏、不做覆盖矩阵；

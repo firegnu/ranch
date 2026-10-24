@@ -91,7 +91,7 @@ fn command(input: &Value) -> Option<Value> {
 
 // PermissionRequest receives the same tool_input as PreToolUse, after any hook updates.
 // Only the question fields are retained, never answers or other tool parameters.
-fn questions(input: &Value) -> Option<Value> {
+pub(crate) fn questions(input: &Value) -> Option<Value> {
     // Count JSON bytes, including escaping and structure, without cloning unbounded strings.
     fn text(input: &Value, remaining: &mut usize, truncated: &mut bool) -> Value {
         let mut out = String::new();

@@ -268,6 +268,128 @@ exec /bin/cat"#,
 }
 
 #[test]
+fn questions_exist_only_while_the_main_question_interaction_is_open() {
+    let lab = Lab::new("exec /bin/cat", None);
+    let wire = lab.path("wire.jsonl");
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":wire,"source":"startup"}),
+    );
+    lab.event("UserPromptSubmit", json!({"prompt":"ask","t":1000.0}));
+    let append = |value: Value| {
+        writeln!(
+            fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&wire)
+                .unwrap(),
+            "{value}"
+        )
+        .unwrap();
+    };
+    append(json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001}));
+    append(
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000002,
+        "event":{"type":"tool.call","name":"AskUserQuestion","turnId":"1"}}),
+    );
+    assert!(
+        lab.status()["questions"].is_null(),
+        "tool call alone is not an open dialog"
+    );
+    let input = json!([
+        {"header":"颜色","question":"选什么颜色？","options":[{"label":"红","description":"暖"},{"label":"蓝","description":"冷"}]},
+        {"header":"水果","question":"选哪些？","multiSelect":true,"options":[{"label":"苹果","description":"脆"}],"answers":"not retained"}
+    ]);
+    let request = json!({"type":"interaction.request","agentId":"main","id":"question-1","kind":"question",
+        "request":{"turnId":1,"questions":input},"time":1000003});
+    let expected = json!({"items":[
+        {"header":"颜色","question":"选什么颜色？","multi_select":false,"options":[{"label":"红","description":"暖"},{"label":"蓝","description":"冷"}]},
+        {"header":"水果","question":"选哪些？","multi_select":true,"options":[{"label":"苹果","description":"脆"}]}
+    ],"truncated":false});
+    for resolution in [json!({"answers":{"颜色":"红"}}), Value::Null] {
+        append(request.clone());
+        let st = lab.status();
+        assert_eq!(st["state"], "blocked");
+        assert_eq!(st["questions"], expected);
+        assert_eq!(
+            lab.status()["questions"],
+            expected,
+            "cached reads retain the open question"
+        );
+        append(
+            json!({"type":"interaction.resolved","agentId":"main","id":"question-1","resolution":resolution,"time":1000004}),
+        );
+        let st = lab.status();
+        assert_eq!(st["state"], "working");
+        assert!(
+            st["questions"].is_null(),
+            "answer and dismissal both close the dialog"
+        );
+    }
+    // A child's prompt must not expose a question on the main agent.
+    let mut child = request.clone();
+    child["agentId"] = json!("agent-0");
+    append(child);
+    assert!(lab.status()["questions"].is_null());
+    append(request);
+    assert_eq!(lab.status()["questions"], expected);
+    append(
+        json!({"type":"interaction.resolved","agentId":"main","id":"question-1","resolution":null,"time":1000005}),
+    );
+    append(
+        json!({"type":"turn.ended","agentId":"main","turnId":1,"reason":"cancelled","time":1000006}),
+    );
+    let st = lab.status();
+    assert_eq!(st["state"], "idle");
+    assert_eq!(st["interrupted"], true);
+    assert!(st["questions"].is_null());
+}
+
+#[test]
+fn kimi_questions_use_the_r43_json_budget() {
+    let lab = Lab::new("exec /bin/cat", None);
+    let wire = lab.path("wire.jsonl");
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":wire,"source":"startup"}),
+    );
+    lab.event("UserPromptSubmit", json!({"prompt":"ask","t":1000.0}));
+    let long = "汉\"\\\n".repeat(5000);
+    let questions =
+        json!([{"header":"长题","question":long,"options":[{"label":"甲","description":"乙"}]}]);
+    let prompt = json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001});
+    let request = json!({"type":"interaction.request","agentId":"main","id":"q","kind":"question",
+        "request":{"turnId":1,"questions":questions},"time":1000002});
+    fs::write(wire, format!("{prompt}\n{request}\n")).unwrap();
+    let actual = lab.status()["questions"].clone();
+    assert_eq!(actual["truncated"], true);
+    assert!(serde_json::to_vec(&actual).unwrap().len() <= 16 * 1024);
+    let text = actual["items"][0]["question"].as_str().unwrap();
+    assert!(!text.is_empty() && long.starts_with(text));
+    // Invoke the existing Claude collector with identical input for exact R43 parity.
+    let events = lab.path("claude-events");
+    let mut hook = Command::new(lab.path("corral"))
+        .args(["__hook", "PermissionRequest"])
+        .env("HOME", lab.root.path())
+        .env("CORRAL_HOME", lab.path("pens"))
+        .env("KIMI_CODE_HOME", lab.path("kimi-home"))
+        .env("CORRAL_EVENTS", &events)
+        .env("CORRAL_INSTANCE", "synthetic")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    write!(
+        hook.stdin.take().unwrap(),
+        "{}",
+        json!({"tool_name":"AskUserQuestion","tool_input":{"questions":questions}})
+    )
+    .unwrap();
+    assert!(hook.wait().unwrap().success());
+    let event: Value = serde_json::from_slice(&fs::read(events).unwrap()).unwrap();
+    assert_eq!(actual, event["questions"]);
+}
+
+#[test]
 #[ignore = "synthetic subprocess for the stop test"]
 fn synthetic_command_in_another_group() {
     unsafe {
