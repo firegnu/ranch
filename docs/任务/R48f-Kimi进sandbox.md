@@ -67,3 +67,16 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么（五条各怎么看出来的、真跑了几轮）、Kimi 最终放行了哪些域名和路径及理由、拿主意的地方、没做的事、对 paddock 的影响、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录（本轮停在 MCP 注入决策，任务未完成）
+
+2026-10-24，ranch/dev-r48f。
+
+- **做了什么**：读完任务要求的设计、约定、四家 fence 数据及 R48/R48b 调研，核对本机 Kimi 与固定版本源码。尚未改功能代码、种类数据或技能；本次提交只保存停点。
+- **验证了什么**：用临时 `KIMI_CODE_HOME`，关闭自动更新及遥测，前台运行本机 `kimi --version`、`--help`，版本仍是 **2.3.1**；`kimi --mcp-config <临时路径>` 在参数解析阶段退出 **1**，原文为 `error: unknown option '--mcp-config'`，未启动模型。这是能力核对，不是功能测试的 RED。真账号输入 **0 轮**，未开测试 agent；五条真 Kimi 验收（默认模型写文件、越界访问和 denials、Exa、墙内禁止派活、继承 child-sandbox）均未开始。没有实现变更，未添加行为测试，也未消耗任务规定的全量 test、clippy、fmt 各一次验证。
+- **阻塞依据**：沿用 R48 固定的官方提交 `684bae9ea6a437f3bae98bba1dcb797a917d500b`。[CLI 参数定义](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/apps/kimi-code/src/cli/commands.ts) 没有一次性 MCP 配置或插件目录参数；[MCP 配置加载器](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/agent-core-v2/src/app/mcpConfig/configLoader.ts) 的 `resolveMcpJsonPaths` 固定读取 `$KIMI_CODE_HOME/mcp.json`、Git 工作区根的 `.mcp.json`、cwd 下的 `.kimi-code/mcp.json`；[注册服务](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/agent-core-v2/src/app/mcpRegistry/mcpRegistryService.ts) 还合入已安装插件。`KIMI_CODE_HOME` 同时决定配置与状态根，不能仅用它改 MCP 路径并保持当前账号和配置。现有 fence `[mcp.files]` 只在 `${tmp}/mcp/<名字>/` 写资源，文件名不能绝对路径或含 `..`，`[mcp.args]` 也没有可传给 Kimi 的对应入口。因此尚未找到符合本任务边界、仅靠种类模板的注入方式；不能把另写项目级配置或重建 Kimi 数据根当成现有模板机制直接实施。
+- **最终放行**：尚未确定或新增任何域名、路径；没有照 R48 的候选清单直接放开。未读取用户配置或 credentials、token、device_id、server.token 的内容，未修改用户目录、全局配置或已装程序。
+- **要主控决定**：任务书明确要求遇到「查资料 MCP 不改全局配置就注入不进去」或「要改 fence 的 Rust 代码才能支持 Kimi」时停下。本轮没有自行选择替代办法。选项 A：允许另行设计项目级 MCP 临时注入，并明确授权所需 fence Rust 改动；须先定已有配置、同目录并发与异常退出后的清理方式。选项 B：保持当前实现边界，暂停 R48f，等 Kimi 支持一次性 MCP 配置入口。**建议 A 先做方案评审再实施**，继续保留不改用户全局配置、不复制凭证的限制；不能直接覆写项目已有 MCP 文件。主控尚未决定。
+- **没做的事**：尚未实现 Kimi 套墙或完成五项验收；没有改变 DESIGN/CONTRACT 对已支持能力的描述，没有跑 Linux、安装、部署、合并或推送。临时目录只用于下载固定源码和无账号 CLI 参数核对，未留下运行中的命令或测试 agent。
+- **对 paddock 的影响**：本次只有任务记录，paddock 不用动；Kimi sandbox 仍未支持。
+- **踩过的坑**：不能照抄 Claude 的 `--mcp-config`，Kimi 会在解析阶段拒绝。Kimi 的 MCP 文档只列用户和 cwd 两层，固定版本源码另读 Git 工作区根的 `.mcp.json`；即便有项目级入口，也不等于 fence 已支持把临时配置注入其中。
