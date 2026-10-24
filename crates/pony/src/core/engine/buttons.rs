@@ -86,7 +86,11 @@ impl Engine {
                     }
                 };
                 if let Some(reason) = reason {
-                    self.state.buttons[i].outcome = Some(reason.into());
+                    let handled = statuses
+                        .get(&content.status.name)
+                        .and_then(|s| s.as_ref().ok())
+                        .and_then(|s| kimi::handled(&content.status, s));
+                    self.state.buttons[i].outcome = Some(handled.unwrap_or_else(|| reason.into()));
                     self.save()?;
                 }
             }
@@ -111,12 +115,12 @@ impl Engine {
             || status.kind.as_deref() == Some("agy")
             || (status.state == "blocked"
                 && status.kind.as_deref() == Some("kimi")
-                && status.last_tool.as_deref() == Some("AskUserQuestion"))
+                && !status.kimi_dialog())
             || !matches!(status.state.as_str(), "working" | "blocked")
         {
             return Ok(None);
         }
-        let screen = if status.state == "blocked" {
+        let screen = if status.state == "blocked" && status.kind.as_deref() != Some("kimi") {
             match corral.read(&status.name) {
                 Ok(screen) => Some(screen),
                 Err(_) => return Ok(None),
@@ -261,7 +265,7 @@ impl Engine {
         if content.form.is_some() {
             return self.question_action(i, action, corral, at);
         }
-        if content.status.state == "blocked" {
+        if content.status.state == "blocked" && status.kind.as_deref() != Some("kimi") {
             let screen = match corral.read(&status.name) {
                 Ok(screen) => screen,
                 Err(_) => return self.finish_button(i, "读不出屏幕，没按 Esc", false, at),
@@ -393,7 +397,10 @@ impl Engine {
                 self.record_adapter_error("button_update_failed", &error);
             }
         }
-        if self.state.buttons[i].updated && self.state.buttons[i].outcome.is_some() {
+        if self.state.buttons[i].updated
+            && self.state.buttons[i].outcome.is_some()
+            && !self.confirming_kimi(&self.state.buttons[i])
+        {
             self.state.buttons[i].finish_update();
         }
         self.save()
@@ -416,7 +423,7 @@ pub(super) fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static 
     }
     if status.instance != old.instance {
         Some("它重开过，框没了")
-    } else if status.turn_started != old.turn_started {
+    } else if status.turn_started != old.turn_started && !old.background_question() {
         Some("这一轮已结束，它已经开了新的一轮")
     } else if status.last_human_input != old.last_human_input
         || (old.state == "blocked"
@@ -425,6 +432,15 @@ pub(super) fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static 
                 .is_some_and(|t| t > old.state_started.unwrap_or(button.created)))
     {
         Some("已在电脑上处理")
+    } else if old.kind.as_deref() == Some("kimi")
+        && old.state == "blocked"
+        && (!status.kimi_dialog()
+            || old.kind != status.kind
+            || old.command != status.command
+            || old.questions != status.questions
+            || old.action != status.action)
+    {
+        Some("框已变或有别的框，回电脑处理")
     } else if old.state == "blocked"
         && (status.state != "blocked"
             || status.state_started != old.state_started

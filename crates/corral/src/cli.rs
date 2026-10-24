@@ -139,6 +139,9 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             Path::new(m["cwd"].as_str().unwrap_or("")),
             agents::adopts_session(m["kind"].as_str().unwrap_or("")),
         )?;
+        if m["kind"] == "kimi" {
+            snap["kimi_started"] = st["started"].clone();
+        }
         if let Some(adapter) = agents::find(m["kind"].as_str().unwrap_or("")) {
             events::observe_transcript(&d, &mut snap, adapter)?;
         }
@@ -199,6 +202,11 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             ("last_event_at", "last_event_t"),
         ] {
             public[a] = snap[b].clone();
+        }
+        if kind == "kimi"
+            && let Some(fields) = snap["kimi_status"].as_object()
+        {
+            public.as_object_mut().unwrap().extend(fields.clone());
         }
         if let Some(input) = snap["inputs"].as_array().and_then(|a| a.last()) {
             public["last_input_at"] = input["t"].clone();
