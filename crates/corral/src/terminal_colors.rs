@@ -1,7 +1,7 @@
 //! Local colors used for OSC 10/11 replies while no client is attached.
 use crate::{Error, Result, state};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, os::unix::fs::DirBuilderExt, path::PathBuf};
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Colors {
@@ -35,19 +35,36 @@ fn path() -> PathBuf {
     state::home().join(".runtime/terminal-colors.json")
 }
 pub(crate) fn read() -> Result<Option<Colors>> {
-    let bytes = match fs::read(path()) {
+    let path = path();
+    let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     };
-    let colors: Colors = serde_json::from_slice(&bytes)?;
-    Colors::new(&colors.fg, &colors.bg).map(Some)
+    let invalid = |e: Error| {
+        Error::new(
+            1,
+            "invalid_settings",
+            format!(
+                "{}: {}",
+                path.display(),
+                e.value["message"].as_str().unwrap_or("invalid colors")
+            ),
+        )
+    };
+    let colors: Colors = serde_json::from_slice(&bytes).map_err(|e| invalid(e.into()))?;
+    Colors::new(&colors.fg, &colors.bg)
+        .map(Some)
+        .map_err(invalid)
 }
 pub(crate) fn set(colors: Option<&Colors>) -> Result<()> {
     let path = path();
     match colors {
         Some(colors) => {
-            fs::create_dir_all(path.parent().unwrap())?;
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(path.parent().unwrap())?;
             state::write(&path, &serde_json::to_value(colors)?)
         }
         None => match fs::remove_file(path) {

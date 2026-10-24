@@ -20,6 +20,8 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 没有设定时 `terminal_colors` 为 `null`。颜色格式不对、只给一个颜色、`--clear` 和颜色同时给，报 `usage`、退出码 1，原设置不变。设置存在 `$CORRAL_HOME/.runtime/terminal-colors.json`，写入是原子的。
 
+只查时，设置文件的 JSON 或颜色内容无效，返回 `ok:false`、`error:"invalid_settings"`、退出码 1，message 包含文件路径和原因，原文件不变；这不表示命令不受支持。
+
 从下一次 `corral start` 起生效，不管是谁调的（paddock、派活的 agent、终端里的用户），已经在跑的 agent 不变。start 起 pen 前只读一次；设置文件读不了或格式坏，当作没设置，启动照常成功，在原有 `warnings` 中提示。pen.log 记录本次颜色，不给 start、status、ls 增加颜色字段。
 
 agent 启动后，pen 解析出 OSC 10/11 单色查询的那一刻，没有客户端 attach 且有颜色时才回答；BEL 结尾用 BEL 回，ST 结尾用 ST 回，格式如 `ESC ] 11 ; rgb:efef/f1f1/f5f5 ST`。有客户端 attach 就照旧由客户端回答，客户端不答时不补答。设置颜色的 OSC、多色连问及其他终端查询一概不答；没有设定时行为和以前一样。回答不受 send 的块间延时影响，也不插入正在写的块，不算人在打字。

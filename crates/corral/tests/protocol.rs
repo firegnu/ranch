@@ -120,7 +120,15 @@ impl Lab {
     }
     fn color_result(&self) -> Value {
         let path = self.root.path().join("result");
-        eventually(|| path.exists());
+        // Allow the partial-input child its full read deadline plus result serialization.
+        let deadline = Instant::now() + Duration::from_secs(12);
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "color agent did not finish reading"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
         serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
     }
     fn raw_output(&self) -> Vec<u8> {
@@ -193,8 +201,69 @@ fn terminal_colors_cli_sets_reads_clears_and_rejects_invalid_arguments() {
     assert!(String::from_utf8_lossy(&help.stdout).contains("--fg COLOR --bg COLOR | --clear"));
 }
 
+#[test]
+fn terminal_colors_creates_private_runtime_directories() {
+    use std::os::unix::process::CommandExt;
+    let lab = Lab::new();
+    let mut cmd = lab.cmd();
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::umask(0o022);
+            Ok(())
+        });
+    }
+    let out = cmd
+        .args(["terminal-colors", "--fg", "#4c4f69", "--bg", "#eff1f5"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    for dir in ["pens", "pens/.runtime"] {
+        assert_eq!(
+            fs::metadata(lab.root.path().join(dir))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700,
+            "{dir}"
+        );
+    }
+}
+
+#[test]
+fn terminal_colors_read_reports_invalid_settings_without_changing_the_file() {
+    let lab = Lab::new();
+    let path = lab.root.path().join("pens/.runtime/terminal-colors.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for contents in [
+        r##"{"fg":"red","bg":"#000000"}"##,
+        "{broken",
+        r##"{"fg":"#ffffff"}"##,
+    ] {
+        fs::write(&path, contents).unwrap();
+        let out = lab.out(&["terminal-colors"]);
+        assert_eq!(out.status.code(), Some(1));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["error"], "invalid_settings", "{reply}");
+        assert!(
+            reply["message"]
+                .as_str()
+                .unwrap()
+                .contains("terminal-colors.json"),
+            "{reply}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+    }
+}
+
 const COLOR_QUERY: &[u8] = b"\x1b]10;?\x07\x1b]11;?\x1b\\";
 const COLOR_REPLY: &[u8] = b"\x1b]10;rgb:4c4c/4f4f/6969\x07\x1b]11;rgb:efef/f1f1/f5f5\x1b\\";
+const COLOR_PARTIAL_INPUT_BYTES: usize = 2 * 1024 * 1024;
 
 #[test]
 #[ignore = "synthetic PTY child for terminal color tests"]
@@ -230,16 +299,16 @@ fn terminal_colors_synthetic_agent() {
         })
         .unwrap();
     std::io::stdout().flush().unwrap();
-    let duration = Duration::from_millis(if mode == "partial" { 1500 } else { 400 });
+    let mut deadline = begin + Duration::from_millis(if mode == "partial" { 10000 } else { 400 });
+    let mut received_all = false;
     let mut last_read_ms = None;
-    while begin.elapsed() < duration {
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
         let mut fd = libc::pollfd {
             fd: 0,
             events: libc::POLLIN,
             revents: 0,
         };
-        let remaining = duration.saturating_sub(begin.elapsed()).as_millis() as i32;
-        if unsafe { libc::poll(&mut fd, 1, remaining) } > 0 {
+        if unsafe { libc::poll(&mut fd, 1, remaining.as_millis() as i32) } > 0 {
             let mut bytes = [0; 65536];
             let n = std::io::stdin().read(&mut bytes).unwrap();
             if n == 0 {
@@ -247,6 +316,14 @@ fn terminal_colors_synthetic_agent() {
             }
             received.extend_from_slice(&bytes[..n]);
             last_read_ms = Some(begin.elapsed().as_millis());
+            if mode == "partial"
+                && !received_all
+                && received.len() >= COLOR_PARTIAL_INPUT_BYTES + COLOR_REPLY.len()
+            {
+                // Keep observing after the expected bytes to catch duplicates or extra input.
+                deadline = deadline.min(Instant::now() + Duration::from_millis(200));
+                received_all = true;
+            }
         }
     }
     fs::write(
@@ -313,7 +390,7 @@ fn terminal_colors_start_warns_on_bad_settings_without_failing() {
 #[test]
 fn terminal_colors_reply_bypasses_send_delay_but_never_splits_a_chunk() {
     use base64::{Engine, engine::general_purpose::STANDARD as B64};
-    for (mode, size) in [("delayed", 1), ("partial", 2 * 1024 * 1024)] {
+    for (mode, size) in [("delayed", 1), ("partial", COLOR_PARTIAL_INPUT_BYTES)] {
         let lab = Lab::new();
         lab.json(&["terminal-colors", "--fg", "#4c4f69", "--bg", "#eff1f5"]);
         lab.color_agent(mode);
