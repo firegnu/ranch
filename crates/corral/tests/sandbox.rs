@@ -82,6 +82,64 @@ impl Drop for StoppedPen {
 }
 
 #[test]
+fn fenced_kimi_hooks_record_the_main_agent_but_ignore_nested_agents() {
+    let l = Lab::new();
+    // macOS refuses the setuid /bin/ps in the real fence. Reproduce that without srt.
+    let launch = if cfg!(target_os = "macos") {
+        r#"/usr/bin/sandbox-exec -p '(version 1) (allow default) (deny process-exec (literal "/bin/ps"))' "$@""#
+    } else {
+        r#""$@""#
+    };
+    l.script(
+        "fence",
+        &format!(
+            r#"
+if [ "$1" = check ]; then echo '{{"ok":true}}'; exit; fi
+while [ "$1" != -- ]; do
+  if [ "$1" = --instance ]; then shift; export FENCE_RUN="$1"; fi
+  shift
+done
+shift
+{launch}
+exit "$?"
+"#
+        ),
+    );
+    let kimi = l.script("kimi", r#"
+printf '{"session_id":"main","cwd":"%s","source":"startup"}\n' "$CORRAL_CWD" | "$CORRAL_HELPER" __hook kimi:SessionStart > "$HOME/output" 2> "$HOME/errors"
+printf '{"session_id":"main","cwd":"%s","prompt":[{"type":"text","text":"parent"}]}\n' "$CORRAL_CWD" | "$CORRAL_HELPER" __hook kimi:UserPromptSubmit >> "$HOME/output" 2>> "$HOME/errors"
+/bin/sh -c 'printf "{\"session_id\":\"nested\",\"cwd\":\"%s\",\"source\":\"startup\"}\n" "$CORRAL_CWD" | "$CORRAL_HELPER" __hook kimi:SessionStart; sleep 0.1' >> "$HOME/output" 2>> "$HOME/errors"
+touch "$HOME/finished"
+exec /bin/cat
+"#);
+    l.json(&[
+        "start",
+        "test/kimi",
+        "--sandbox",
+        "dev",
+        "--cwd",
+        l.root.path().to_str().unwrap(),
+        "--",
+        &kimi,
+    ]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !l.root.path().join("finished").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "synthetic Kimi did not finish its hooks"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let status = l.json(&["status", "test/kimi"]);
+    assert_eq!(status["state"], "working", "{status}");
+    let events = fs::read_to_string(l.root.path().join("pens/test/kimi/events")).unwrap();
+    assert!(events.contains("\"session_id\":\"main\""), "{events}");
+    assert!(!events.contains("nested"), "{events}");
+    assert!(fs::read(l.root.path().join("output")).unwrap().is_empty());
+    assert!(fs::read(l.root.path().join("errors")).unwrap().is_empty());
+}
+
+#[test]
 fn child_sandbox_does_not_wait_for_parent_pen_without_a_setting() {
     let l = Lab::new();
     let parent = l.json(&["start", "test/parent", "--", "/bin/cat"]);

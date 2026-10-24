@@ -28,11 +28,148 @@ impl Fixture {
 }
 
 #[test]
+fn kimi_uses_native_research_and_keeps_configuration_read_only() {
+    let f = Fixture::new();
+    let root = f.0.path().canonicalize().unwrap();
+    fs::create_dir(root.join("work")).unwrap();
+    fs::create_dir(root.join("bin")).unwrap();
+    fs::create_dir_all(root.join(".kimi-code/credentials")).unwrap();
+    for path in [
+        "config.toml",
+        "tui.toml",
+        "credentials/kimi-code.json",
+        "server.token",
+    ] {
+        fs::write(root.join(".kimi-code").join(path), "synthetic").unwrap();
+    }
+    std::os::unix::fs::symlink("/bin/sh", root.join("bin/kimi")).unwrap();
+    let out = f
+        .command()
+        .env("HOME", &root)
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", root.join("bin").display()),
+        )
+        .current_dir(root.join("work"))
+        .args(["check", "--profile", "dev", "--kind", "kimi"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["args"], json!([]));
+    for domain in ["api.kimi.com", "auth.kimi.com"] {
+        assert!(
+            v["settings"]["network"]["allowedDomains"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(domain)),
+            "{v}"
+        );
+    }
+    assert!(
+        !v["settings"]["network"]["allowedDomains"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("mcp.exa.ai"))
+    );
+    let files = &v["settings"]["filesystem"];
+    let read = files["allowRead"].as_array().unwrap();
+    let write = files["allowWrite"].as_array().unwrap();
+    let denied = files["denyWrite"].as_array().unwrap();
+    for path in [
+        "config.toml",
+        "tui.toml",
+        "region",
+        "server.token",
+        "device_id",
+        "mcp.json",
+        "plugins",
+        "AGENTS.md",
+        "skills",
+        "agents",
+        "workspace-trust",
+        "bin",
+    ] {
+        assert!(
+            denied.contains(&json!(root.join(".kimi-code").join(path))),
+            "{v}"
+        );
+    }
+    assert!(write.contains(&json!(root.join(".kimi-code"))));
+    assert!(read.contains(&json!(root.join(".kimi-code"))));
+    assert!(!denied.contains(&json!(root.join(".kimi-code/credentials"))));
+    assert_eq!(v["env"]["KIMI_CODE_CACHE_DIR"], "<运行时才有>/kimi-cache");
+    assert_eq!(v["env"]["KIMI_CODE_WATCH"], "0");
+}
+
+#[test]
+fn kind_without_mcp_template_skips_servers_but_still_protects_keys() {
+    let f = Fixture::new();
+    let root = f.0.path();
+    fs::create_dir(root.join("fence/agents")).unwrap();
+    fs::write(
+        root.join("fence/agents/native.toml"),
+        "services = ['deepseek']\n",
+    )
+    .unwrap();
+    fs::create_dir(root.join("bin")).unwrap();
+    std::os::unix::fs::symlink("/bin/sh", root.join("bin/native")).unwrap();
+    fs::create_dir(root.join("fence/keys")).unwrap();
+    fs::write(root.join("private-key"), "synthetic-key").unwrap();
+    std::os::unix::fs::symlink(root.join("private-key"), root.join("fence/keys/exa")).unwrap();
+    let out = f
+        .command()
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", root.join("bin").display()),
+        )
+        .args(["check", "--profile", "dev", "--kind", "native"])
+        .output()
+        .unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(
+        !v["settings"]["network"]["allowedDomains"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("mcp.exa.ai")),
+        "{v}"
+    );
+    assert_eq!(v["args"], json!([]));
+    assert!(
+        !v["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["source"] == "mcp")
+    );
+    assert!(
+        v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| { w.as_str().unwrap().contains("mcp_skipped: native") })
+    );
+    let denied = v["settings"]["filesystem"]["denyRead"].as_array().unwrap();
+    assert!(denied.contains(&json!(root.join("fence/keys/exa"))));
+    assert!(denied.contains(&json!(root.join("private-key").canonicalize().unwrap())));
+    // Without a kind, check still validates and previews the profile's MCP selection.
+    let profile = f.call(&["check", "--profile", "dev"]);
+    assert!(
+        profile["layers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["source"] == "mcp")
+    );
+}
+
+#[test]
 fn dev_gives_every_kind_its_own_srt_temporary_directory() {
     let f = Fixture::new();
     let bin = f.0.path().join("bin");
     fs::create_dir(&bin).unwrap();
-    for kind in ["claude", "codex", "pi", "omp"] {
+    for kind in ["claude", "codex", "pi", "omp", "kimi"] {
         std::os::unix::fs::symlink("/bin/sh", bin.join(kind)).unwrap();
         let out = f
             .command()
@@ -489,7 +626,7 @@ fn profiles_list_builtin_and_user_replacements_even_when_invalid() {
     assert_eq!(result["ok"], true, "{result}");
     assert_eq!(result["profiles"][0]["name"], "dev");
     assert_eq!(result["profiles"][0]["source"], "builtin");
-    assert_eq!(result["kinds"].as_array().unwrap().len(), 4);
+    assert_eq!(result["kinds"].as_array().unwrap().len(), 5);
     fs::create_dir(f.0.path().join("fence/profiles")).unwrap();
     fs::write(f.0.path().join("fence/profiles/dev.toml"), "broken = [").unwrap();
     let result = f.call(&["profiles"]);
@@ -539,8 +676,7 @@ fn check_merges_rules_and_rejects_forbidden_repository_keys() {
             "doc.rust-lang.org",
             "static.rust-lang.org",
             "api.deepseek.com",
-            "example.test",
-            "mcp.exa.ai"
+            "example.test"
         ])
     );
     assert!(

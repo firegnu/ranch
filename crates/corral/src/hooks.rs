@@ -167,7 +167,8 @@ pub(crate) fn helper(target: &Path, switch: bool) -> crate::Result<std::path::Pa
 
 /// `__hook <kind>:<event>` from a hook file installed globally (`agents::Global`): it records only
 /// in the agent corral started, whose parent is the pen, not in one started inside it with the
-/// same environment. The hook runs as the agent's child.
+/// same environment. Fenced Kimi has exactly one runner between it and the pen.
+/// The hook runs as the agent's child.
 fn global(kind: &str, event: &str) -> crate::Result<()> {
     let (Some(path), Some(adapter)) =
         (std::env::var_os("CORRAL_EVENTS"), crate::agents::find(kind))
@@ -183,11 +184,37 @@ fn global(kind: &str, event: &str) -> crate::Result<()> {
     {
         return Ok(());
     }
-    let agent = unsafe { libc::getppid() };
-    let parent = std::process::Command::new("/bin/ps")
-        .args(["-o", "ppid=", "-p", &agent.to_string()])
-        .output()?;
-    if String::from_utf8_lossy(&parent.stdout).trim() != pen {
+    let Ok(pen_pid) = pen.parse::<libc::pid_t>() else {
+        return Ok(());
+    };
+    let fenced_kimi = kind == "kimi" && var("FENCE_RUN") == var("CORRAL_INSTANCE");
+    let parent = |pid: libc::pid_t| -> Option<libc::pid_t> {
+        #[cfg(target_os = "macos")]
+        if fenced_kimi {
+            // /bin/ps is setuid on macOS and cannot execute inside the sandbox.
+            let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+            let size = std::mem::size_of_val(&info) as i32;
+            let read = unsafe {
+                libc::proc_pidinfo(
+                    pid,
+                    libc::PROC_PIDTBSDINFO,
+                    0,
+                    (&mut info as *mut libc::proc_bsdinfo).cast(),
+                    size,
+                )
+            };
+            return (read == size).then_some(info.pbi_ppid as libc::pid_t);
+        }
+        let out = std::process::Command::new("/bin/ps")
+            .args(["-o", "ppid=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    };
+    let Some(agent_parent) = parent(unsafe { libc::getppid() }) else {
+        return Ok(());
+    };
+    if agent_parent != pen_pid && (!fenced_kimi || parent(agent_parent) != Some(pen_pid)) {
         return Ok(());
     }
     // Hook input is a small JSON object; anything past the limit is not read.

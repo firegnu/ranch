@@ -188,6 +188,11 @@ pen 解析到 OSC 10/11 的单色查询时，若此刻没有 writer（没有客�
     - key 源禁读独立于服务器选择：每次枚举 `keys/` 全部条目，将原路径和符号链接真实目标加入禁读；改选或 `mcp = []` 不解除旧 key 的保护。仍只读取被选中服务器的 key 内容，`check` 只看路径元数据。
     - 准备阶段失败立即清理本次新建的实例记录和临时目录，启动前已存在的目录、文件或链接不删除；清理失败附带错误，不能声称已清掉。成功交给 runner 且留下 `run.json`、`exit.json` 的运行，仍在以后启动时按结束超过七天回收；异常退出缺少完整记录的残留不保证自动回收。
     - 对 paddock：命令、退出码及现有 JSON 字段保留；`profiles` 兼容新增 `mcp` 服务器列表、`check/run` 的来源列表新增 `mcp`，paddock 不用动。只在 fence 新运行生效，不修改用户全局配置；用户整份覆盖的旧种类需自行采用 `[mcp]` 模板才能切换。
+  - R48f（用户 10-24）：Kimi 支持套 `dev` 墙，不注入 Exa，查资料用 Kimi 自带的服务端搜索、读网页。Kimi 2.3.1 的 [CLI 参数](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/apps/kimi-code/src/cli/commands.ts) 没有一次性 MCP 配置入口，[MCP 加载器](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/agent-core-v2/src/app/mcpConfig/configLoader.ts) 只读固定的用户、项目路径；不为注入而改用户配置或重建登录数据根。种类不写 `[mcp]` 时，跳过档案／本机选中的 MCP 参数、文件和域名，并在 `check.warnings` 说明；MCP key 源禁读照旧，没有指定种类的档案检查仍预览 MCP。其余四家模板和 `dev` 档案不变。Kimi 的 `child-sandbox` 继承及墙内禁止再派 agent 沿用现有机制。对 paddock：命令、JSON 字段、退出码不变，paddock 不用动。
+    - 用户随后选 B：整个 `${home}/.kimi-code` 可写，以支持工作区索引的同目录随机临时文件；config.toml、tui.toml、region、server.token、device_id、mcp.json、plugins、AGENTS.md、skills、agents、workspace-trust、bin 禁写。会话、索引、日志、缓存、占用锁及 OAuth 刷新锁可写；不扩展 fence 路径机制。原生缓存用 `KIMI_CODE_CACHE_DIR=${tmp}/kimi-cache`，关闭本次 watcher，避免读取 HOME 其他技能／原生缓存路径；本次自动更新和遥测关闭。
+    - 不提供会话间隔离：墙内能读写所有 Kimi 会话的历史、批准记录和定时任务，墙外恢复这些会话时会生效；套过墙的会话不要在墙外直接恢复。`${home}/.kimi-code` 下的 server.token、device_id、credentials/mcp/、别的项目的会话、user-history、file-history 墙里都可读；种类数据目前不支持 `deny_read`。
+    - 用户 10-24 再定：credentials 可写，让 Kimi 在墙内自动续期；初次实测已证明只读凭证会阻止刷新后的保存并中断模型任务。墙内本来就要读取凭证，开放写入多出的风险是 agent 也可能改坏登录，用户接受；Claude Code 经钥匙串也能在墙内续期。其余配置与身份文件继续禁写，验收改用 config.toml。`api.kimi.com`、`auth.kimi.com` 已由真机拒绝记录确认后单独放行；不放开任意互联网，也不额外放行被搜索、读取的目标网页域名。
+    - corral 的全局 hook 在匹配 `FENCE_RUN == CORRAL_INSTANCE` 的 Kimi 中容许实际父进程链多一层 fence runner；macOS 用 `proc_pidinfo` 核对两级父 PID，避免执行墙内被禁止的 setuid `/bin/ps`。仍拒绝继承同一环境的嵌套 Kimi，不放宽其他家的 hook，不改 fence 路径或进程权限。
   - `packed-refs.lock` 报错不消除：提交不受影响，删除已打包的分支、`gc`、建新分支或 worktree 在墙里会失败。
 - 来历：`docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`、`docs/调研/R17b-fence方案.md`。
 
