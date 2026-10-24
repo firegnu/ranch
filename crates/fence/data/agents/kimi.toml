@@ -1,0 +1,18 @@
+description = "Kimi Code（R48f 试验草案，启动路径尚未验收）；自带查资料，不注入 MCP"
+services = ["kimi"]
+read = [
+  "${home}/.kimi-code/config.toml", "${home}/.kimi-code/tui.toml",
+  "${home}/.kimi-code/credentials/kimi-code.json", "${home}/.kimi-code/region",
+]
+write = [
+  "${home}/.kimi-code/sessions", "${home}/.kimi-code/logs",
+  "${home}/.kimi-code/cache", "${home}/.kimi-code/user-history",
+  "${home}/.kimi-code/session_index.jsonl", "${home}/.kimi-code/workspaces.json",
+]
+deny_write = [
+  "${home}/.kimi-code/config.toml", "${home}/.kimi-code/tui.toml",
+  "${home}/.kimi-code/credentials",
+]
+env = { KIMI_CODE_NO_AUTO_UPDATE = "1", KIMI_DISABLE_TELEMETRY = "1" }
+[macos]
+allow_pty = true

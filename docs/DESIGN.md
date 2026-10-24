@@ -188,6 +188,7 @@ pen 解析到 OSC 10/11 的单色查询时，若此刻没有 writer（没有客�
     - key 源禁读独立于服务器选择：每次枚举 `keys/` 全部条目，将原路径和符号链接真实目标加入禁读；改选或 `mcp = []` 不解除旧 key 的保护。仍只读取被选中服务器的 key 内容，`check` 只看路径元数据。
     - 准备阶段失败立即清理本次新建的实例记录和临时目录，启动前已存在的目录、文件或链接不删除；清理失败附带错误，不能声称已清掉。成功交给 runner 且留下 `run.json`、`exit.json` 的运行，仍在以后启动时按结束超过七天回收；异常退出缺少完整记录的残留不保证自动回收。
     - 对 paddock：命令、退出码及现有 JSON 字段保留；`profiles` 兼容新增 `mcp` 服务器列表、`check/run` 的来源列表新增 `mcp`，paddock 不用动。只在 fence 新运行生效，不修改用户全局配置；用户整份覆盖的旧种类需自行采用 `[mcp]` 模板才能切换。
+  - R48f（用户 10-24）：Kimi 套 `dev` 墙的目标不变，但不注入 Exa，查资料用 Kimi 自带的服务端搜索、读网页。Kimi 2.3.1 的 [CLI 参数](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/apps/kimi-code/src/cli/commands.ts) 没有一次性 MCP 配置入口，[MCP 加载器](https://github.com/MoonshotAI/kimi-code/blob/684bae9ea6a437f3bae98bba1dcb797a917d500b/packages/agent-core-v2/src/app/mcpConfig/configLoader.ts) 只读固定的用户、项目路径；不为注入而改用户配置或重建登录数据根。种类不写 `[mcp]` 时，跳过档案／本机选中的 MCP 参数、文件和域名，并在 `check.warnings` 说明；MCP key 源禁读照旧，没有指定种类的档案检查仍预览 MCP。其余四家模板和 `dev` 档案不变。Kimi 的 `child-sandbox` 继承及墙内禁止再派 agent 沿用现有机制。**当前 Kimi 数据仍为试验草案**：启动在 `workspaces.json` 的随机同目录临时文件写入处受阻，五项真机验收未完成，域名尚未定稿；见 R48f 任务记录。对 paddock：命令、JSON 字段、退出码不变，paddock 不用动。
   - `packed-refs.lock` 报错不消除：提交不受影响，删除已打包的分支、`gc`、建新分支或 worktree 在墙里会失败。
 - 来历：`docs/任务/R17-agent放进sandbox.md`、`docs/调研/R17a-srt小试验.md`、`docs/调研/R17b-fence方案.md`。
 

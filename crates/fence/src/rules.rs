@@ -386,7 +386,7 @@ pub fn resolve(
     let (p, pm) = data::load(home, "profiles", profile)?;
     let local_path = home.join("local.toml");
     let local = optional_file(&local_path, "local")?;
-    let selected_mcp = local
+    let mut selected_mcp = local
         .get("mcp")
         .or_else(|| p.get("mcp"))
         .cloned()
@@ -535,6 +535,13 @@ pub fn resolve(
     }
     if settings["enableWeakerNetworkIsolation"] == true {
         warnings.push("weaker_network_isolation: 削弱网络隔离（com.apple.trustd.agent）".into());
+    }
+    if let Some(kind) = kind
+        && mcp_template.is_none()
+        && !selected_mcp.as_array().unwrap().is_empty()
+    {
+        warnings.push(format!("mcp_skipped: {kind} 没有 [mcp] 模板，跳过所选 MCP"));
+        selected_mcp = json!([]);
     }
     let mcp = mcp::resolve(
         home,
