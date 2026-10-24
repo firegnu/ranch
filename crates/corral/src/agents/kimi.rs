@@ -135,11 +135,14 @@ fn workdir_key(cwd: &Path) -> String {
     let path = path.trim_end_matches('/');
     let base = path.rsplit('/').next().unwrap_or("").to_lowercase();
     let mut slug = String::new();
+    let mut invalid = false;
     for c in base.chars() {
         if c.is_ascii_alphanumeric() || "._-".contains(c) {
             slug.push(c);
-        } else if !slug.ends_with('-') {
+            invalid = false;
+        } else if !invalid {
             slug.push('-');
+            invalid = true;
         }
     }
     let slug: String = slug.trim_matches('-').chars().take(40).collect();
@@ -155,45 +158,78 @@ fn workdir_key(cwd: &Path) -> String {
     )
 }
 
-/// Stream the main wire, retaining only this turn's text and latest state. Stop hooks run
-/// before turn.ended is written, so every status read rechecks the durable evidence.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct WireCursor {
+    path: String,
+    dev: u64,
+    ino: u64,
+    len: u64,
+    offset: u64,
+    turn_started: f64,
+    turn: Value,
+    step: Value,
+    text: String,
+    tool: Value,
+    interaction: Value,
+    state: Option<Value>,
+}
+
+/// Resume the main wire at the last complete line. Stop hooks run before turn.ended,
+/// so every status read checks for new durable evidence and reapplies the cached result.
 fn wire_events(s: &mut Value) -> Vec<Value> {
     use std::{
         fs::OpenOptions,
-        io::{BufRead, BufReader},
-        os::unix::fs::OpenOptionsExt,
+        io::{BufRead, BufReader, Seek, SeekFrom},
+        os::unix::fs::{MetadataExt, OpenOptionsExt},
     };
-    let Some(since) = s["turn_started"].as_f64() else {
+    let Some(turn_started) = s["turn_started"].as_f64() else {
         return vec![];
     };
     // The wire's timestamps are milliseconds; a fast hook can return in the same millisecond.
-    let since = (since * 1000.0).floor() / 1000.0;
+    let since = (turn_started * 1000.0).floor() / 1000.0;
     s["reply"] = Value::Null;
     s["reply_t"] = Value::Null;
-    let Some(file) = s["transcript_path"]
-        .as_str()
-        .and_then(|p| {
-            OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(p)
-                .ok()
-        })
-        .filter(|f| f.metadata().is_ok_and(|m| m.is_file()))
+    let path = s["transcript_path"].as_str().unwrap_or("").to_owned();
+    let Ok(mut file) = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&path)
     else {
         return vec![];
     };
+    let Some(meta) = file.metadata().ok().filter(|m| m.is_file()) else {
+        return vec![];
+    };
+    let mut wire = serde_json::from_value::<WireCursor>(s["kimi_wire"].take())
+        .ok()
+        .filter(|w| {
+            w.path == path
+                && w.dev == meta.dev()
+                && w.ino == meta.ino()
+                && w.len <= meta.len()
+                && w.offset <= meta.len()
+                && w.turn_started == turn_started
+        })
+        .unwrap_or_else(|| WireCursor {
+            path,
+            dev: meta.dev(),
+            ino: meta.ino(),
+            turn_started,
+            ..WireCursor::default()
+        });
+    wire.len = meta.len();
+    if file.seek(SeekFrom::Start(wire.offset)).is_err() {
+        return vec![];
+    }
     let mut reader = BufReader::new(file);
-    let (mut turn, mut tool, mut interaction) = (Value::Null, Value::Null, Value::Null);
-    let (mut text, mut line) = (String::new(), Vec::new());
-    let mut state = None;
+    let mut line = Vec::new();
     loop {
         line.clear();
         if reader.read_until(b'\n', &mut line).unwrap_or(0) == 0 || line.last() != Some(&b'\n') {
             break;
         }
+        wire.offset += line.len() as u64;
         // Avoid parsing request bodies, model context and tool output unrelated to state/text.
-        let raw = String::from_utf8_lossy(&line);
         if ![
             "turn.prompt",
             "turn.ended",
@@ -204,8 +240,10 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
             "interaction.resolved",
         ]
         .iter()
-        .any(|kind| raw.contains(kind))
-        {
+        .any(|kind| {
+            line.windows(kind.len())
+                .any(|bytes| bytes == kind.as_bytes())
+        }) {
             continue;
         }
         let Ok(e) = serde_json::from_slice::<Value>(&line) else {
@@ -216,13 +254,14 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
             continue;
         }
         if e["type"] == "turn.prompt" {
-            turn = e["turnId"].clone();
-            text.clear();
-            tool = Value::Null;
-            interaction = Value::Null;
-            state = Some(json!({"ev":"PreToolUse","t":t}));
+            wire.turn = e["turnId"].clone();
+            wire.step = Value::Null;
+            wire.text.clear();
+            wire.tool = Value::Null;
+            wire.interaction = Value::Null;
+            wire.state = Some(json!({"ev":"PreToolUse","t":t}));
         }
-        if turn.is_null() {
+        if wire.turn.is_null() {
             continue;
         }
         match e["type"].as_str().unwrap_or("") {
@@ -231,51 +270,77 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
                 let same_turn = part["turnId"]
                     .as_str()
                     .and_then(|id| id.parse::<u64>().ok())
-                    .is_some_and(|id| turn.as_u64() == Some(id))
-                    || part["turnId"] == turn;
+                    .is_some_and(|id| wire.turn.as_u64() == Some(id))
+                    || part["turnId"] == wire.turn;
                 match part["type"].as_str().unwrap_or("") {
                     "content.part" if same_turn && part["part"]["type"] == "text" => {
-                        text.push_str(part["part"]["text"].as_str().unwrap_or(""));
+                        if wire.step != part["step"] {
+                            wire.text.clear();
+                            wire.step = part["step"].clone();
+                        }
+                        wire.text
+                            .push_str(part["part"]["text"].as_str().unwrap_or(""));
                     }
                     "tool.call" if same_turn => {
-                        tool = part["name"].clone();
-                        state = Some(json!({"ev":"PreToolUse","t":t}));
+                        wire.tool = part["name"].clone();
+                        wire.state = Some(json!({"ev":"PreToolUse","t":t}));
                     }
                     "tool.result" => {
-                        state = Some(json!({"ev":"PostToolUse","t":t}));
+                        wire.state = Some(json!({"ev":"PostToolUse","t":t}));
                     }
                     _ => {}
                 }
             }
             "interaction.request"
-                if e["request"]["turnId"] == turn
+                if e["request"]["turnId"] == wire.turn
                     && matches!(e["kind"].as_str(), Some("approval" | "question")) =>
             {
-                interaction = e["id"].clone();
-                tool = if e["kind"] == "question" {
+                wire.interaction = e["id"].clone();
+                wire.tool = if e["kind"] == "question" {
                     json!("AskUserQuestion")
                 } else {
                     e["request"]["toolName"].clone()
                 };
-                state = Some(json!({"ev":"PermissionRequest","t":t}));
+                wire.state = Some(json!({"ev":"PermissionRequest","t":t}));
             }
-            "interaction.resolved" if e["id"] == interaction => {
-                interaction = Value::Null;
-                state = Some(json!({"ev":"PostToolUse","t":t}));
+            "interaction.resolved" if e["id"] == wire.interaction => {
+                wire.interaction = Value::Null;
+                wire.state = Some(json!({"ev":"PostToolUse","t":t}));
             }
-            "turn.ended" if e["turnId"] == turn => {
-                state = match e["reason"].as_str() {
+            "turn.ended" if e["turnId"] == wire.turn => {
+                wire.state = match e["reason"].as_str() {
                     Some("completed") => {
-                        Some(json!({"ev":"Stop","t":t,"last_assistant_message":text}))
+                        Some(json!({"ev":"Stop","t":t,"last_assistant_message":wire.text}))
                     }
                     Some("cancelled") => Some(json!({"ev":"Interrupt","t":t})),
                     Some("failed" | "blocked") => Some(json!({"ev":"StopFailure","t":t})),
-                    _ => state,
+                    _ => wire.state,
                 };
             }
             _ => {}
         }
     }
-    s["last_tool"] = tool;
-    state.into_iter().collect()
+    s["last_tool"] = wire.tool.clone();
+    s["kimi_wire"] = serde_json::to_value(&wire).unwrap();
+    wire.state.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workdir_keys_match_kimi_23() {
+        // Kimi's /[^a-z0-9._-]+/g replacement keeps allowed hyphens beside invalid runs.
+        for (directory, expected) in [
+            ("/tmp/foo - bar", "wd_foo---bar_d735df166c6d"),
+            ("/tmp/a-(b)", "wd_a--b_15671396560d"),
+            ("/tmp/my-项目x", "wd_my--x_3a26b02026a0"),
+            ("/tmp/Hello.World_42", "wd_hello.world_42_32d7bd12d323"),
+            ("/tmp/项目", "wd_workspace_8b9f6db86618"),
+            ("/tmp/--a!? b--", "wd_a-b_42e0cc8fd133"),
+        ] {
+            assert_eq!(workdir_key(Path::new(directory)), expected, "{directory}");
+        }
+    }
 }

@@ -138,6 +138,9 @@ fn only_the_main_wire_finishes_a_turn_and_supplies_its_reply() {
         json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001,"input":[{"type":"text","text":"first"}]}),
     );
     append(
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000001,"event":{"type":"content.part","turnId":"1","step":0,"part":{"type":"text","text":"I'll check the file."}}}),
+    );
+    append(
         json!({"type":"context.append_loop_event","agentId":"main","time":1000002,"event":{"type":"tool.call","name":"Bash","turnId":"1"}}),
     );
     let st = lab.status();
@@ -155,7 +158,7 @@ fn only_the_main_wire_finishes_a_turn_and_supplies_its_reply() {
         json!({"type":"context.append_loop_event","agentId":"main","time":1000005,"event":{"type":"content.part","turnId":"1","part":{"type":"think","text":"hidden"}}}),
     );
     append(
-        json!({"type":"context.append_loop_event","agentId":"main","time":1000006,"event":{"type":"content.part","turnId":"1","part":{"type":"text","text":"main "}}}),
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000006,"event":{"type":"content.part","turnId":"1","step":1,"part":{"type":"text","text":"main "}}}),
     );
     // A child's event and the indistinguishable Stop hook cannot close the main turn.
     append(
@@ -165,7 +168,7 @@ fn only_the_main_wire_finishes_a_turn_and_supplies_its_reply() {
     assert_eq!(lab.status()["state"], "working");
     assert!(!lab.out(&["reply", "test/kimi"]).status.success());
     append(
-        json!({"type":"context.append_loop_event","agentId":"main","time":1000008,"event":{"type":"content.part","turnId":"1","part":{"type":"text","text":"reply"}}}),
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000008,"event":{"type":"content.part","turnId":"1","step":1,"part":{"type":"text","text":"reply"}}}),
     );
     let end = json!({"type":"turn.ended","agentId":"main","turnId":1,"reason":"completed","time":1000009});
     write!(
@@ -183,6 +186,63 @@ fn only_the_main_wire_finishes_a_turn_and_supplies_its_reply() {
     assert_eq!(lab.json(&["reply", "test/kimi"])["text"], "main reply");
     // A new input must not reuse the previous main turn's completion or reply.
     lab.event("UserPromptSubmit", json!({"prompt":"second","t":1001.0}));
+    assert_eq!(lab.status()["state"], "working");
+    assert!(!lab.out(&["reply", "test/kimi"]).status.success());
+}
+
+#[test]
+fn wire_reads_only_appends_and_replays_after_file_or_turn_changes() {
+    let lab = Lab::new("exec /bin/cat", None);
+    let wire = lab.path("wire.jsonl");
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":wire,"source":"startup"}),
+    );
+    lab.event("UserPromptSubmit", json!({"prompt":"first","t":1000.0}));
+    let prompt = json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000000});
+    let part = |text: &str| json!({"type":"context.append_loop_event","agentId":"main","time":1000001,"event":{"type":"content.part","turnId":"1","step":0,"part":{"type":"text","text":text}}});
+    let end = json!({"type":"turn.ended","agentId":"main","turnId":1,"reason":"completed","time":1000002});
+    let prefix = format!("{prompt}\n{}\n", part("old"));
+    fs::write(&wire, &prefix).unwrap();
+    assert_eq!(lab.status()["state"], "working");
+    // Poison already-consumed bytes without changing identity or length: the next read
+    // must only consume the append, retaining the previously accumulated text.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&wire)
+        .unwrap()
+        .write_all(prefix.replace("old", "bad").as_bytes())
+        .unwrap();
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&wire).unwrap(),
+        "{}\n{end}",
+        part(" tail")
+    )
+    .unwrap();
+    assert_eq!(lab.json(&["reply", "test/kimi"])["text"], "old tail");
+    // Another query (including a late observational hook) keeps the cached completion.
+    lab.event("Kimi:Stop", json!({}));
+    assert_eq!(lab.status()["state"], "idle");
+    assert_eq!(lab.json(&["reply", "test/kimi"])["text"], "old tail");
+
+    let complete = format!("{prompt}\n{}\n{}\n{end}\n", part("new"), part(" tail"));
+    assert_eq!(complete.len() as u64, fs::metadata(&wire).unwrap().len());
+    fs::write(lab.path("replacement"), &complete).unwrap();
+    fs::rename(lab.path("replacement"), &wire).unwrap();
+    assert_eq!(lab.json(&["reply", "test/kimi"])["text"], "new tail");
+    // Truncation on the same inode also resets the accumulated result.
+    fs::write(&wire, format!("{prompt}\n{}\n{end}\n", part("cut"))).unwrap();
+    assert_eq!(lab.json(&["reply", "test/kimi"])["text"], "cut");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&wire)
+        .unwrap()
+        .write_all(format!("{prompt}\n{}\n{end}\n", part("now")).as_bytes())
+        .unwrap();
+    // Even within the same wire millisecond, a changed input timestamp must replay.
+    lab.event("UserPromptSubmit", json!({"prompt":"second","t":1000.0005}));
+    assert_eq!(lab.json(&["reply", "test/kimi"])["text"], "now");
+    lab.event("UserPromptSubmit", json!({"prompt":"third","t":1001.0}));
     assert_eq!(lab.status()["state"], "working");
     assert!(!lab.out(&["reply", "test/kimi"]).status.success());
 }

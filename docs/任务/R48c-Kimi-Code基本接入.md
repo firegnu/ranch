@@ -86,3 +86,16 @@
 - **没做的事**：没有做派活分工表、两份技能内容、pony 题目／按钮、fence、打包或部署，没有合并或推送。验证严格限于任务场景，没有额外扩展真实子 agent、后台轮、运行中追发／steer 或 Linux 真机测试；子 agent Stop 的隔离由合成主／子 wire 测试覆盖。
 - **对 paddock 的影响**：兼容增加 kimi 一项与可选 `install.format`，状态值和命令保持不变。paddock 自己的任务可补充“只改共享配置中的 corral 块、卸载保留配置文件”的安装说明；不需要读取 Kimi 内部目录，也不增加技能位置。
 - **踩过的坑**：源码页脚说明提到权限模式，但真实默认模式并不显示它，初版就绪规则导致 starting；改为识别空编辑器和实际 context 状态行后重跑通过。旧的 `finds_programs_and_reads_versions_without_hanging` 在一次并发针对性回归里没有读到合成 Claude 版本，单独重跑和随后的完整标准测试都通过，未改其断言或超时。首个 send 合成程序只回显、不报输入钩子，确认阶段正确报 not_delivered，补成真正调用全局 hook 的合成程序后通过。
+
+### 返工 1
+
+2026-10-24，按用户指定处理主仓库 `docs/任务/R48c-审查.md` 对 `154c2fb` 的第 1–6 条；审查文件只读，第 7、8、9 条不改。
+
+- **卸载换行（1）**：仅在含前置换行的块位于文件开头、块前一字节为换行、或块位于文件末尾时连前置换行一起删除；其他情况留下行间分隔。新增无末尾换行后紧接 `[x]`、删除块前空行后的等价输入、herdr 标记及文件首尾对照。原有“块后有空行”的断言按新规则精确保留前置换行，CONTRACT 和 DESIGN 同步。
+- **目录 key（2）**：每段连续的不允许字符替换成一个 `-`，不再依据前一个输出字符判断；trim、截长、hash 顺序不变。用 6 组写死的目录与完整 key 对照，包括 `foo - bar`、`a-(b)`、`my-项目x`、大小写、全中文和连续标点。
+- **wire 增量读取（3）**：cursor 保存路径、dev、ino、文件长度、完整行 offset、原始 `turn_started` 及本轮 turn／step／文字／工具／交互／最新状态；只读追加的完整行，逐行筛选改为按字节查找。路径或身份变化、文件变短或输入时间变化时重读；重复查询和迟到的观察钩子仍使用已累积的结果。测试覆盖不重读旧字节、追加、半行、同长度替换 inode、原 inode 截短、同一毫秒内输入时间变化和新轮清除旧回复。
+- **停止上限（4）**：最后一步 KILL 后最多再等子树 5 秒，残留 PID 追加到 `pen.log` 并写入 `exit.json.remaining_pids`；Kimi 自身未退出时保持 `code:null`，超时后的 Drop 用非阻塞 waitpid，避免退出清理重新卡住。CONTRACT 和 DESIGN 补明上限。测试从最后 KILL 后的快照开始，用仍存活的合成进程模拟信号未能终止目标，分别验证父进程已退／未退两种情况，实等 5 秒并核对日志、残留 PID 和退出码；无需 root，也没有制造真正不可杀进程。
+- **写前核对（5）**：Plan 保存配置目录，apply 沿用该目录做符号链接检查，不重新读取 HOME。竞争测试的临时目录 canonicalize 后分别断言内容变化、同内容替换 inode 的 `configuration changed; nothing written`，以及符号链接变化的专用错误；另测计划目录边界和装卸保持 0640 权限。
+- **最终回复（6）**：出现新 step 的文字时清空前一步文字，同一 step 的片段继续连接。公开生命周期测试先写工具前说明，再写工具后的两段最终文字，确认 `reply` 只返回后者；CONTRACT 和 DESIGN 写清取最后一个有文字的 step。
+- **验证**：上述六项各先获得目标行为的失败证据，再修复通过；旧竞争测试在收紧错误断言后也实际通过内容核对分支。只跑直接相关的 19 项唯一测试：`--lib integration::block::tests`（2）、`--lib workdir_keys_match_kimi_23`（1）、`--lib final_kill_wait_is_bounded`（1）、`--test kimi`（8）、`--test integration kimi_`（3）、`--test integration installs_and_removes_only_`（与前者重复 1 项，另有 amp／agy 2 项）、`--test protocol stop_timeout_does_not_cancel_pen_owned_shutdown`（1）、`--test protocol agent_exit_drains_last_output_to_attached_client`（1）；全部通过。命令均为 `cargo test -p corral-core` 加所列筛选，均使用 r48c 独立编译目录。Kimi 测试中的 ignored 项只是由停止测试实际调用的合成子进程入口。`cargo clippy -p corral-core --lib --test integration --test kimi -- -D warnings`、`cargo fmt --check`、`git diff --check` 均通过。没有跑全套，没有再真跑 Kimi，没有放宽断言或缩短等待时限。
+- **范围与决定**：只按这次明确选择实现，不需主控另作决定；未修改第 7–9 条、主仓库审查文件、真实配置或其他仓库，没有打包、部署、合并或推送。paddock 无需代码适配，现有命令与状态字段不变；残留 PID 只在异常停止时兼容增加到内部退出记录。停止测试的快照用于覆盖无法安全制造的失败信号场景，普通 Kimi 子树停止及无关进程保护仍由公开命令测试覆盖。

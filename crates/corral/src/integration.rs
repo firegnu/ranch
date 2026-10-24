@@ -139,6 +139,8 @@ fn targets(g: &Global, root: &Path) -> Vec<(PathBuf, &'static str)> {
 
 /// What installing (or removing) an agent's global hook file, or directory of them, would do.
 struct Plan {
+    /// Configuration directory used for the ownership check when this plan was made.
+    dir: PathBuf,
     /// The file or directory.
     path: PathBuf,
     /// `create`, `same` or `overwrite` (`absent` or `remove` when removing), or `foreign` for
@@ -169,6 +171,7 @@ fn plan(g: &Global, home: &Path, remove: bool) -> Result<Plan> {
     let root = dir.join(g.path);
     let files = targets(g, &root);
     let foreign = Ok(Plan {
+        dir: dir.clone(),
         path: root.clone(),
         status: "foreign",
         version: None,
@@ -225,6 +228,7 @@ fn plan(g: &Global, home: &Path, remove: bool) -> Result<Plan> {
         (_, false) => "overwrite",
     };
     Ok(Plan {
+        dir,
         path: root,
         status,
         version,

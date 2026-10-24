@@ -67,6 +67,10 @@ impl StopTree {
         self.refresh(&table());
         self.members.is_empty()
     }
+    pub fn remaining(&mut self) -> Vec<i32> {
+        self.refresh(&table());
+        self.members.keys().copied().collect()
+    }
 }
 
 /// Whether the process has exited, even if nobody has reaped it yet.

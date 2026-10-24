@@ -207,13 +207,13 @@ ranch dispatch reset <名字> [--if-version <版本>]
 ```
 
 - `install.format:"marked-block"` 表示 `install.path` 是共享配置文件，只安装、卸载 corral 的标记块；没有该字段的 amp、agy 沿用原有文件、目录方式。Kimi 的路径是 `$KIMI_CODE_HOME/config.toml`，未设时是 `~/.kimi-code/config.toml`，没有 `install.enabled` 字段。
-- 标记是 `# >>> corral kimi integration` / `# <<< corral kimi integration`。块外字节、原文件权限不变；卸载也删除 corral 为该块添加的前置换行，文件本身保留（原来不存在的文件卸载后为空）。`create` 表示未装块，`same` 表示块完整且与本版本相同；半块、重复标记、修改过或无法确认归属的块、配置文件或配置目录是符号链接均为 `foreign`，装卸不写。当前只认版本 1 的原样内容，不把用户改过的块报成 `overwrite`。
+- 标记是 `# >>> corral kimi integration` / `# <<< corral kimi integration`。块外字节、原文件权限不变；卸载只在块（含前置换行）位于文件开头、块前一字节是换行、或块位于文件末尾时连前置换行一起删除，否则保留该换行以分隔块外内容。文件本身保留（原来不存在且没有新增内容的文件卸载后为空）。`create` 表示未装块，`same` 表示块完整且与本版本相同；半块、重复标记、修改过或无法确认归属的块、配置文件或配置目录是符号链接均为 `foreign`，装卸不写。当前只认版本 1 的原样内容，不把用户改过的块报成 `overwrite`。
 - `--dry-run`、`--yes`、确认和结果 JSON 沿用下述命令。即使 `--yes`，写前也重读整个文件，核对内容和文件身份；发生变化报 `changed`、什么都不写。原子改名与最后核对之间仍有不合作的编辑器并发写入的微小窗口，和 R13 信任列表相同。
 - 全局钩子经 `$CORRAL_HELPER __hook kimi:<事件>`；检查 corral 环境和实际父进程链，只观察、始终空输出并成功退出，不回批准或拒绝。非 corral 启动、嵌套启动的 Kimi 不记事件；共享 helper 还是旧版时，新 Kimi 直接用启动它的这份 corral。
 - 新窗口的可输入编辑器算 `idle`，不必等创建会话，`send` 不需要 `--force`；信任、登录、加载画面不算就绪。`start --prompt` 可用，等编辑器就绪后通过 PTY 送首句并提交，首句以 `-` 开头也支持；收到输入钩子前仍为 `starting`。不改变 Kimi 的模型、权限模式或信任设置。
-- 输入和主轮工具为 `working`；主 wire 的批准、提问交互为 `blocked`，当前屏幕的批准／提问导航提示补漏。只在主会话 `agents/main/wire.jsonl` 确认这一轮 `completed` 后转 `idle` 并提供这一轮文字，排除思考和工具内容；子 agent 的 `Stop`、尚未完成的主 `Stop` 不结束主轮。未完成的新轮 `reply` 报 `no_reply`，不冒充上一轮回复。
+- 输入和主轮工具为 `working`；主 wire 的批准、提问交互为 `blocked`，当前屏幕的批准／提问导航提示补漏。只在主会话 `agents/main/wire.jsonl` 确认这一轮 `completed` 后转 `idle` 并提供回复：取本轮最后一个有文字的 step，同一 step 的文字片段按顺序连接，排除前面 step 的说明、思考和工具内容；子 agent 的 `Stop`、尚未完成的主 `Stop` 不结束主轮。未完成的新轮 `reply` 报 `no_reply`，不冒充上一轮回复。
 - 主轮 `cancelled` 沿用 `idle` 加 `interrupted:true`、`wait.result:"interrupted"`、`reply` 的 `no_reply`；提问框上的 Esc 只解除交互，仍为 `working`。主轮失败沿用 `StopFailure`，没有正常回复。阶段 1 不提供 pony 的结构化题目或批准按钮。
-- `stop` 首先 TERM、等 3 秒后 KILL，包含 Kimi 实际派生到其他进程组的命令。父进程先退也等子树清理；每次信号核对 PID 和进程出生标识，其他 agent 的停止行为不变。停止前已经完全脱离且失去父子关系的守护进程不在这份子树内。
+- `stop` 首先 TERM、等 3 秒后 KILL，包含 Kimi 实际派生到其他进程组的命令。父进程先退也等子树清理，但最后一步 KILL 后最多再等 5 秒；还有残留时把 PID 写进 `pen.log` 和 `exit.json` 的 `remaining_pids` 数组，然后退出 pen，Kimi 本身未退出时退出码为 `null`。每次信号核对 PID 和进程出生标识，其他 agent 的停止行为不变。停止前已经完全脱离且失去父子关系的守护进程不在这份子树内。
 - Kimi 要由 R48c 及以后版本启动并操作；旧版不认识这一家、旧进程缺少所需环境，`upgrade` 只换 pen，不能补齐，需重新启动。
 - 对 paddock：兼容新增一家与可选 `install.format`，现有状态值和命令不变。列表按返回项显示；安装说明需在 paddock 自己的任务里识别 `marked-block`，说明只修改共享文件的一段、卸载保留配置文件。paddock 不读 Kimi 的内部目录。
 

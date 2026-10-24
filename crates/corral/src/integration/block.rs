@@ -32,6 +32,7 @@ pub(super) fn plan(g: &Global, home: &Path, remove: bool) -> Result<Plan> {
     let dir = (g.dir)(home);
     let path = dir.join(g.path);
     let mut p = Plan {
+        dir,
         path,
         status: "foreign",
         version: None,
@@ -39,7 +40,7 @@ pub(super) fn plan(g: &Global, home: &Path, remove: bool) -> Result<Plan> {
         temps: vec![],
         block: None,
     };
-    if skills::linked(&p.path, &dir) {
+    if skills::linked(&p.path, &p.dir) {
         return Ok(p);
     }
     let (bytes, meta) = match read(&p.path) {
@@ -87,11 +88,15 @@ pub(super) fn apply(g: &Global, p: &Plan, remove: bool) -> Result<()> {
         .map(|f| f.bytes.clone())
         .unwrap_or_default();
     if remove {
-        let range = p
+        let mut range = p
             .block
             .as_ref()
             .and_then(|f| f.range.clone())
             .ok_or_else(|| Error::new(1, "changed", "marked block disappeared; nothing written"))?;
+        if range.start > 0 && bytes[range.start - 1] != b'\n' && range.end < bytes.len() {
+            // This newline also separates the user's lines on either side of the block.
+            range.start += 1;
+        }
         bytes.drain(range);
     } else {
         bytes.extend_from_slice(g.files[0].1.as_bytes());
@@ -110,12 +115,7 @@ pub(super) fn apply(g: &Global, p: &Plan, remove: bool) -> Result<()> {
             f.set_permissions(old.meta.permissions())?;
         }
         f.sync_all()?;
-        let dir = (g.dir)(
-            &std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default(),
-        );
-        if skills::linked(&p.path, &dir) {
+        if skills::linked(&p.path, &p.dir) {
             return Err(Error::new(
                 1,
                 "changed",
@@ -152,25 +152,65 @@ mod tests {
 
     #[test]
     fn a_shared_file_changed_after_planning_is_never_written() {
-        let home = tempfile::tempdir().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().canonicalize().unwrap();
         let mut g = crate::agents::find("kimi").unwrap().global().unwrap();
         g.dir = |home| home.to_path_buf();
-        let path = home.path().join("config.toml");
+        let path = home.join("config.toml");
         for remove in [false, true] {
             let original = if remove { g.files[0].1 } else { "# user\n" };
             fs::write(&path, original).unwrap();
-            let p = plan(&g, home.path(), remove).unwrap();
+            let p = plan(&g, &home, remove).unwrap();
             let changed = format!("{original}# changed by editor\n");
             fs::write(&path, &changed).unwrap();
-            assert!(apply(&g, &p, remove).is_err());
+            assert_eq!(
+                apply(&g, &p, remove).unwrap_err().value["message"],
+                "configuration changed; nothing written"
+            );
             assert_eq!(fs::read_to_string(&path).unwrap(), changed);
-            let p = plan(&g, home.path(), remove).unwrap();
+            let p = plan(&g, &home, remove).unwrap();
+            fs::write(home.join("replacement"), &changed).unwrap();
+            fs::rename(home.join("replacement"), &path).unwrap();
+            assert_eq!(
+                apply(&g, &p, remove).unwrap_err().value["message"],
+                "configuration changed; nothing written"
+            );
+            assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+            let p = plan(&g, &home, remove).unwrap();
             fs::remove_file(&path).unwrap();
-            std::os::unix::fs::symlink(home.path().join("other"), &path).unwrap();
-            fs::write(home.path().join("other"), &changed).unwrap();
-            assert!(apply(&g, &p, remove).is_err());
+            std::os::unix::fs::symlink(home.join("other"), &path).unwrap();
+            fs::write(home.join("other"), &changed).unwrap();
+            assert_eq!(
+                apply(&g, &p, remove).unwrap_err().value["message"],
+                "configuration became a symbolic link; nothing written"
+            );
             assert!(fs::symlink_metadata(&path).unwrap().is_symlink());
+            assert_eq!(fs::read_to_string(home.join("other")).unwrap(), changed);
             fs::remove_file(&path).unwrap();
         }
+    }
+
+    #[test]
+    fn shared_file_edits_keep_permissions_and_use_the_planned_directory() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().canonicalize().unwrap();
+        fs::create_dir(home.join("real")).unwrap();
+        symlink(home.join("real"), home.join("alias")).unwrap();
+        // A linked ancestor above the configuration directory is outside our ownership check.
+        let dir = home.join("alias/config");
+        fs::create_dir(&dir).unwrap();
+        let mut g = crate::agents::find("kimi").unwrap().global().unwrap();
+        g.dir = |home| home.to_path_buf();
+        let path = dir.join("config.toml");
+        fs::write(&path, "# user\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        for remove in [false, true] {
+            let p = plan(&g, &dir, remove).unwrap();
+            assert_eq!(p.status, if remove { "remove" } else { "create" });
+            apply(&g, &p, remove).unwrap();
+            assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, 0o640);
+        }
+        assert_eq!(fs::read_to_string(path).unwrap(), "# user\n");
     }
 }

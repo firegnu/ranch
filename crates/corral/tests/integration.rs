@@ -121,8 +121,42 @@ fn kimi_installs_and_removes_only_its_marked_block() {
     assert_eq!(removed["written"], true);
     assert_eq!(
         fs::read_to_string(path).unwrap(),
-        format!("{original}{after}")
+        format!("{original}\n{after}")
     );
+}
+
+#[test]
+fn kimi_uninstall_preserves_the_newline_separating_other_configuration() {
+    let lab = Lab::new();
+    let body = include_str!("../resources/kimi_hooks.toml");
+    let path = lab.path(".kimi-code/config.toml");
+    for (before, after, expected) in [
+        (
+            "default_model = \"mine\"",
+            "[x]\n",
+            "default_model = \"mine\"\n[x]\n",
+        ),
+        (
+            "default_model = \"mine\"\n",
+            "[x]\n",
+            "default_model = \"mine\"\n[x]\n",
+        ),
+        (
+            "default_model = \"mine\"",
+            "# >>> herdr kimi integration\n# <<< herdr kimi integration\n",
+            "default_model = \"mine\"\n# >>> herdr kimi integration\n# <<< herdr kimi integration\n",
+        ),
+        ("", "[x]\n", "[x]\n"),
+        ("default_model = \"mine\"", "", "default_model = \"mine\""),
+        ("", "", ""),
+    ] {
+        // The first case also represents an editor removing the blank line before the block.
+        lab.write(".kimi-code/config.toml", &format!("{before}{body}{after}"));
+        let (code, result) = lab.json(&["integration", "uninstall", "--agent", "kimi", "--yes"]);
+        assert_eq!(code, Some(0), "{result}");
+        assert_eq!(result["written"], true);
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    }
 }
 
 #[test]
