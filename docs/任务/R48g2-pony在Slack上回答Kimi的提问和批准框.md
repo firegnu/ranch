@@ -135,3 +135,13 @@
 2026-10-24，按主控决定只修复核新问题 1、2，3、4 不改。对照仍在的审查临时测试补正式回归：`review2_bad_old_child_line_nulls_interaction_forever` 先失败于旧残缺行使 count 为 null；修为末行等换行、完整坏行跳过后通过，并覆盖分段追加新请求、换行后计数、后续 resolved。`review2_kimi_background_null_interaction_reports_unverifiable` 先失败于撤后台答案的理由不实，现明确说“无法核对 Kimi 的框”，仍撤队且不按键、不发送。`review2_kimi_command_fence_closed_by_command_content` 先复现命令里的三连反引号提前关块，现围栏取命令最长连续反引号加一、至少三个，三连／五连分别用四连／六连，原文和允许按钮保留；测试通过。DESIGN 同步这两项决定。
 
 验证只跑针对及直接相关回归：corral 的 `review2_`、`review_child_dialogs`、`review_resuming_a_session` 共 3 项通过；pony 的 `review2_`、`kimi_approval_`、`kimi_background_`、`review_child_dialogs`、`review_kimi_notices` 共 9 项通过。`cargo fmt --check`、`git diff --check` 通过，命令均前台完成，编译仍用 `.target/r48g2`。本次不用真 Kimi（累计仍为 10 轮），不跑全套；未碰真实 Slack、部署或其他仓库，只提交任务分支供主控合并。公开字段结构不变，paddock 不用动。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48g2-1`（Codex gpt-6-astra / xhigh）。首次提交 `aaeeec3`：看了 diff，只动了允许的目录；Kimi 批准核对实例、框开始时间、`last_tool`、轮次、命令原文、人工输入和单框；重跑全套 488 通过、17 跳过、0 失败。真 Kimi 9 轮。
+- 交叉审查 `ranch/review-r48g2-1`（Claude Code opus[1m] / xhigh）：改完再合并，必须改 2 条（子 agent 的框没计数，可能误批准；上一个进程留下的幽灵框），建议改 5 条。主控交回改第 1–7 条，第 8 条不改；dev 在 `d69a62a` 改完，真 Kimi 再用 1 轮（共 10 轮），主控重跑全套 495 通过、0 失败。
+- 复核：可以合并；新提 2 条建议改（子 wire 坏行让计数一直读不到、批准提醒代码块围栏被命令里的反引号提前关掉），用户定修完再合并，dev 在 `7577b97` 改完，主控看过 diff。另 2 条可以不改的不采纳（子 wire 每次全读目前几十毫秒；子框先关后主框不重发提醒，和「回电脑处理」一致）。
+- 合并前主控在 `7577b97` 跑全套：497 通过、1 失败、17 跳过；失败的是 `crates/corral/tests/sandbox.rs` 的 `wrapped_agent_keeps_kind_hooks_prompt_and_lifecycle`（本任务没碰这个文件），单独复跑 3 次都通过，像是文件出现后内容还没写完就读的偶发，记进 HANDOFF 已知问题。clippy、fmt 通过。
+- 真实 Slack 验收待部署后和用户一起做。
+结果：返工 1 次
