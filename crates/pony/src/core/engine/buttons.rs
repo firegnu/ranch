@@ -109,6 +109,9 @@ impl Engine {
             .is_some_and(|c| c.limits().buttons)
             || status.paused
             || status.kind.as_deref() == Some("agy")
+            || (status.state == "blocked"
+                && status.kind.as_deref() == Some("kimi")
+                && status.last_tool.as_deref() == Some("AskUserQuestion"))
             || !matches!(status.state.as_str(), "working" | "blocked")
         {
             return Ok(None);

@@ -22,6 +22,10 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 `ranch dispatch table`：`{ok:true, local:{path,exists}, agents:{<家名>:{source,argv,labels}}, cells:{<格子名>:<与 cell 命令相同的对象>}}`。`agents` 返回未展开的模板，`cells` 返回生效值与启动信息；名字不枚举成固定协议。
 
+R48d：家模板增加可选 `env`（`KEY=VALUE` 字符串数组），在 `table.agents.<家>`、`cell` / `table` 的 `choices[]`（含 `review.choices[]`）原样给出；未定义时字段缺省，旧家的行为和输出不变。每项用第一个 `=` 分隔，键非空，键和值不含 NUL；值可为空、含空格或 `=`，不做模板或 shell 展开，格式错误报 `invalid_data`。调用方每项各传一个 corral `--env` 参数；`argv` / `command` 仍只含 agent 命令，不内嵌环境变量。本机表按字段覆盖，`env` 整个数组替换，`env = []` 清空。`edit` / `reset` 仍只改格子，保留家的 `env`。
+
+内置新增 `agents.kimi` 与 `cells.kimi`，只在用户或任务文件点名 Kimi 时使用：`argv:["kimi","--auto"]`、`env:["KIMI_CODE_TRUST_WORKSPACE=1"]`、`labels:[]`，不指定模型、强度，沿用用户默认。没有默认档位引用 Kimi。启动时逐项传环境变量并照常带 `--prompt`；不写 Kimi 信任记录。对 paddock：兼容新增可选字段和一个格子，设置页可在后续任务显示 `env`，名称仍按返回数据读取。含 `env` 的本机覆盖表需使用 R48d 及以后 ranch 读写，旧版会报未知字段；新版接受没有该字段的旧表。
+
 本机文件格式（以下只说明覆盖用法，不代表默认分工调整）：
 
 ```toml
@@ -40,9 +44,9 @@ cross_review = "review-codex"
 rework = "high-other"
 ```
 
-顶层只允许 `agents`、`cells` 两张表。每个家允许 `argv`（非空字符串数组，首项为程序）、`labels`（字符串数组，新增家省略时为空），R35 新增 `efforts`、`models`（字符串数组，新增家省略时为空）；每格允许 `agents`（字符串数组，R35 起可为空）、`model`、`effort`、`cross_review`、`rework`（可选字符串），R35 新增 `description`（字符串，新增格省略时为空）。家、格子的名字非空且数量不限。按同名条目的字段覆盖，数组整项替换；可选字符串设为 `""` 表示清除。不能删除内置条目。
+顶层只允许 `agents`、`cells` 两张表。每个家允许 `argv`（非空字符串数组，首项为程序）、`labels`（字符串数组，新增家省略时为空），R35 新增 `efforts`、`models`（字符串数组，新增家省略时为空），R48d 新增可选 `env`（格式见上）；每格允许 `agents`（字符串数组，R35 起可为空）、`model`、`effort`、`cross_review`、`rework`（可选字符串），R35 新增 `description`（字符串，新增格省略时为空）。家、格子的名字非空且数量不限。按同名条目的字段覆盖，数组整项替换；可选字符串设为 `""` 表示清除。不能删除内置条目。
 
-家模板的字符串支持 `${model}`、`${effort}`，每格展开一次，插入的值不再递归展开。未知或未闭合占位符报错。R35 起，缺少模型或强度时省略含该占位符的标签、argv 参数；该参数前一项若是独立选项（以 `-` 开头、无 `=`、不含占位符），一起省略，例如 `-m ${model}`、`-c model_reasoning_effort="${effort}"`。程序项不能因此省略。模板只生成 argv/标签，程序不执行 shell。整个表先合并再校验；TOML 错误、未知键、字段类型错误、缺少必填字段、未知引用以及交叉审查/返工引用构成环（含混合环）都直接报错；即使只读另一个正确格子也不退回默认。
+家模板的 `argv`、`labels` 字符串支持 `${model}`、`${effort}`，每格展开一次，插入的值不再递归展开。未知或未闭合占位符报错。R35 起，缺少模型或强度时省略含该占位符的标签、argv 参数；该参数前一项若是独立选项（以 `-` 开头、无 `=`、不含占位符），一起省略，例如 `-m ${model}`、`-c model_reasoning_effort="${effort}"`。程序项不能因此省略。模板只生成 argv/标签，程序不执行 shell。整个表先合并再校验；TOML 错误、未知键、字段类型错误、缺少必填字段、未知引用以及交叉审查/返工引用构成环（含混合环）都直接报错；即使只读另一个正确格子也不退回默认。
 
 对 paddock：兼容新增，不改现有 corral 和 `ranch dispatch route` 约定，paddock 不用动。首次使用需要部署新版 ranch 和技能；之后本机表随改随读，不编译、不重装技能。旧 ranch 不识别这两个命令，不能单独先更新技能。
 
@@ -77,7 +81,7 @@ ranch dispatch reset <名字> [--if-version <版本>]
 - R24 的 cursor 缓存升到 7，重放旧缓存以恢复主会话的对话记录路径和本轮是否已有明确结束事件。识别结果可缓存，但持久证据仍是对话记录：同版 reader 过期回写或新旧 reader 交替重建导致缓存判断丢失后，即使已收到 idle_prompt，也能重新识别同一轮。正常 Stop、StopFailure、会话结束会关闭该轮，新输入与切换主会话重新限定证据范围，不重新覆盖正常结束；不新增事件文件写入方。旧版命令行忽略事件新增的 `transcript_path` 字段，重建自己的缓存，仍不会识别 Claude Code 的打断。
 - R24 部署边界：调用方和提醒进程需使用新版，该 CORRAL_HOME 命名空间的 `.runtime/helper` 也必须指向能记录路径的新版程序。Claude 的钩子调用这个共享 helper；新启动在链接已存在时保留其目标，所以只切 CLI 或停止再重开 Claude 并不足够。用新版执行相应 `corral upgrade` 会切换该命名空间的 helper，后续钩子才可记录路径；空 CORRAL_HOME 首次启动会创建指向启动程序的 helper。本轮不改 helper 选择逻辑，不实际部署。R24 不增加公开字段或状态值，paddock 不用动。
 
-## Claude Code 提问框与框上打断（R43）
+## Claude Code 提问框与框上打断（R43，R48d 增加 Kimi 题目）
 
 `corral status NAME` 兼容新增只读字段 `questions`。仅当前状态为 `blocked`、`last_tool` 为 `AskUserQuestion` 且收到题目时给出；其他情况字段缺省或为 `null`。结构如下（`wait` 返回的状态对象及其超时报错同样带此字段）：
 
@@ -92,6 +96,10 @@ ranch dispatch reset <名字> [--if-version <版本>]
 - R24 的对话记录识别扩到 `blocked`：三种框（权限、AskUserQuestion、ExitPlanMode）被 Esc，或批准后工具运行中被 Esc，仍以本主会话、非侧链、严格晚于最近输入的明确标记为依据，识别后 `idle`、`interrupted:true`，普通 `send` 可继续。没按 Esc 的框仍是 `blocked`；旧标记不能改判新一轮。已识别打断被晚到钩子拉回 blocked 时同样重新核对证据。正常结束、别家 agent 和原有字段/状态值不变。
 - 事件仍为 v1，新增可选 `questions`；旧 reader 忽略它，新 reader 接受无此字段的旧事件。cursor 从 8 升到 9，新旧 reader 交替时各自重放原事件。题目采集需要命名空间的 `.runtime/helper` 使用 R43 程序；打断需要查询方使用 R43 且钩子至少能记 R24 的 transcript_path。共用 helper 的切换规矩仍见上节，单切 CLI 链接不能更新钩子。
 - 对 paddock：兼容新增，现有调用无需修改，可以暂不显示题目；Esc 后从误报 blocked 变成 idle，paddock 不用动。pony 如何显示或回答题目由后续任务处理。
+
+R48d：Kimi Code 也提供同样的 `questions`。从本主会话 wire 中属于当前主轮的 `interaction.request(kind=question).request.questions` 取题目，复用以上字段白名单、缺省值、顺序和 16 KiB 截断。仅工具调用或子 agent 的事件不提供题目；`interaction.resolved`（回答或取消）、后续工具活动、整轮结束/打断、新输入会清除。框上 Esc 解除提问后仍为 working，运行中 Esc 使主轮 cancelled 后沿用 interrupted idle。Kimi 的 wire 缓存新增版本 1，旧缓存重读原 wire；全局事件格式和其他家的 cursor 不变，钩子内容不变，读取方需使用 R48d corral。
+
+pony 在 Kimi 提问提醒中显示题目、选项及截断提示，并提示回电脑回答。展示判断与 Claude 的回答判断分开：Kimi 不提供提问/拒绝按钮，线程回复仍排为普通消息，处理完再送，不自动按 Esc、不走 Claude 的答案或 Esc 核对流程；Slack 回答和按钮留到阶段 4。对 paddock：`status.questions` 兼容新增一家会提供，现有调用无需修改；显示题目可沿用同一格式，不据此推断支持 Claude 的按键回答。
 
 ## Claude Code Bash 权限框的原始命令（R47c 追加）
 

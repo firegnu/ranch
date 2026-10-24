@@ -371,6 +371,70 @@ fn needs_you_lists_single_choice_question() {
     assert!(f.corral.screen_reads.is_empty());
 }
 
+#[test]
+fn kimi_questions_are_display_only_and_thread_replies_never_press_keys() {
+    for truncated in [false, true] {
+        let mut f = Fixture::new();
+        f.memory.borrow_mut().buttons = true;
+        // Deserialize the same public status schema that corral emits for Kimi.
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({
+                "state":"blocked", "kind":"kimi", "last_tool":"AskUserQuestion",
+                "questions":{"items":[
+                    {"header":"颜色","question":"选颜色？","multi_select":false,"options":[{"label":"红","description":"暖"}]},
+                    {"header":"水果","question":"选水果？","multi_select":true,"options":[{"label":"苹果","description":"脆"}]}
+                ],"truncated":truncated}
+            }),
+        );
+        // A readable screen must not enable a fallback rejection button.
+        f.corral
+            .screens
+            .insert("paddock/dev".into(), Ok("Kimi question panel".into()));
+        f.step(2.);
+        f.step(4.);
+        let text = f.texts();
+        assert!(text.contains("在问你（2 道题）\n1. 颜色（单选）：选颜色？\n   A 红 — 暖\n2. 水果（可多选）：选水果？\n   A 苹果 — 脆"), "{text}");
+        assert!(text.contains("请回电脑回答；这里的回复会等它处理完再送。"));
+        assert_eq!(text.contains("题目不完整，请回电脑看"), truncated);
+        assert!(!text.contains("会直接送过去"));
+        assert!(
+            f.memory
+                .borrow()
+                .posted
+                .iter()
+                .all(|p| p.choices.is_empty() && p.buttons.is_empty())
+        );
+        assert!(f.corral.screen_reads.is_empty());
+        assert!(
+            f.engine
+                .store
+                .state()
+                .threads
+                .iter()
+                .all(|t| t.question.is_none())
+        );
+        f.message("answer", Some("bot-0"), "1 选 A", false);
+        f.step(10.);
+        f.step(11.);
+        assert!(f.corral.escapes.is_empty() && f.corral.approvals.is_empty());
+        assert!(f.corral.sent.is_empty());
+        assert!(
+            f.engine
+                .store
+                .state()
+                .pending
+                .iter()
+                .all(|p| !p.question_answer)
+        );
+        f.corral.agents.get_mut("paddock/dev").unwrap().state = "idle".into();
+        f.step(12.);
+        f.step(13.);
+        assert_eq!(f.corral.sent, [("paddock/dev".into(), "1 选 A".into())]);
+        assert!(f.corral.escapes.is_empty() && f.corral.approvals.is_empty());
+    }
+}
+
 fn question_notice(items: serde_json::Value, truncated: bool) -> String {
     let mut f = Fixture::new();
     let s = f.corral.agents.get_mut("paddock/dev").unwrap();

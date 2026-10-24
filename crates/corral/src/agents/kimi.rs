@@ -160,6 +160,7 @@ fn workdir_key(cwd: &Path) -> String {
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 struct WireCursor {
+    version: u8,
     path: String,
     dev: u64,
     ino: u64,
@@ -203,7 +204,8 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
     let mut wire = serde_json::from_value::<WireCursor>(s["kimi_wire"].take())
         .ok()
         .filter(|w| {
-            w.path == path
+            w.version == 1
+                && w.path == path
                 && w.dev == meta.dev()
                 && w.ino == meta.ino()
                 && w.len <= meta.len()
@@ -211,6 +213,7 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
                 && w.turn_started == turn_started
         })
         .unwrap_or_else(|| WireCursor {
+            version: 1,
             path,
             dev: meta.dev(),
             ino: meta.ino(),
@@ -301,7 +304,13 @@ fn wire_events(s: &mut Value) -> Vec<Value> {
                 } else {
                     e["request"]["toolName"].clone()
                 };
-                wire.state = Some(json!({"ev":"PermissionRequest","t":t}));
+                let mut state = json!({"ev":"PermissionRequest","t":t,"tool_name":wire.tool});
+                if e["kind"] == "question"
+                    && let Some(questions) = crate::hooks::questions(&e["request"]["questions"])
+                {
+                    state["questions"] = questions;
+                }
+                wire.state = Some(state);
             }
             "interaction.resolved" if e["id"] == wire.interaction => {
                 wire.interaction = Value::Null;

@@ -25,10 +25,53 @@ fn local(home: &TempDir, data: &str) {
 }
 
 #[test]
+fn kimi_is_opt_in_with_trusted_workspace_and_default_model() {
+    let home = TempDir::new().unwrap();
+    let cell = run(&home, &["cell", "kimi"], 0)["cell"].clone();
+    let table = run(&home, &["table"], 0);
+    assert_eq!(cell, table["cells"]["kimi"]);
+    assert_eq!(cell["agents"], json!(["kimi"]));
+    assert!(cell["model"].is_null() && cell["effort"].is_null());
+    assert_eq!(cell["description"], "只在用户或任务文件点名 Kimi 时使用");
+    assert_eq!(
+        cell["choices"],
+        json!([{
+            "agent":"kimi", "source":"builtin", "argv":["kimi", "--auto"],
+            "command":"kimi --auto", "labels":[], "env":["KIMI_CODE_TRUST_WORKSPACE=1"]
+        }])
+    );
+    assert_eq!(
+        table["agents"]["kimi"],
+        json!({
+            "source":"builtin", "argv":["kimi", "--auto"], "labels":[],
+            "models":[], "efforts":[], "env":["KIMI_CODE_TRUST_WORKSPACE=1"]
+        })
+    );
+    for (name, other) in table["cells"].as_object().unwrap() {
+        if name != "kimi" {
+            assert!(!other["agents"].as_array().unwrap().contains(&json!("kimi")));
+        }
+    }
+    // Absent env must not add even an empty/null field to existing output.
+    assert_eq!(
+        table["agents"]["amp"],
+        json!({
+            "source":"builtin", "argv":["amp"], "labels":[], "models":[], "efforts":[]
+        })
+    );
+    assert_eq!(
+        table["cells"]["amp"]["choices"],
+        json!([{
+            "agent":"amp", "source":"builtin", "argv":["amp"], "command":"amp", "labels":[]
+        }])
+    );
+}
+
+#[test]
 fn default_cells_preserve_commands_labels_and_review_assignments() {
     let home = TempDir::new().unwrap();
     let table = run(&home, &["table"], 0);
-    assert_eq!(table["cells"].as_object().unwrap().len(), 12);
+    assert_eq!(table["cells"].as_object().unwrap().len(), 13);
     let cases = [
         (
             "middle-design",
@@ -181,6 +224,72 @@ fn default_cells_preserve_commands_labels_and_review_assignments() {
             _ => Value::Null,
         };
         assert_eq!(cell["rework"], rework);
+    }
+}
+
+#[test]
+fn agent_env_overrides_survive_cell_edits_and_resets() {
+    let home = TempDir::new().unwrap();
+    let data = "# keep launch environment\n[agents.kimi]\nenv = ['KIMI_CODE_TRUST_WORKSPACE=0', 'EMPTY=', 'VALUE=a=b']\n\n[agents.amp]\nenv = ['LOCAL=yes']\n\n[cells.kimi]\ndescription = '本机'\n";
+    local(&home, data);
+    let expected = json!(["KIMI_CODE_TRUST_WORKSPACE=0", "EMPTY=", "VALUE=a=b"]);
+    assert_eq!(run(&home, &["table"], 0)["agents"]["kimi"]["env"], expected);
+    let edited = run(&home, &["edit", "kimi", "--description", "改说明"], 0);
+    let reset = run(&home, &["reset", "kimi"], 0);
+    for table in [edited, reset] {
+        assert_eq!(table["agents"]["kimi"]["env"], expected);
+        assert_eq!(table["cells"]["kimi"]["choices"][0]["env"], expected);
+        assert_eq!(
+            table["cells"]["amp"]["choices"][0]["env"],
+            json!(["LOCAL=yes"])
+        );
+        assert_eq!(table["cells"]["kimi"]["choices"][0]["source"], "user");
+    }
+    assert_eq!(
+        run(&home, &["cell", "kimi"], 0)["cell"]["choices"][0]["env"],
+        expected
+    );
+    assert!(
+        fs::read_to_string(home.path().join(".ranch/dispatch.toml"))
+            .unwrap()
+            .starts_with(data.split("[cells.kimi]").next().unwrap().trim_end())
+    );
+    local(
+        &home,
+        "[agents.kimi]\nenv = []\n[cells.middle-other]\ncross_review = 'kimi'\n",
+    );
+    let cell = run(&home, &["cell", "middle-other"], 0);
+    assert_eq!(cell["cell"]["review"]["choices"][0]["env"], json!([]));
+}
+
+#[test]
+fn malformed_agent_env_is_invalid_data_in_reads_and_writes() {
+    let home = TempDir::new().unwrap();
+    for env in [
+        "'KEY=value'",
+        "[1]",
+        "{ KEY = 'value' }",
+        "['NO_EQUALS']",
+        "['=empty-key']",
+        "['']",
+        r#"["KEY=\u0000"]"#,
+    ] {
+        let data = format!("[agents.kimi]\nenv = {env}\n");
+        local(&home, &data);
+        for args in [
+            &["cell", "middle-other"][..],
+            &["table"][..],
+            &["edit", "kimi", "--description", "change"][..],
+            &["reset", "kimi"][..],
+        ] {
+            let error = run(&home, args, 1);
+            assert_eq!(error["error"], "invalid_data", "{env}: {error}");
+            assert!(error["message"].as_str().unwrap().contains("agents.kimi"));
+            assert_eq!(
+                fs::read_to_string(home.path().join(".ranch/dispatch.toml")).unwrap(),
+                data
+            );
+        }
     }
 }
 

@@ -33,6 +33,8 @@ struct Agent {
     efforts: Vec<String>,
     #[serde(default)]
     models: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    env: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -133,6 +135,13 @@ fn load(path: &std::path::Path, text: Option<&str>) -> Result<Value, String> {
         if agent.argv.is_empty() || agent.argv[0].trim().is_empty() {
             return Err(format!("agents.{name}.argv: needs a program"));
         }
+        for (i, value) in agent.env.iter().flatten().enumerate() {
+            if value.contains('\0') || value.split_once('=').is_none_or(|(key, _)| key.is_empty()) {
+                return Err(format!(
+                    "agents.{name}.env[{i}]: expected KEY=VALUE without NUL"
+                ));
+            }
+        }
         // Check templates even in families which no cell currently uses.
         for (field, values) in [("argv", &agent.argv), ("labels", &agent.labels)] {
             for (i, value) in values.iter().enumerate() {
@@ -214,10 +223,14 @@ fn load(path: &std::path::Path, text: Option<&str>) -> Result<Value, String> {
             };
             let argv = render(&agent.argv, "argv")?;
             let labels = render(&agent.labels, "labels")?;
-            choices.push(json!({
+            let mut choice = json!({
                 "agent": family, "source": source(&user_agents, family),
                 "command": shell_words::join(&argv), "argv": argv, "labels": labels,
-            }));
+            });
+            if let Some(env) = &agent.env {
+                choice["env"] = json!(env);
+            }
+            choices.push(choice);
         }
         let mut value = serde_json::to_value(cell).expect("cell JSON");
         value["name"] = json!(name);

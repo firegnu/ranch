@@ -2203,9 +2203,20 @@ fn human_active(status: &Status, at: f64) -> bool {
 }
 
 fn is_question(status: &Status) -> bool {
+    // Answer delivery, Esc verification and choice buttons follow Claude's UI only.
     status.kind.as_deref() == Some("claude")
         && status.last_tool.as_deref() == Some("AskUserQuestion")
         && status.questions.is_some()
+}
+
+fn displayed_questions(status: &Status) -> Option<&Questions> {
+    if matches!(status.kind.as_deref(), Some("claude" | "kimi"))
+        && status.last_tool.as_deref() == Some("AskUserQuestion")
+    {
+        status.questions.as_ref()
+    } else {
+        None
+    }
 }
 
 fn summary_title(status: &Status) -> Option<String> {
@@ -2235,7 +2246,7 @@ fn summary_title(status: &Status) -> Option<String> {
 }
 
 fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
-    let screen = if is_question(status) {
+    let screen = if displayed_questions(status).is_some() {
         None
     } else {
         corral.read(&status.name).ok()
@@ -2249,10 +2260,7 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
     } else {
         "要拒绝：在这个线程回『停』；要允许：回电脑处理。在这里回别的话，等它处理完再送。"
     };
-    if status.kind.as_deref() == Some("claude")
-        && status.last_tool.as_deref() == Some("AskUserQuestion")
-        && let Some(questions) = &status.questions
-    {
+    if let Some(questions) = displayed_questions(status) {
         let mut text = format!("⚠ {} 在问你（{} 道题）", status.name, questions.items.len());
         for (i, question) in questions.items.iter().enumerate() {
             text.push_str(&format!(
@@ -2275,6 +2283,9 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
         }
         if questions.truncated {
             text.push_str("\n题目不完整，请回电脑看");
+        }
+        if status.kind.as_deref() == Some("kimi") {
+            return format!("{text}\n请回电脑回答；这里的回复会等它处理完再送。");
         }
         return format!("{text}\n在这个线程写答案（例如『1 选 B；2 选 A、C』），会直接送过去。");
     }

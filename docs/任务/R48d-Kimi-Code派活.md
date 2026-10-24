@@ -64,3 +64,17 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、真跑了几轮、拿主意的地方、没做的事、对 paddock 的影响、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+已完成，在 `r48d` 分支提交，交主控审查。
+
+- 主控决定（10-24）：允许改 `crates/ranch/` 里和派活表有关的部分，包括 `tests/dispatch_table.rs` 的格子数量、新增的派活表验收测试，以及需要跟随修改的 `ranch dispatch` 命令输出代码；不动 deploy 等其他部分。
+- 主控决定（10-24）：允许最小修改 `crates/pony` 的题目展示和对应测试，让 Kimi 提醒显示题目并提示回电脑回答。展示判断与 Claude 专用回答、按钮、自动送答案和 Esc 核对流程分开；Kimi 线程回复不能作为答案按键，别家行为不变，pony 其他部分不动。
+- 做了什么：派活表增加可选 `env` 字符串数组和只点名使用的 `kimi` 格，启动为 `kimi --auto`、`KIMI_CODE_TRUST_WORKSPACE=1`，模型、强度、标签留空；无 `env` 的家不增加输出字段。两份技能及 corral 的使用说明已补 Kimi、逐项 `--env`、`--prompt` 和启动排查。Kimi 主轮提问交互输出 R43 格式的 `questions`；pony 显示题目和“回电脑回答”，保留 Claude 专用回答与按键判断，并不给 Kimi 提问框生成通用拒绝按钮。CONTRACT、DESIGN 已同步。
+- 验证了什么：先取得针对缺陷的 RED（未知 kimi 格、非法环境变量字符串被接受、Kimi 题目缺失、pony 只有通用提醒），再实现并转 GREEN。自动化覆盖本机环境变量新增/替换/清空、cell/table/review 输出、edit/reset 保留家模板、格式错误的 invalid_data；提问前无题目、答完/取消/运行中 Esc 清除、多题和截断与 R43 一致；合成 Kimi status 经 pony 原解析类型生成提醒，线程回复只排普通消息、不按键、不加答案前缀。`cargo test --all-targets` 全部通过（既有 ignored 测试保持原样）；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 最终通过。Clippy 简化布尔表达式后单独重跑派活表 14 条测试通过；pony 核心 150 条在全套中通过。所有命令前台跑完，编译目录为 `.target/r48d`。
+- 真跑了几轮：Kimi 2.3.1，使用已登录账号和用户默认模型，共 **2 轮短输入**，同时最多一个测试 agent。临时工作目录、独立 CORRAL_HOME；两次均带 `role=test`、`CAIRN_DISABLE=1`。第一轮按读表返回的命令和环境启动，修改 marker.txt 为 `R48D_OK` 并回复 DONE，未弹框、无人工确认，未出现权限/提问事件；第二轮普通模式调用 AskUserQuestion，status 和 wait 均为 blocked，带“R48D 选哪种颜色？”及两个选项。两个 agent 均已 stop，隔离命名空间 ls 为空。
+- 拿主意的地方：`env` 沿用 corral 的 `KEY=VALUE` 参数形式，原样传递、不展开模板，数组整项覆盖。题目从既有主 wire 的 question interaction 读取，避免把不能区分主/子的 PreToolUse 钩子直接当主问题；复用 R43 白名单和 16 KiB 截断。Kimi wire 缓存加版本以重放旧缓存，原事件及其他家 cursor 不变。两次范围调整按上述主控决定执行，没有其他待主控决定的事。
+- 没做的事：未做 Kimi 的 Slack 回答、按钮、自动送答案、Claude 式 Esc 核对或 sandbox；未做真实 Slack 发消息测试，展示用合成 status 验证。未部署、打包、安装技能、切 helper、改用户模型/钩子配置/本机派活表，未操作用户已有 agent，未合并或推送。
+- 对 paddock 的影响：兼容新增可选 `env`、`kimi` 格，以及 Kimi 提供 `status.questions`；现有调用无需修改，设置页可另接环境变量展示，题目可沿用 R43 格式。含 `env` 的本机覆盖表需用新版 ranch 读写；看到 `questions` 不代表能用 Claude 的回答按键。
+- 踩过的坑：原派活测试写死 12 格，pony 展示写死 claude，分别向主控取得上述范围决定。新增 reset 保留检查起初把格子前的分隔空行算进家模板，toml_edit 删除格子时会一起删该空行；检查改为核对家模板段的原文，未改旧测试断言。Clippy 首跑要求简化新增的布尔表达式，修正并格式化后复验通过。
