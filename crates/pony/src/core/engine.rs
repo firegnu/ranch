@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod approvals;
 mod buttons;
+mod kimi;
 mod questions;
 use buttons::ButtonOffer;
 
@@ -607,6 +608,17 @@ impl Engine {
             }
             Err(e) => return Err(corral_error(e)),
         };
+        if let Some(q) = known.as_ref().and_then(|t| t.question.as_ref())
+            && q.questions.as_ref().is_some_and(|qs| qs.background)
+            && (!q.handled
+                || self
+                    .state
+                    .background_answers
+                    .iter()
+                    .any(|a| a.address == address))
+        {
+            return self.queue_background(&address, &m, &status, button, offline, at);
+        }
         if let Some(i) = button {
             let b = &self.state.buttons[i];
             let reason = self
@@ -648,7 +660,7 @@ impl Engine {
                 Some("暂停中，没按 Esc")
             } else if status.state != "blocked" {
                 Some("提问框已经不在了，没按 Esc")
-            } else if status.kind.as_deref() != Some("claude")
+            } else if !is_question(&status)
                 || status.last_tool.as_deref() != Some("AskUserQuestion")
                 || q.state_started.is_none()
                 || q.state_started != status.state_started
@@ -656,6 +668,14 @@ impl Engine {
                 Some("提问框已换或无法核对，没按 Esc")
             } else if human_active(&status, at) {
                 Some("你刚在电脑上操作过，没按 Esc")
+            } else if status.kind.as_deref() == Some("kimi")
+                && (status.questions != q.questions
+                    || !status.kimi_dialog()
+                    || status
+                        .last_human_input
+                        .is_some_and(|t| t > q.state_started.unwrap_or(0.)))
+            {
+                Some("提问框或人工输入已变，没按；请回电脑处理")
             } else if self.state.interrupts.iter().any(|i| i.agent == name) {
                 Some("已经按过 Esc，正在等它停下，没再按")
             } else {
@@ -877,6 +897,18 @@ impl Engine {
             Some("启动中，没按 Esc")
         } else if !matches!(status.state.as_str(), "working" | "blocked") {
             Some("读不出 agent 当前是否在干活，没按 Esc")
+        } else if status.kind.as_deref() == Some("kimi")
+            && (status.interaction.is_none()
+                || (status.state == "blocked" && !status.kimi_dialog()))
+        {
+            Some("无法核对 Kimi 的框，没按；请回电脑处理")
+        } else if status.kind.as_deref() == Some("kimi")
+            && status.state == "blocked"
+            && status
+                .last_human_input
+                .is_some_and(|t| t > status.state_started.unwrap_or(0.))
+        {
+            Some("已在电脑上处理，没按 Esc")
         } else if status.turn_started.is_some_and(|t| t > sent) {
             Some("它已经开了新的一轮，没按 Esc")
         } else if human_active(status, at) {
@@ -906,6 +938,7 @@ impl Engine {
             }
         }
         self.state.interrupts.push(Interrupt {
+            require_interrupted: status.kind.as_deref() == Some("kimi"),
             address: address.clone(),
             agent: status.name.clone(),
             instance: status.instance.clone(),
@@ -934,7 +967,10 @@ impl Engine {
         }
         // Persist before keys: a crash can lose a key, but must never repeat it.
         self.save()?;
-        let result = corral.escape(&status.name, status.kind.as_deref() == Some("amp"));
+        let result = corral.escape(
+            &status.name,
+            status.kind.as_deref() == Some("amp") || status.kimi_dialog(),
+        );
         for (i, previous) in buttons {
             let outcome = if result.is_ok() {
                 "已在线程里按了 Esc"
@@ -974,7 +1010,11 @@ impl Engine {
                 Ok(s) if s.turn_started != action.turn => {
                     Some("它已经开了新的一轮，没继续按，也没确认原来那轮停下")
                 }
-                Ok(s) if !s.paused && s.state == "idle" && (s.interrupted || action.blocked) => {
+                Ok(s)
+                    if !s.paused
+                        && s.state == "idle"
+                        && (s.interrupted || (action.blocked && !action.require_interrupted)) =>
+                {
                     stopped = true;
                     Some(if action.question_answer {
                         "提问框已关，回答这就送过去"
@@ -1339,8 +1379,10 @@ impl Engine {
         self.state
             .buttons
             .retain(|b| at - b.created <= 30. * 86400.);
-        for button in &mut self.state.buttons {
-            if button.updated
+        for i in 0..self.state.buttons.len() {
+            let confirming = self.confirming_kimi(&self.state.buttons[i]);
+            let button = &mut self.state.buttons[i];
+            if (button.updated && !confirming)
                 || button
                     .update_retry
                     .as_ref()
@@ -1516,6 +1558,7 @@ impl Engine {
         self.refresh_buttons(corral, at)?;
         self.poll_interrupts(corral, at)?;
         self.poll_approvals(corral, at)?;
+        self.poll_background(corral, at)?;
         for i in 0..self.state.pending.len() {
             let pending = self.state.pending[i].clone();
             if self.connected.contains(&pending.address.kind)
@@ -1780,6 +1823,22 @@ impl Engine {
                 self.cancel(&p.agent, Some(&status.instance))?;
                 continue;
             }
+            if p.question_answer && status.kind.as_deref() == Some("kimi") {
+                if status.turn_started != p.baseline {
+                    self.state.pending.remove(i);
+                    self.save()?;
+                    self.say(
+                        &p.address,
+                        "它已经开了新的一轮，原提问的答案没送；请确认后重发",
+                        false,
+                    )?;
+                    continue;
+                }
+                if !status.interrupted {
+                    i += 1;
+                    continue;
+                }
+            }
             if status.paused || !matches!(status.state.as_str(), "idle" | "unknown") {
                 i += 1;
                 continue;
@@ -1951,7 +2010,7 @@ impl Engine {
             }
             let mut text = text.to_owned();
             if status.state == "blocked"
-                && status.kind.as_deref() == Some("claude")
+                && matches!(status.kind.as_deref(), Some("claude" | "kimi"))
                 && !is_question(status)
             {
                 if let Some(offer) = &mut offer {
@@ -2203,8 +2262,7 @@ fn human_active(status: &Status, at: f64) -> bool {
 }
 
 fn is_question(status: &Status) -> bool {
-    // Answer delivery, Esc verification and choice buttons follow Claude's UI only.
-    status.kind.as_deref() == Some("claude")
+    (status.kind.as_deref() == Some("claude") || status.kimi_dialog())
         && status.last_tool.as_deref() == Some("AskUserQuestion")
         && status.questions.is_some()
 }
@@ -2246,7 +2304,9 @@ fn summary_title(status: &Status) -> Option<String> {
 }
 
 fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
-    let screen = if displayed_questions(status).is_some() {
+    let screen = if displayed_questions(status).is_some()
+        || (status.kind.as_deref() == Some("kimi") && status.interaction.is_some())
+    {
         None
     } else {
         corral.read(&status.name).ok()
@@ -2262,6 +2322,13 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
     };
     if let Some(questions) = displayed_questions(status) {
         let mut text = format!("⚠ {} 在问你（{} 道题）", status.name, questions.items.len());
+        if questions.background {
+            text = format!(
+                "⚠ {} 在问你（后台提问，{} 道题）：它没停下来等你，答案会填进它的提问框",
+                status.name,
+                questions.items.len()
+            );
+        }
         for (i, question) in questions.items.iter().enumerate() {
             text.push_str(&format!(
                 "\n{}. {}（{}）：{}",
@@ -2284,10 +2351,35 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
         if questions.truncated {
             text.push_str("\n题目不完整，请回电脑看");
         }
-        if status.kind.as_deref() == Some("kimi") {
+        if status.kind.as_deref() == Some("kimi") && !status.kimi_dialog() {
             return format!("{text}\n请回电脑回答；这里的回复会等它处理完再送。");
         }
+        if questions.background {
+            return format!(
+                "{text}\n在这个线程写答案也行，会填进第 1 题的 Other；它还在干活时先排着，空下来再答。要停止这一轮，回『停』。"
+            );
+        }
         return format!("{text}\n在这个线程写答案（例如『1 选 B；2 选 A、C』），会直接送过去。");
+    }
+    if status.kind.as_deref() == Some("kimi")
+        && let Some(action) = &status.action
+    {
+        let detail = if status.last_tool.as_deref() == Some("Bash") {
+            status.command.as_ref().unwrap_or(action)
+        } else {
+            action
+        };
+        return format!(
+            "⚠ {} 要批准：{}（{}）{}\n这种框只有安全、完整的 Bash 命令能在这里允许；要允许：回电脑处理。要拒绝：点「拒绝」或回「停」。",
+            status.name,
+            detail.text,
+            status.last_tool.as_deref().unwrap_or(""),
+            if detail.truncated {
+                "（内容不完整）"
+            } else {
+                ""
+            }
+        );
     }
     let heading = format!(
         "⚠ {} 在等你（权限框或提问）{}{}。",

@@ -26,6 +26,9 @@ pub struct Status {
     pub kind: Option<String>,
     pub questions: Option<Questions>,
     pub command: Option<PermissionCommand>,
+    pub action: Option<PermissionCommand>,
+    pub interaction: Option<Interaction>,
+    pub resolved: Option<serde_json::Value>,
     pub paused_at: Option<f64>,
     pub last_human_input: Option<f64>,
     pub last_output: Option<f64>,
@@ -45,6 +48,31 @@ pub struct PermissionCommand {
 pub struct Questions {
     pub items: Vec<Question>,
     pub truncated: bool,
+    #[serde(default)]
+    pub background: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Interaction {
+    pub kind: Option<String>,
+    pub count: usize,
+    pub running: bool,
+}
+
+impl Status {
+    pub fn kimi_dialog(&self) -> bool {
+        self.kind.as_deref() == Some("kimi")
+            && self.state == "blocked"
+            && self
+                .interaction
+                .as_ref()
+                .is_some_and(|i| i.count == 1 && i.kind.is_some())
+    }
+
+    pub fn background_question(&self) -> bool {
+        self.kind.as_deref() == Some("kimi")
+            && self.questions.as_ref().is_some_and(|q| q.background)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -95,6 +123,14 @@ impl Failure {
 
 pub type Result<T> = std::result::Result<T, Failure>;
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum QuestionKey {
+    Choose(u8),
+    Tab,
+    Enter,
+    Text(String),
+}
+
 pub trait Corral {
     fn list(&mut self) -> Result<Vec<Agent>>;
     fn status(&mut self, name: &str) -> Result<Status>;
@@ -103,6 +139,7 @@ pub trait Corral {
     fn send(&mut self, name: &str, text: &str) -> Result<Sent>;
     fn escape(&mut self, name: &str, twice: bool) -> Result<()>;
     fn approve(&mut self, name: &str, option: u8) -> Result<()>;
+    fn answer_question(&mut self, name: &str, keys: &[QuestionKey]) -> Result<()>;
 }
 
 pub struct Process {
@@ -217,6 +254,27 @@ impl Corral for Process {
             return Err(Failure::protocol());
         }
         self.call::<serde_json::Value>(&["keys", name, &format!("text:{option}")])
+            .map(|_| ())
+    }
+    fn answer_question(&mut self, name: &str, keys: &[QuestionKey]) -> Result<()> {
+        let mut args = vec!["keys".to_owned(), name.to_owned()];
+        for key in keys {
+            args.push(match key {
+                QuestionKey::Choose(n) if (1..=5).contains(n) => format!("text:{n}"),
+                QuestionKey::Tab => "tab".into(),
+                QuestionKey::Enter => "enter".into(),
+                QuestionKey::Text(text)
+                    if !text.is_empty() && !text.chars().any(char::is_control) =>
+                {
+                    format!("text:{text}")
+                }
+                _ => return Err(Failure::protocol()),
+            });
+        }
+        if keys.is_empty() {
+            return Err(Failure::protocol());
+        }
+        self.call::<serde_json::Value>(&args.iter().map(String::as_str).collect::<Vec<_>>())
             .map(|_| ())
     }
 }

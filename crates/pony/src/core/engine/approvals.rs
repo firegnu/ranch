@@ -19,6 +19,16 @@ impl Engine {
                 Ok(s) if s.instance != check.status.instance => {
                     Some("它重开过，没确认原框的反应，没再按；请回电脑看看")
                 }
+                Ok(s) if check.status.kind.as_deref() == Some("kimi") => {
+                    match kimi::resolution(&check.status, &s, "approval")
+                        .and_then(|r| r["decision"].as_str())
+                    {
+                        Some("approved") => Some("已按：允许这一次"),
+                        Some("rejected") => Some("框的实际结果是拒绝，没再按；请回电脑看"),
+                        _ if at - check.started < 10. => None,
+                        _ => Some("10 秒内没确认批准结果，没重按；请回电脑看"),
+                    }
+                }
                 Ok(s)
                     if at - check.started <= 10.
                         && s.last_output.is_some()
@@ -43,6 +53,12 @@ impl Engine {
                 continue;
             };
             self.state.approvals.remove(i);
+            if check.status.kind.as_deref() == Some("kimi") {
+                self.finish_kimi_controls(
+                    &check.status,
+                    &format!("{result}（{}）", clock_time(at)),
+                );
+            }
             self.save()?;
             self.say(
                 &check.address,
@@ -92,9 +108,13 @@ impl Engine {
         {
             return self.finish_button(i, &format!("{reason}，没按"), false, at);
         }
-        let screen = match corral.read(&status.name) {
-            Ok(s) => s,
-            Err(_) => return self.finish_button(i, "读不出屏幕，没按", false, at),
+        let screen = if status.kind.as_deref() == Some("kimi") {
+            String::new()
+        } else {
+            match corral.read(&status.name) {
+                Ok(s) => s,
+                Err(_) => return self.finish_button(i, "读不出屏幕，没按", false, at),
+            }
         };
         // Recheck after read as well: a human or the process may have moved on while reading.
         status = match corral.status(&status.name) {
@@ -104,10 +124,14 @@ impl Engine {
         if let Some(reason) = stale(&content.status, &status) {
             return self.finish_button(i, &format!("{reason}，没按"), false, at);
         }
-        if content.screen.as_ref() != Some(&screen)
-            || !recognize(&status, &screen)
-                .is_some_and(|p| p.option == approval.option && p.label == approval.button.label)
-        {
+        if if status.kind.as_deref() == Some("kimi") {
+            kimi_prompt(&status).is_none() || approval.option != 1
+        } else {
+            content.screen.as_ref() != Some(&screen)
+                || !recognize(&status, &screen).is_some_and(|p| {
+                    p.option == approval.option && p.label == approval.button.label
+                })
+        } {
             return self.finish_button(
                 i,
                 "画面和发提醒时不一样或认不出框，没按；请回电脑处理",
@@ -149,6 +173,8 @@ impl Engine {
         let text = if let Err(error) = result {
             self.log.push(format!("corral {}", safe_code(&error.code)));
             "批准按键发送失败或结果不明，没重按；请回电脑看看".into()
+        } else if status.kind.as_deref() == Some("kimi") {
+            "批准按键已发送，正在确认结果；没重按".into()
         } else {
             format!("已按：{}（{}）", approval.button.label, clock_time(at))
         };
@@ -164,7 +190,8 @@ pub(super) fn stale(old: &Status, status: &Status) -> Option<&'static str> {
         Some("它重开过")
     } else if status.paused {
         Some("暂停中")
-    } else if status.kind.as_deref() != Some("claude") || old.kind != status.kind {
+    } else if !matches!(status.kind.as_deref(), Some("claude" | "kimi")) || old.kind != status.kind
+    {
         Some("这家的框不能批准")
     } else if status.state != "blocked" {
         Some("框已经不在了")
@@ -184,7 +211,13 @@ pub(super) fn stale(old: &Status, status: &Status) -> Option<&'static str> {
             .is_some_and(|t| t > old.state_started.unwrap_or(0.))
     {
         Some("你刚在电脑上操作过")
-    } else if old.last_output.is_none() || status.last_output != old.last_output {
+    } else if status.kind.as_deref() == Some("kimi")
+        && (!status.kimi_dialog() || kimi_prompt(status).is_none())
+    {
+        Some("框已变、有别的框或命令不适合远程批准")
+    } else if status.kind.as_deref() != Some("kimi")
+        && (old.last_output.is_none() || status.last_output != old.last_output)
+    {
         Some("它又有输出，画面可能变了")
     } else {
         None
@@ -192,11 +225,11 @@ pub(super) fn stale(old: &Status, status: &Status) -> Option<&'static str> {
 }
 
 pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<ApprovalButton>> {
-    if status.kind.as_deref() != Some("claude")
+    if !matches!(status.kind.as_deref(), Some("claude" | "kimi"))
         || status.state != "blocked"
         || status.paused
         || status.state_started.is_none()
-        || status.last_output.is_none()
+        || (status.kind.as_deref() != Some("kimi") && status.last_output.is_none())
         || status.name.chars().count() + "允许  这一次？".chars().count() > 100
         || status
             .last_human_input
@@ -204,7 +237,11 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
     {
         return Ok(None);
     }
-    let Some(prompt) = screen.and_then(|s| recognize(status, s)) else {
+    let Some(prompt) = (if status.kind.as_deref() == Some("kimi") {
+        kimi_prompt(status)
+    } else {
+        screen.and_then(|s| recognize(status, s))
+    }) else {
         return Ok(None);
     };
     let length = prompt.command.chars().count();
@@ -242,6 +279,58 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
 
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn kimi_prompt(status: &Status) -> Option<Prompt> {
+    if !status.kimi_dialog()
+        || status.interaction.as_ref()?.kind.as_deref() != Some("approval")
+        || status.last_tool.as_deref() != Some("Bash")
+    {
+        return None;
+    }
+    let command = status.command.as_ref()?;
+    if command.truncated
+        || command.text.trim().is_empty()
+        || command.text.chars().count() > 1000
+        || !readable_command(&command.text)
+        || dangerous_kimi_command(&command.text)
+    {
+        return None;
+    }
+    Some(Prompt {
+        option: 1,
+        command: command.text.clone(),
+        label: "允许这一次",
+    })
+}
+
+// Conservative equivalents of Kimi 2.3.1's approval-panel danger labels. Quoted
+// mentions may also be refused; this is a display gate, not a shell security policy.
+fn dangerous_kimi_command(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let words: Vec<_> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .collect();
+    let word = |w: &str| words.contains(&w);
+    (word("rm")
+        && (lower.contains("--recursive")
+            || lower.contains("--force")
+            || lower
+                .split_whitespace()
+                .any(|s| s.starts_with('-') && (s.contains('r') || s.contains('f')))))
+        || word("sudo")
+        || word("mkfs")
+        || (word("dd") && lower.contains("of="))
+        || (word("chmod") && word("777"))
+        || ((word("curl") || word("wget"))
+            && lower.contains('|')
+            && (word("sh") || word("bash") || word("zsh")))
+        || lower.split('>').skip(1).any(|tail| {
+            ["/dev/sd", "/dev/nvme", "/dev/disk", "/dev/hd"]
+                .iter()
+                .any(|p| tail.trim_start().starts_with(p))
+        })
+        || compact(&lower).contains(":(){:|:&}")
 }
 
 fn readable_command(text: &str) -> bool {

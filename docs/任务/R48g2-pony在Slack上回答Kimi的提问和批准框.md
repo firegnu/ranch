@@ -75,3 +75,37 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么（真 Kimi 用了几轮、每条怎么看出来的）、拿主意的地方、没做的事、对 paddock 的影响、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-24，ranch/dev-r48g2 实现并自查。
+
+做了什么：corral 只改 Kimi 适配器与 status 合并，主 wire 按交互 id 保存跨轮后台题目，提供 command、action、resolved 和后台标记，回退选择器报 blocked，wire cursor 升到 2。pony 前台文字／选项走两次 Esc、确认 interrupted idle、带原前缀送答案；后台文字／单选／多选等主轮空闲后在框内填写，以 resolved 核对。Bash 只给单次允许，非 Bash、危险／截断／不可读命令不给允许；拒绝和停按框上两次、working 一次、idle 不按。按前核对、过期撤控件、连点、重启不重按和超时如实报告均覆盖。CONTRACT、DESIGN、pony README 已同步。
+
+验证：针对的合成 wire 和假 corral／内存聊天测试先看到目标行为失败，再实现到通过；包含后台题目跨工具／结束／新轮保留、游标重建、两类框互相排队、命令和结果截断、旧 corral 降级、危险命令、前台确认超时、后台实际答案不符／超时、人工操作、实例和框变化、重复操作与重启。用改动前保存的 corral 二进制跑了显式兼容测试：新旧读取方交替三次，新版每次都重建后台题目，解决后两者清框。所有合成测试使用隔离目录，不依赖真实 agent。
+
+真 Kimi 2.3.1 共 **9 轮用户短输入**（后台答案引起的自动通知轮不另算），普通模式、无指定模型，用本分支二进制、独立 CORRAL_HOME、临时 git cwd，测试 agent 为 `ranch/test-r48g2-ui`、`role=test`。按键按 pony 会发的序列直接调用 corral，不连接 Slack：
+
+| 轮次 | 做法 | 看到的证据 |
+|---|---|---|
+| 1–2 | 前台颜色单选，先两次 Esc，再送带相同前缀的 `B` | 框有完整 questions 和单框信息；两次 Esc 后 idle、interrupted:true、answers:null；下一轮答「蓝」 |
+| 3–4 | 前台三题，含单选和多选；两次 Esc 后送米饭／青菜、鸡腿／茶 | 三题及 multi_select 正确；打断确认后新轮完整复述三个答案 |
+| 5 | 后台三题，等模型结束后按 `2 1 3 tab 2 1` | tool result 和主轮结束后同一 state_started、questions 仍在，running 从 true 到 false；resolved 分别为米饭、`青菜, 鸡腿`、茶，未截断，自动通知轮也复述一致 |
+| 6 | 后台单题同时继续输出平方数，空闲后按 `3`、文字、Enter、`1` | 干活时背景题保持 blocked 且 running:true；空闲后变 false；Other 的 resolved 精确为「梨 R48G2」 |
+| 7 | 临时目录 Bash `printf R48G2_ALLOWED > allow.txt && cat allow.txt`，只按 `1` | command 保留原始空格；最终 resolved.decision:approved，文件及回复均为 R48G2_ALLOWED |
+| 8 | 临时目录写 deny.txt 的 Bash 框，两次 Esc | idle、interrupted:true、resolved.decision:rejected，deny.txt 不存在 |
+| 9 | 前台提问框上模拟「停」，两次 Esc | idle、interrupted:true、对应 resolved.answers:null |
+
+测试 agent 已 stop，隔离命名空间的 ls 为空；前后 config.toml、tui.toml 的 SHA-256 相同。未读取或复制凭证、token、device_id、server.token。实测原始状态和日志只留临时目录，不进仓库。
+
+最终检查各一次通过：`cargo test --all-targets --no-fail-fast`（488 passed、17 ignored；兼容测试已按上文单独显式运行）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check`；`git diff --check` 通过。编译目录全程为 `.target/r48g2`，命令均前台完成。
+
+拿主意的地方：为落实报告要求的「主轮已空闲、最前面是这道框、没有别的框」，兼容新增 `interaction:{kind,count,running}`；单靠 blocked 和 questions 无法区分。缺字段不猜，多框不远程按键。同类框显示最近一次，但计数保留所有未解决框。危险命令采用 Kimi 已知危险模式的保守文本识别，不引入 shell 分析库；引用危险字样也可能降级。前台答案即使确认超时仍须原轮 interrupted，另开新轮就撤掉旧答案并提示重发。这些实现细节已写入 DESIGN 和 CONTRACT，没有改用户的五项决定。
+
+没做的事：未碰真实 Slack、`~/.pony`、pony 服务、已安装程序、钩子、共用 helper、依赖、fence、dispatch 或其他仓库；未打包、部署、合并 main、推送。真实 Slack 验收留给主控部署后与用户一起做。
+
+对 paddock 的影响：公开约定只有兼容新增字段，原命令、状态值与退出码不变，现有调用不用改；若显示后台题目／交互结果，由 paddock 自己的任务接。新旧 corral 可交替读取，旧版仍有原来的后台题目遗漏；新版 pony 配旧 corral 会降级，不按键。
+
+踩过的坑：原按钮清理会在第一次更新后丢掉内容，使后台／允许结果无法更新原消息，现改为确认结束后再清；给满 16 KiB 的后台题目加标记曾丢整题，改为从末尾收回空间、保留文本前缀；通用答案队列在 15 秒后仅凭 idle 会送出 Kimi 答案，已加原轮 interrupted 门槛。真机批准按 `1` 后立即读状态仍可能是 blocked、无 resolved，随后轮询才看到 approved，因此不能把按键返回成功当批准结果。均已验证修复／正确等待。
+
+需要主控决定的事：没有；等待主控审查和后续部署。

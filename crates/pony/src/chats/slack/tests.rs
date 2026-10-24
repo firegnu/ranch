@@ -829,6 +829,9 @@ fn only_other_human_messages_in_bound_channels_are_logged_as_ignored() {
 
     struct NoCorral;
     impl corral::Corral for NoCorral {
+        fn answer_question(&mut self, _: &str, _: &[corral::QuestionKey]) -> corral::Result<()> {
+            panic!("no corral calls expected")
+        }
         fn list(&mut self) -> corral::Result<Vec<corral::Agent>> {
             panic!("ignored events must not call corral")
         }

@@ -200,6 +200,11 @@ pub(crate) fn status(name: &str) -> Result<Status> {
         ] {
             public[a] = snap[b].clone();
         }
+        if kind == "kimi"
+            && let Some(fields) = snap["kimi_status"].as_object()
+        {
+            public.as_object_mut().unwrap().extend(fields.clone());
+        }
         if let Some(input) = snap["inputs"].as_array().and_then(|a| a.last()) {
             public["last_input_at"] = input["t"].clone();
             let t = input["t"].as_f64().unwrap_or(0.0);

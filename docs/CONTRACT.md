@@ -130,9 +130,26 @@ ranch dispatch reset <名字> [--if-version <版本>]
 - 事件仍为 v1，新增可选 `questions`；旧 reader 忽略它，新 reader 接受无此字段的旧事件。cursor 从 8 升到 9，新旧 reader 交替时各自重放原事件。题目采集需要命名空间的 `.runtime/helper` 使用 R43 程序；打断需要查询方使用 R43 且钩子至少能记 R24 的 transcript_path。共用 helper 的切换规矩仍见上节，单切 CLI 链接不能更新钩子。
 - 对 paddock：兼容新增，现有调用无需修改，可以暂不显示题目；Esc 后从误报 blocked 变成 idle，paddock 不用动。pony 如何显示或回答题目由后续任务处理。
 
-R48d：Kimi Code 也提供同样的 `questions`。从本主会话 wire 中属于当前主轮的 `interaction.request(kind=question).request.questions` 取题目，复用以上字段白名单、缺省值、顺序和 16 KiB 截断。仅工具调用或子 agent 的事件不提供题目；`interaction.resolved`（回答或取消）、后续工具活动、整轮结束/打断、新输入会清除。框上 Esc 解除提问后仍为 working，运行中 Esc 使主轮 cancelled 后沿用 interrupted idle。Kimi 的 wire 缓存新增版本 1，旧缓存重读原 wire；全局事件格式和其他家的 cursor 不变，钩子内容不变，读取方需使用 R48d corral。
+R48d 给 Kimi 增加题目展示；R48g2 扩为下面的主会话交互状态。Claude Code 的采集、字段清理和按键规则不变。
 
-pony 在 Kimi 提问提醒中显示题目、选项及截断提示，并提示回电脑回答。展示判断与 Claude 的回答判断分开：Kimi 不提供提问/拒绝按钮，线程回复仍排为普通消息，处理完再送，不自动按 Esc、不走 Claude 的答案或 Esc 核对流程；Slack 回答和按钮留到阶段 4。对 paddock：`status.questions` 兼容新增一家会提供，现有调用无需修改；显示题目可沿用同一格式，不据此推断支持 Claude 的按键回答。
+### Kimi 提问、批准与处理结果（R48g2）
+
+`status`／`wait` 从本主会话 wire 读取，兼容新增以下只读字段，不读子 agent，不改钩子：
+
+- `questions` 沿用上面的结构、字段白名单和 16 KiB 上限。后台提问另有 `background:true`（未提供等同 false），由同一 `toolCallId` 的 AskUserQuestion 参数确认。未解决的框按交互 id 跨轮保留，后续工具结果、主轮结束、新输入均不清除；对应的 `interaction.resolved` 才清除。`state_started` 是当前最前面框的请求时间（Unix 秒，毫秒精度）。
+- `command:{text,truncated}` 仅给 Bash 批准框且 `display.kind:"command"`，保留 `display.command` 原文；`action:{text,truncated}` 给批准框的说明。两者分别最多 16 KiB 紧凑 JSON，保留完整 Unicode 字符前缀；缺少原始字符串为 null。`action` 仅用于展示，不能代替 `command` 批准。
+- `interaction:{kind,count,running}`：`kind` 为最前面框的 `question`／`approval`，`count` 为所有未解决框数；不同类按出现顺序排队，同类显示最近一次，但仍计入全部框。`running` 表示主轮仍在运行，后台框即使 `state:"blocked"` 也可能为 true。主 wire 已读到且无框时为 `{kind:null,count:0,running:…}`；wire 不可读时为 null，不能据此推断空闲。新输入已到但 wire 尚无对应 prompt 时保守为 running。
+- 有框时 `state:"blocked"`、`last_tool`、`state_started`、`questions`／`command`／`action` 对应最前面框；不相关字段为 null。多框时调用方不得远程按数字。回退选择器（`Select messages to undo` 与 `Esc cancel`）也报 blocked，防止 `send` 的 Enter 选中回退点，但不提供可远程处理的 interaction。
+- `resolved` 为最近一次框的结果，带 `kind`、原框的 `state_started`、结果时间 `at`。提问给 `answers`（题目到答案字符串的映射，关框为 null）及 `truncated`；批准给 `decision:"approved"|"rejected"|null`。提问结果的整个紧凑 JSON 最多 16 KiB，截断结果不能用于确认。新用户输入或新框清除旧结果；后台答案引发的 task 通知轮保留它。
+
+```json
+{"resolved":{"kind":"question","state_started":1000.002,"at":1005.001,"answers":{"选哪个？":"甲"},"truncated":false}}
+{"resolved":{"kind":"approval","state_started":1006.002,"at":1007.001,"decision":"approved"}}
+```
+
+pony 的 Kimi 前台答案走两次 Esc、确认原轮 idle 且 interrupted、加 Claude Code 相同前缀送文字；后台答案等 `interaction.running:false` 后在框内按键，并核对对应 `resolved.answers`；允许只给完整、可读、非危险的 Bash 命令，只按 `1`，只以 `resolved.decision:"approved"` 确认。非 Bash 只给拒绝。框上拒绝／停两次 Esc，working 一次，idle 不按。核对实例、等待时间、工具、题目／原始命令、人工输入和只有一个框，不比较屏幕或 last_output。旧 corral 缺新字段时提示回电脑处理，不按键。
+
+Kimi 内部 wire cursor 从 1 升到 2，新旧 reader 交替各自重放原 wire；旧版仍有原来的后台题目遗漏，新版可重建完整交互，事件格式和其他家的 cursor 不变。查询方须使用 R48g2，无需换共用 helper 或重开 Kimi。先让 pony 调用新版 corral 再部署新版 pony；新状态字段可由旧调用方忽略。对 paddock：公开约定只有兼容新增，现有调用不用改；如显示后台状态或交互结果，在 paddock 自己的任务里接。
 
 ## Claude Code Bash 权限框的原始命令（R47c 追加）
 

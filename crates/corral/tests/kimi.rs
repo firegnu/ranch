@@ -37,7 +37,10 @@ impl Lab {
         self.root.path().join(name)
     }
     fn out(&self, args: &[&str]) -> Output {
-        Command::new(self.path("corral"))
+        self.out_with(&self.path("corral"), args)
+    }
+    fn out_with(&self, binary: &std::path::Path, args: &[&str]) -> Output {
+        Command::new(binary)
             .args(args)
             .env("HOME", self.root.path())
             .env("CORRAL_HOME", self.path("pens"))
@@ -91,6 +94,263 @@ fn eventually(mut check: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "condition not reached");
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+fn background_question_survives_tools_turns_and_cursor_replay() {
+    let lab = Lab::new("exec /bin/cat", None);
+    let wire = lab.path("wire.jsonl");
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":wire,"source":"startup"}),
+    );
+    lab.event("UserPromptSubmit", json!({"prompt":"ask","t":1000.0}));
+    let append = |v: Value| {
+        writeln!(
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&wire)
+                .unwrap(),
+            "{v}"
+        )
+        .unwrap();
+    };
+    append(json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001}));
+    append(
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000002,
+        "event":{"type":"tool.call","name":"AskUserQuestion","turnId":"1","toolCallId":"call-q","args":{"background":true}}}),
+    );
+    append(
+        json!({"type":"interaction.request","agentId":"main","id":"q","kind":"question","time":1000003,
+        "request":{"turnId":1,"toolCallId":"call-q","questions":[{"header":"水果","question":"吃什么？","options":[{"label":"苹果"},{"label":"梨"}]}]}}),
+    );
+    append(
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000004,
+        "event":{"type":"tool.result","toolCallId":"call-q","result":{"output":"task_id: question-test\nstatus: running"}}}),
+    );
+    let st = lab.status();
+    assert_eq!(st["state"], "blocked");
+    assert_eq!(st["questions"]["background"], true);
+    assert_eq!(
+        st["interaction"],
+        json!({"kind":"question","count":1,"running":true})
+    );
+    assert_eq!(st["state_started"], 1000.003);
+    append(
+        json!({"type":"turn.ended","agentId":"main","turnId":1,"time":1000005,"reason":"completed"}),
+    );
+    assert_eq!(lab.status()["interaction"]["running"], false);
+    lab.event("UserPromptSubmit", json!({"prompt":"next","t":1001.0}));
+    append(json!({"type":"turn.prompt","agentId":"main","turnId":2,"time":1001001}));
+    let st = lab.status();
+    assert_eq!(st["questions"]["items"][0]["question"], "吃什么？");
+    assert_eq!(st["state_started"], 1000.003);
+    assert_eq!(st["interaction"]["running"], true);
+    // A v1 reader can consume the wire and drop fields; the next v2 read must replay.
+    let cursor = lab.path("pens/test/kimi/cursor");
+    let mut old: Value = serde_json::from_slice(&fs::read(&cursor).unwrap()).unwrap();
+    old["kimi_wire"]["version"] = json!(1);
+    old["kimi_wire"]
+        .as_object_mut()
+        .unwrap()
+        .remove("interactions");
+    fs::write(&cursor, serde_json::to_vec(&old).unwrap()).unwrap();
+    assert_eq!(lab.status()["questions"], st["questions"]);
+    append(
+        json!({"type":"interaction.resolved","agentId":"main","id":"q","time":1001002,
+        "response":{"answers":{"吃什么？":"梨"},"method":"enter"}}),
+    );
+    let st = lab.status();
+    assert_eq!(st["state"], "working");
+    assert!(st["questions"].is_null());
+    assert_eq!(
+        st["resolved"],
+        json!({"kind":"question","state_started":1000.003,"at":1001.002,
+        "answers":{"吃什么？":"梨"},"truncated":false})
+    );
+}
+
+#[test]
+fn approval_commands_actions_results_and_modal_order_are_structured() {
+    let lab = Lab::new("exec /bin/cat", None);
+    let wire = lab.path("wire.jsonl");
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":wire,"source":"startup"}),
+    );
+    lab.event("UserPromptSubmit", json!({"prompt":"run","t":1000.0}));
+    let append = |v: Value| {
+        writeln!(
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&wire)
+                .unwrap(),
+            "{v}"
+        )
+        .unwrap();
+    };
+    append(json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001}));
+    let command = "printf  '原样\\n' > out.txt";
+    let approval = json!({"type":"interaction.request","agentId":"main","id":"a","kind":"approval","time":1000002,
+        "request":{"turnId":1,"toolName":"Bash","action":"Running: shortened…","display":{"kind":"command","command":command}}});
+    append(approval.clone());
+    let st = lab.status();
+    assert_eq!(st["command"], json!({"text":command,"truncated":false}));
+    assert_eq!(st["action"]["text"], "Running: shortened…");
+    assert_eq!(
+        lab.json(&["wait", "test/kimi", "--timeout", "1"])["command"],
+        st["command"]
+    );
+    append(
+        json!({"type":"interaction.request","agentId":"main","id":"q","kind":"question","time":1000003,
+        "request":{"turnId":1,"questions":[{"header":"Q","question":"First?","options":[{"label":"A"},{"label":"B"}]}]}}),
+    );
+    let st = lab.status();
+    assert_eq!(st["interaction"]["count"], 2);
+    assert_eq!(
+        st["last_tool"], "Bash",
+        "a question queues behind the active approval"
+    );
+    append(
+        json!({"type":"interaction.resolved","agentId":"main","id":"a","time":1000004,"response":{"decision":"approved"}}),
+    );
+    let st = lab.status();
+    assert_eq!(st["last_tool"], "AskUserQuestion");
+    assert!(st["command"].is_null());
+    assert_eq!(
+        st["resolved"],
+        json!({"kind":"approval","state_started":1000.002,"at":1000.004,"decision":"approved"})
+    );
+    append(approval.clone());
+    assert_eq!(
+        lab.status()["last_tool"],
+        "AskUserQuestion",
+        "approval now queues behind the question"
+    );
+    append(
+        json!({"type":"interaction.resolved","agentId":"main","id":"q","time":1000005,"response":null}),
+    );
+    assert_eq!(lab.status()["resolved"]["answers"], Value::Null);
+    append(
+        json!({"type":"interaction.resolved","agentId":"main","id":"a","time":1000006,"response":{"decision":"rejected"}}),
+    );
+    assert_eq!(lab.status()["resolved"]["decision"], "rejected");
+    let mut non_bash = approval.clone();
+    non_bash["request"]["toolName"] = json!("Write");
+    non_bash["request"]["action"] = json!("Writing outside.txt");
+    non_bash["request"]["display"]["kind"] = json!("file_io");
+    append(non_bash);
+    assert!(lab.status()["command"].is_null());
+    assert_eq!(lab.status()["action"]["text"], "Writing outside.txt");
+    let mut long = approval;
+    long["request"]["display"]["command"] = json!("汉\"\\\n".repeat(5000));
+    append(long);
+    let cmd = lab.status()["command"].clone();
+    assert_eq!(cmd["truncated"], true);
+    assert!(cmd.to_string().len() <= 16 * 1024);
+    assert!(
+        "汉\"\\\n"
+            .repeat(5000)
+            .starts_with(cmd["text"].as_str().unwrap())
+    );
+}
+
+#[test]
+fn undo_picker_blocks_send_and_a_background_answer_does_not_invent_a_turn() {
+    let lab = Lab::new(
+        "printf 'Select messages to undo  ↑↓ navigate · Enter select · Esc cancel\\n'\nexec /bin/cat",
+        None,
+    );
+    lab.event("SessionStart", json!({"source":"startup"}));
+    eventually(|| {
+        String::from_utf8_lossy(&lab.out(&["read", "test/kimi"]).stdout).contains("Select messages")
+    });
+    assert_eq!(lab.status()["state"], "blocked");
+    let result: Value =
+        serde_json::from_slice(&lab.out(&["send", "test/kimi", "--", "hello"]).stdout).unwrap();
+    assert_eq!(result["error"], "not_idle");
+    let lab = Lab::new("exec /bin/cat", None);
+    let wire = lab.path("wire.jsonl");
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":wire,"source":"startup"}),
+    );
+    lab.event("UserPromptSubmit", json!({"prompt":"ask","t":1000.0}));
+    let events = [
+        json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001}),
+        json!({"type":"interaction.request","agentId":"main","id":"q","kind":"question","time":1000002,"request":{"turnId":1}}),
+        json!({"type":"turn.ended","agentId":"main","turnId":1,"time":1000003,"reason":"completed"}),
+        json!({"type":"interaction.resolved","agentId":"main","id":"q","time":1000004,"response":{"answers":{"Q":"答\"\\\n".repeat(6000)}}}),
+    ];
+    fs::write(
+        wire,
+        events.iter().map(|v| format!("{v}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let st = lab.status();
+    assert_eq!(st["state"], "idle");
+    assert_eq!(st["resolved"]["truncated"], true);
+    assert!(st["resolved"].to_string().len() <= 16 * 1024);
+}
+
+#[test]
+#[ignore = "set CORRAL_COMPAT_BIN to the pre-R48g2 corral"]
+fn kimi_new_and_old_readers_alternate_without_losing_background_interactions() {
+    let old = PathBuf::from(std::env::var_os("CORRAL_COMPAT_BIN").expect("old corral path"));
+    let lab = Lab::new("exec /bin/cat", None);
+    let wire = lab.path("wire.jsonl");
+    lab.event(
+        "SessionStart",
+        json!({"transcript_path":wire,"source":"startup"}),
+    );
+    lab.event("UserPromptSubmit", json!({"prompt":"ask","t":1000.0}));
+    let append = |v: Value| {
+        writeln!(
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&wire)
+                .unwrap(),
+            "{v}"
+        )
+        .unwrap();
+    };
+    append(json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001}));
+    append(
+        json!({"type":"context.append_loop_event","agentId":"main","time":1000002,"event":{
+        "type":"tool.call","turnId":"1","name":"AskUserQuestion","toolCallId":"bg","args":{"background":true}}}),
+    );
+    append(
+        json!({"type":"interaction.request","agentId":"main","id":"q","kind":"question","time":1000003,"request":{
+        "turnId":1,"toolCallId":"bg","questions":[{"question":"Q","header":"Q","options":[{"label":"A"},{"label":"B"}]}]}}),
+    );
+    append(
+        json!({"type":"turn.ended","agentId":"main","turnId":1,"time":1000004,"reason":"completed"}),
+    );
+    for _ in 0..3 {
+        let result = lab.out_with(&old, &["status", "test/kimi"]);
+        assert!(result.status.success());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&result.stdout).unwrap()["state"],
+            "idle"
+        );
+        let new = lab.status();
+        assert_eq!(new["questions"]["background"], true);
+        assert_eq!(new["interaction"]["running"], false);
+        assert_eq!(new["state_started"], 1000.003);
+    }
+    append(
+        json!({"type":"interaction.resolved","agentId":"main","id":"q","time":1000005,"response":null}),
+    );
+    assert!(
+        lab.out_with(&old, &["status", "test/kimi"])
+            .status
+            .success()
+    );
+    assert_eq!(lab.status()["resolved"]["answers"], Value::Null);
+    assert!(lab.status()["questions"].is_null());
 }
 
 #[test]
@@ -365,7 +625,7 @@ fn kimi_questions_use_the_r43_json_budget() {
     let prompt = json!({"type":"turn.prompt","agentId":"main","turnId":1,"time":1000001});
     let request = json!({"type":"interaction.request","agentId":"main","id":"q","kind":"question",
         "request":{"turnId":1,"questions":questions},"time":1000002});
-    fs::write(wire, format!("{prompt}\n{request}\n")).unwrap();
+    fs::write(&wire, format!("{prompt}\n{request}\n")).unwrap();
     let actual = lab.status()["questions"].clone();
     assert_eq!(actual["truncated"], true);
     assert!(serde_json::to_vec(&actual).unwrap().len() <= 16 * 1024);
@@ -392,6 +652,23 @@ fn kimi_questions_use_the_r43_json_budget() {
     assert!(hook.wait().unwrap().success());
     let event: Value = serde_json::from_slice(&fs::read(events).unwrap()).unwrap();
     assert_eq!(actual, event["questions"]);
+    let call = json!({"type":"context.append_loop_event","agentId":"main","time":1000003,
+        "event":{"type":"tool.call","name":"AskUserQuestion","toolCallId":"bg","args":{"background":true}}});
+    let mut background = request;
+    background["id"] = json!("bg");
+    background["time"] = json!(1000004);
+    background["request"]["toolCallId"] = json!("bg");
+    writeln!(
+        fs::OpenOptions::new().append(true).open(&wire).unwrap(),
+        "{call}\n{background}"
+    )
+    .unwrap();
+    let actual = lab.status()["questions"].clone();
+    assert_eq!(actual["background"], true);
+    assert_eq!(actual["truncated"], true);
+    assert!(actual.to_string().len() <= 16 * 1024);
+    let text = actual["items"][0]["question"].as_str().unwrap();
+    assert!(!text.is_empty() && long.starts_with(text));
 }
 
 #[test]

@@ -12,6 +12,7 @@ fn process_protocol_with_isolated_fake_program() {
         .env("HOME", temp.path())
         .env("PONY_HOME", temp.path().join("pony"))
         .env("CORRAL_HOME", temp.path().join("corral-home"))
+        .env("KIMI_CODE_HOME", temp.path().join("kimi-home"))
         .env("PONY_FAKE_TEST", temp.path())
         .env("FAKE_CORRAL_LOG", temp.path().join("calls"))
         .env("FAKE_CORRAL_RESPONSE", temp.path().join("response"))
@@ -52,6 +53,37 @@ fn exercise_protocol_in_child() {
     );
     assert!(process.approve("repo/main", 0).is_err());
     assert!(process.approve("repo/main", 10).is_err());
+    use pony::corral::QuestionKey::{Choose, Enter, Tab, Text};
+    process
+        .answer_question(
+            "repo/kimi",
+            &[
+                Choose(2),
+                Choose(1),
+                Tab,
+                Choose(3),
+                Text("梨汁".into()),
+                Enter,
+                Choose(1),
+            ],
+        )
+        .unwrap();
+    assert!(
+        fs::read_to_string(root.join("calls")).unwrap().contains(
+            "4:keys9:repo/kimi6:text:26:text:13:tab6:text:311:text:梨汁5:enter6:text:1\n"
+        )
+    );
+    let before = fs::read(root.join("calls")).unwrap();
+    for keys in [
+        vec![Choose(0)],
+        vec![Choose(6)],
+        vec![Text("bad\nenter".into())],
+        vec![Text("\u{1b}".into())],
+        vec![],
+    ] {
+        assert!(process.answer_question("repo/kimi", &keys).is_err());
+    }
+    assert_eq!(fs::read(root.join("calls")).unwrap(), before);
     assert!(
         fs::read_to_string(root.join("calls"))
             .unwrap()

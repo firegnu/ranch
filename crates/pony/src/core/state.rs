@@ -92,6 +92,8 @@ pub struct Watch {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Interrupt {
+    #[serde(default)]
+    pub require_interrupted: bool,
     pub address: Address,
     pub agent: String,
     pub instance: String,
@@ -151,6 +153,16 @@ pub struct ApprovalCheck {
     pub started: f64,
     pub poll_at: f64,
     pub sent: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BackgroundAnswer {
+    pub address: Address,
+    pub message: String,
+    pub status: Status,
+    pub keys: Vec<crate::corral::QuestionKey>,
+    pub answers: serde_json::Value,
+    pub pressed_at: Option<f64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -256,6 +268,8 @@ fn read_seen<'de, D: serde::Deserializer<'de>>(
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct State {
+    #[serde(default)]
+    pub background_answers: Vec<BackgroundAnswer>,
     #[serde(default)]
     pub approvals: Vec<ApprovalCheck>,
     pub threads: Vec<Thread>,
