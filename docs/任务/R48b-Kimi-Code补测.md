@@ -85,3 +85,13 @@
 - 没查清：本轮配置块外始终无内容变化，因此未复现自动改写后的标记保留；auto 下模型未真实调用 AskUserQuestion，只有无框自行选择的实测与源码拒绝策略，没有工具拒绝 payload。StopFailure、UserPromptQueued、TaskStarted、Notification 未触发；批准框 Esc、其他批准面板、后台任务/MCP、跨平台和多轮启动稳定性没有扩测。TERM 未发 SessionEnd 的内部原因未定位，均在报告限定结论。
 - 踩过的坑：未加引号的带问号 GitHub URL 被 zsh 当 glob，改为引用 URL；两处猜测的源码文件路径不存在，改用 rg 定位。corral 对自行退出的测试实例立即报 not_found，没抓到不存在 session ID 的错误画面，不把源码错误文字冒充实收。corral read 是去控制码的输出流而非稳定截图，底部画面会折行/重绘，报告按实收恢复行并注明。最关键的行为差异是 TERM 也留下工具子树、子 agent 的 Stop 混入同 session，而不是此前推测的干净退出/可只核父链。清理临时目录的 rm -rf 被工具拒绝，按提示改用同一确切目录的非强制 rm -r，成功清完。
 - 清理与验证：config 去块后与修改前备份逐字节一致（2446 字节，剩余差异零），没有凭证类内容进入报告。探针、备份、源码归档、测试工作目录等临时目录均删除；测试 Kimi 和遗留子进程均关闭，前台命令已跑完。只做任务规定的文档验证：`git diff --check` 通过，`grep` 确认 config.toml 无 `r48b`；不跑 Cargo 测试或额外扫描。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48b-1`（`--unique` 补了后缀），Codex gpt-6-astra / high。
+- 看了 diff：只动了报告和本文件末尾；`git diff --check` 通过。1–6 条和「对阶段 1 的建议」都有，每条有标记和依据，R48 哪些被推翻也逐条列了。
+- 现场核对：`~/.kimi-code/config.toml` 里没有 `r48b`；`/tmp` 无 r48 残留；没有残留的 kimi、sleep 进程；测试 agent 都已不在。附录 55 条实收原文没有本机绝对路径和凭证，gitleaks、trufflehog 都没发现问题。
+- 输入 10 次文本提交（8 次模型输入），连批准、Esc 按键计 15 次，在额度内。
+- 对方的取舍：信号停掉后只按记下的 PID 清理残留子进程、不为造配置改写样本而改用户的模型偏好、不为造 StopFailure 动凭证或网络，同意。
+结果：一次过
