@@ -84,3 +84,14 @@
 - 改了什么：采纳审查意见第 1、2、3 条。CONTRACT 补充本机表含 Kimi 家或格子时，退回 R48d 之前的 ranch 会整表报 `invalid_data`，须先删掉这些段，包含 paddock 设置页 `edit` 写入的 `[cells.kimi]`；派活技能补全 amp 命令里的读表 `env` 参数，并将通用 `env` 说明挪到示意命令后；DESIGN §10「提醒」补充 Kimi 列题目、提示回电脑回答和线程回复排队，不走 R45 / R47b 的回答和按钮。本轮只改说明文字，paddock 不用动。
 - 验证了什么：`CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r48d cargo test -p ranch-dispatch` 前台跑完，21 条测试通过，0 失败，文档测试 0 条；`git diff --check` 通过。未增加其他验证。
 - 踩过的坑：没有。
+
+## 主控审查
+
+2026-10-24，ranch/main。
+- 实际开的是 `ranch/dev-r48d`（Codex gpt-6-astra / xhigh）。中途它问了两次范围（派活表测试在 `crates/ranch`、pony 写死只给 claude 显示题目），主控都放开了最小范围，决定已写在完成记录里。
+- 提交 `7418721`：只动了允许的目录；看过代码和文档 diff。主控在 r48d 上跑全套：465 通过、14 跳过、0 失败；clippy、fmt 通过。核对过用户 `~/.kimi-code/config.toml` 里 corral 的块还在、块外没变，没有残留的 kimi 进程。
+- 交叉审查：第一次开的审查 agent 随机器重启中断，没留下意见；重开 `ranch/review-r48d-1`（Claude Code opus[1m] / xhigh）。结论可以合并：必须改 0 条，建议改 3 条，可以不改 3 条。意见在 `docs/任务/R48d-审查.md`。
+- 用户决定采纳 3 条建议改（都是说明文字：CONTRACT 写明本机表含 kimi 段时旧版 ranch 整表读不了；派活技能里 amp 命令补 `env`；DESIGN §10 pony 提醒补上 Kimi）。原开发 agent 已经没了，在同一个 worktree 另开 `ranch/dev-r48d-fix-1`（Codex gpt-6-astra / xhigh）改，提交 `e1799a3`。主控看过 diff，三处和审查的改法一致、只动文字；`ranch-dispatch` 21 条测试通过。
+- 可以不改的 3 条：Kimi 后台提问（`background:true`）pony 多半看不到这道题，记进 HANDOFF 已知问题，阶段 4 用真 Kimi 测；Kimi 提问线程里回「停」只关框、模型接着跑，是 R45 原有行为，阶段 4 再看；测试里 `resolved` 的键名和真实 wire 不同，不影响结果，下次改到再换。
+- 对 paddock 的影响：兼容新增可选 `env`、`kimi` 格，以及 Kimi 的 `status.questions`；现有调用不用改，设置页显示 `env` 在 paddock 自己的任务里接。
+结果：一次过
