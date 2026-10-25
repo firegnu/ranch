@@ -58,3 +58,14 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-10-25，ranch/dev-r51。本轮停在需要主控决定的地方，**修复未完成，当前提交只保存失败复现，不能合并**。
+
+- 做了什么：在 `pen.rs` 的 `final_kill_wait_is_bounded_and_records_remaining_processes` 中加入真实 CLI `ls` 清理。pen 写好记录、仍持锁且 socket 尚在时，暂停本测试自己的 stop CLI 子进程；确认暂停后关闭 socket、放锁，等隔离环境中的 ls 清理完成，再恢复并回收 stop CLI。这个固定调度模拟 stop 在两次轮询之间没有获得 CPU，不改变 pen 写记录、删 socket、放锁的次序。原有残留进程、耗时、退出记录和日志断言保留，文件内容在 ls 删除前读取。所有子进程均等待结束。
+- 验证了什么：使用指定 `CARGO_TARGET_DIR`，运行 `cargo test -p corral-core --lib pen::tests::final_kill_wait_is_bounded_and_records_remaining_processes -- --exact --nocapture`。原实现 RED：ls 成功且目录已删除，stop 输出 `exit_code:null`、`stopped_by:null`，缺少 `remaining_pids`，而预期是 `exit_code:0`、`stopped_by:SIGKILL` 和残留 PID。随后只试任务单参考方案：socket 连不上时先读并缓存 instance 匹配的 exit.json，再检查锁；同一条测试仍 RED，输出相同。两次均约 5.1 秒，测试命令均以前台完成、退出码 101；无效生产代码已撤回。
+- 拿主意的地方：没有自行改变 ls 清理规则、pen 写记录次序或公开约定。已证实单靠 stop 轮询缓存不能保证记录可用：`写 exit.json → 删 socket → 放锁 → ls 删 exit.json` 可以全部发生在 stop 两次轮询之间。第一次看到 socket 不通时文件已经不存在，缓存无从建立。
+- 需要主控决定：建议允许修改 stop 与 ls 的清理协调，让 stop 读完本实例退出记录前，ls 不能删除它；需同时明确旧版 ls 不参与新协调时的兼容边界。另一条路是 pen 通过停止请求的连接返回最终记录，但涉及内部协议和旧 pen 的兼容，改动更大。只缩短轮询或保留提前缓存仅能缩小窗口，达不到“不再丢”的要求，不建议作为修复交付。待主控决定后继续，将决定补记于此。
+- 没做的事：尚未达到 GREEN，未加或运行同名重开边角测试，未运行全套测试、clippy、fmt 三项最终验证；未修改 CONTRACT、DESIGN、HANDOFF，未动 R52 的两个文件，未合并、推送、部署，也未操作用户 agent。生产实现与原来一致，paddock 目前不用动。
+- 踩过的坑：审查参考方案所依赖的“pen 先写记录、再删 socket 和放锁”只保证写入先后，并不保证 stop 会在 ls 清理之前被调度。固定这个调度后，提前缓存也必然漏读，故撤回该尝试，没有继续替换方案。

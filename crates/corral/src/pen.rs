@@ -129,9 +129,12 @@ mod tests {
             return;
         };
         let expected: Value = serde_json::from_str(&expected).unwrap();
-        let result = crate::cli::run(&["stop".into(), "test".into()])
-            .unwrap()
-            .unwrap();
+        let args = if std::env::var_os("CORRAL_TEST_STOP_LS").is_some() {
+            vec!["ls".into()]
+        } else {
+            vec!["stop".into(), "test".into()]
+        };
+        let result = crate::cli::run(&args).unwrap().unwrap();
         assert_eq!(result, expected);
     }
 
@@ -198,11 +201,50 @@ mod tests {
             let still_running = unsafe { libc::kill(pid, 0) == 0 };
             let _ = done.send(());
             cleanup.join().unwrap();
+            let exit = state::read(dir.join("exit.json"));
+            let log = fs::read_to_string(dir.join("pen.log")).unwrap();
+            // Pin the schedule: stop gets no CPU between socket removal and ls cleanup.
+            // Only suspend our own isolated CLI child, and resume it even on a panic.
+            struct ResumeCli(u32);
+            impl Drop for ResumeCli {
+                fn drop(&mut self) {
+                    unsafe { libc::kill(self.0 as i32, libc::SIGCONT) };
+                }
+            }
+            let resume = ResumeCli(cli.id());
+            assert_eq!(unsafe { libc::kill(cli.id() as i32, libc::SIGSTOP) }, 0);
+            let mut status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(cli.id() as i32, &mut status, libc::WUNTRACED) },
+                cli.id() as i32
+            );
+            assert!(libc::WIFSTOPPED(status));
             drop(listener);
             fs::remove_file(dir.join("sock")).unwrap();
             drop(lock);
+            let ls = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "pen::tests::stop_cli_reports_remaining_processes",
+                ])
+                .env("HOME", home.path())
+                .env("CORRAL_HOME", home.path())
+                .env("KIMI_CODE_HOME", home.path().join("kimi-home"))
+                .env("CORRAL_TEST_STOP_LS", "1")
+                .env("CORRAL_TEST_STOP_EXPECTED", r#"{"ok":true,"agents":[]}"#)
+                .output();
+            drop(resume);
             let cli = cli.wait_with_output().unwrap();
+            let ls = ls.unwrap();
             result.unwrap();
+            assert!(
+                ls.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&ls.stdout),
+                String::from_utf8_lossy(&ls.stderr)
+            );
+            assert!(!dir.exists(), "ls did not clean up the stopped pen");
             assert!(
                 still_running,
                 "pen waited until the cleanup guard killed the residual process"
@@ -217,14 +259,12 @@ mod tests {
                 String::from_utf8_lossy(&cli.stdout),
                 String::from_utf8_lossy(&cli.stderr)
             );
-            let exit = state::read(dir.join("exit.json"));
             assert_eq!(exit["remaining_pids"], json!([pid]));
             assert_eq!(exit["stop_step"], "SIGKILL");
             assert_eq!(
                 exit["code"],
                 if parent_exited { json!(0) } else { Value::Null }
             );
-            let log = fs::read_to_string(dir.join("pen.log")).unwrap();
             assert!(
                 log.contains("SIGKILL") && log.contains(&pid.to_string()),
                 "{log}"
