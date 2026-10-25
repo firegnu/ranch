@@ -738,7 +738,14 @@ fn hook_is_fail_open_and_sandbox_public_commands_leave_no_state() {
             .status
             .success()
     );
-    for name in ["../escape", "a//b", "lock", "a/sock"] {
+    for name in [
+        "../escape",
+        "a//b",
+        "lock",
+        "a/sock",
+        "stop.lock",
+        "a/stop.lock",
+    ] {
         let out = lab.out(&["start", name, "--", "/bin/cat"]);
         assert_eq!(out.status.code(), Some(1));
         assert_eq!(
@@ -928,6 +935,306 @@ fn agent_exit_drains_last_output_to_attached_client() {
         bytes.len()
     );
     eventually(|| lab.out(&["status", "lab/main"]).status.code() == Some(2));
+}
+
+#[test]
+fn stop_concurrent_callers_receive_the_same_exit_record() {
+    let lab = Lab::new();
+    let start = lab.json(&[
+        "start",
+        "lab/main",
+        "--",
+        "/bin/sh",
+        "-c",
+        "trap '' HUP TERM; printf READY; while :; do read x; done",
+    ]);
+    eventually(|| {
+        String::from_utf8_lossy(&lab.out(&["read", "lab/main"]).stdout).contains("READY")
+    });
+    let mut command = lab.cmd();
+    command
+        .args(["stop", "lab/main", "--timeout", "10"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let first = command.spawn().unwrap();
+    eventually(|| lab.root.path().join("pens/lab/main/stop.lock").is_file());
+    let second = command.spawn().unwrap();
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+    for output in [&first, &second] {
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        first,
+        json!({"ok":true,"name":"lab/main","instance":start["instance"],
+            "exit_code":-libc::SIGKILL,"stopped_by":"SIGKILL"})
+    );
+}
+
+#[test]
+fn stop_concurrent_callers_keep_the_record_across_listing() {
+    use std::io::BufRead;
+    use std::os::unix::net::UnixListener;
+
+    struct StopCli(Option<std::process::Child>);
+    impl StopCli {
+        fn finish(mut self) -> std::io::Result<Output> {
+            self.0.take().unwrap().wait_with_output()
+        }
+    }
+    impl Drop for StopCli {
+        fn drop(&mut self) {
+            if let Some(child) = &mut self.0 {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    let lab = Lab::new();
+    let dir = lab.root.path().join("pens/lab/main");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("meta.json"), r#"{"kind":"cat"}"#).unwrap();
+    let lock = hold_stop_test_lock(&dir.join("lock"));
+    let listener = UnixListener::bind(dir.join("sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let reply = |op: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let (mut socket, _) = match listener.accept() {
+                Ok(socket) => socket,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("{e}"),
+            };
+            socket.set_nonblocking(true).unwrap();
+            let mut line = String::new();
+            let mut reader = std::io::BufReader::new(&socket);
+            loop {
+                match reader.read_line(&mut line) {
+                    Ok(_) => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            }
+            if line.is_empty() {
+                // stop also probes socket liveness without sending a request.
+                continue;
+            }
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["op"], op);
+            writeln!(
+                socket,
+                "{}",
+                json!({"ok":true,"proto":1,"instance":"three-way-stop"})
+            )
+            .unwrap();
+            return true;
+        }
+        false
+    };
+    let mut command = lab.cmd();
+    command
+        .args(["stop", "lab/main", "--timeout", "15"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let first = StopCli(Some(command.spawn().unwrap()));
+    assert!(reply("status"));
+    assert!(reply("stop"));
+    let second = StopCli(Some(command.spawn().unwrap()));
+    let second_pid = second.0.as_ref().unwrap().id() as i32;
+    assert!(reply("status"));
+    // With shared locks the second request proves its lock is held. The old
+    // exclusive implementation cannot send it yet; pause that waiter instead,
+    // so RED is the real exit-code/record regression after ls, not a fixture timeout.
+    let second_requested_stop = reply("stop");
+    assert_eq!(unsafe { libc::kill(second_pid, libc::SIGSTOP) }, 0);
+    let mut status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(second_pid, &mut status, libc::WUNTRACED) },
+        second_pid
+    );
+    assert!(libc::WIFSTOPPED(status));
+    fs::write(
+        dir.join("exit.json"),
+        r#"{"instance":"three-way-stop","code":0,"stop_step":"SIGHUP"}"#,
+    )
+    .unwrap();
+    drop(listener);
+    fs::remove_file(dir.join("sock")).unwrap();
+    drop(lock);
+    let first = first.finish();
+    let ls = lab.out(&["ls"]);
+    assert_eq!(unsafe { libc::kill(second_pid, libc::SIGCONT) }, 0);
+    let second = second.finish().unwrap();
+    let first = first.unwrap();
+    for output in [&first, &second, &ls] {
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(
+        second_requested_stop,
+        "second caller did not send its own stop request"
+    );
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        first,
+        json!({"ok":true,"name":"lab/main","instance":"three-way-stop",
+        "exit_code":0,"stopped_by":"SIGHUP"})
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&ls.stdout).unwrap()["agents"],
+        json!([])
+    );
+    assert!(!dir.join("stop.lock").exists());
+    assert_eq!(lab.json(&["ls"])["agents"], json!([]));
+    assert!(!dir.exists());
+}
+
+#[test]
+fn stop_does_not_reuse_exit_record_after_same_name_restart() {
+    use std::io::BufRead;
+    use std::os::unix::net::UnixListener;
+
+    let lab = Lab::new();
+    let dir = lab.root.path().join("pens/lab/main");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("meta.json"), r#"{"kind":"kimi"}"#).unwrap();
+    for instance in ["previous", "current"] {
+        let listener = UnixListener::bind(dir.join("sock")).unwrap();
+        let lock = hold_stop_test_lock(&dir.join("lock"));
+        let dir = dir.clone();
+        let server = std::thread::spawn(move || {
+            // Synthetic pen transport, with the second incarnation deliberately
+            // leaving the previous incarnation's exit record on disk.
+            for op in ["status", "stop"] {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut line = String::new();
+                std::io::BufReader::new(&socket)
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["op"], op);
+                writeln!(
+                    socket,
+                    "{}",
+                    json!({"ok":true,"proto":1,"instance":instance})
+                )
+                .unwrap();
+            }
+            if instance == "previous" {
+                fs::write(
+                    dir.join("exit.json"),
+                    json!({"instance":instance,"code":0,"stop_step":"SIGKILL","remaining_pids":[12345]}).to_string(),
+                ).unwrap();
+            }
+            drop(listener);
+            fs::remove_file(dir.join("sock")).unwrap();
+            drop(lock);
+        });
+        let output = lab.out(&["stop", "lab/main", "--timeout", "4"]);
+        server.join().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let stopped: Value = serde_json::from_slice(&output.stdout).unwrap();
+        if instance == "previous" {
+            assert_eq!(
+                stopped,
+                json!({"ok":true,"name":"lab/main","instance":"previous",
+                "exit_code":0,"stopped_by":"SIGKILL","remaining_pids":[12345]})
+            );
+        } else {
+            assert_eq!(
+                stopped,
+                json!({"ok":true,"name":"lab/main","instance":"current",
+                "exit_code":null,"stopped_by":null})
+            );
+        }
+    }
+}
+
+fn hold_stop_test_lock(path: &std::path::Path) -> fs::File {
+    use std::os::fd::AsRawFd;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .unwrap();
+    assert_eq!(
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    file
+}
+
+#[test]
+fn stop_lock_left_by_old_ls_allows_restart_and_eventual_cleanup() {
+    use std::os::unix::fs::MetadataExt;
+
+    let lab = Lab::new();
+    let dir = lab.root.path().join("pens/lab/main");
+    fs::create_dir_all(&dir).unwrap();
+    let starting = hold_stop_test_lock(&dir.join("lock"));
+    assert_eq!(
+        lab.json(&["ls"])["agents"],
+        json!([{"name":"lab/main","starting":true,"child_sandbox":null}])
+    );
+    assert!(!dir.join("stop.lock").exists());
+    drop(starting);
+    assert_eq!(lab.json(&["ls"])["agents"], json!([]));
+    assert!(!dir.exists());
+    fs::create_dir_all(&dir).unwrap();
+    // This is what old ls leaves: the name lock and all records are gone,
+    // but it does not know about the lock still held by a new stop.
+    let stop_lock = hold_stop_test_lock(&dir.join("stop.lock"));
+    let inode = stop_lock.metadata().unwrap().ino();
+    assert_eq!(lab.json(&["ls"])["agents"], json!([]));
+    assert!(dir.join("stop.lock").is_file());
+    lab.json(&["start", "lab/main", "--", "/bin/cat"]);
+    assert_eq!(fs::metadata(dir.join("stop.lock")).unwrap().ino(), inode);
+    drop(stop_lock);
+    let stopped = lab.json(&["stop", "lab/main", "--timeout", "4"]);
+    assert_eq!(stopped["stopped_by"], "SIGHUP");
+    assert!(!dir.join("stop.lock").exists());
+    assert_eq!(lab.json(&["ls"])["agents"], json!([]));
+    assert!(!dir.exists());
+
+    // A stop that dies leaves the same marker with no flock owner. No restart
+    // should be necessary for new ls to find and clean this orphan directory.
+    fs::create_dir_all(&dir).unwrap();
+    drop(hold_stop_test_lock(&dir.join("stop.lock")));
+    assert_eq!(lab.json(&["ls"])["agents"], json!([]));
+    assert!(!dir.exists());
 }
 
 #[test]

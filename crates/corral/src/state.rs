@@ -15,8 +15,10 @@ use std::{
     time::Duration,
 };
 
+pub(crate) const STOP_LOCK: &str = "stop.lock";
 pub const FILES: &[&str] = &[
     "lock",
+    STOP_LOCK,
     "meta.json",
     "sock",
     "hook.py",
@@ -101,6 +103,9 @@ fn write_record(path: &Path, v: &Value, durable: bool) -> Result<()> {
     Ok(())
 }
 pub fn lock(path: &Path, create: bool) -> Result<Option<File>> {
+    lock_mode(path, create, libc::LOCK_EX)
+}
+fn lock_mode(path: &Path, create: bool, mode: i32) -> Result<Option<File>> {
     loop {
         let f = match OpenOptions::new()
             .read(true)
@@ -114,7 +119,7 @@ pub fn lock(path: &Path, create: bool) -> Result<Option<File>> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if unsafe { libc::flock(f.as_raw_fd(), mode | libc::LOCK_NB) } != 0 {
             let e = std::io::Error::last_os_error();
             if e.kind() == std::io::ErrorKind::WouldBlock {
                 return Ok(None);
@@ -123,6 +128,39 @@ pub fn lock(path: &Path, create: bool) -> Result<Option<File>> {
         }
         if fs::metadata(path).is_ok_and(|m| m.ino() == f.metadata().unwrap().ino()) {
             return Ok(Some(f));
+        }
+    }
+}
+pub(crate) struct StopLock {
+    path: PathBuf,
+    file: File,
+}
+pub(crate) fn stop_lock(name: &str) -> Result<Option<StopLock>> {
+    let path = dir(name)?.join(STOP_LOCK);
+    let file = lock_mode(&path, true, libc::LOCK_SH).map_err(|e| {
+        if !path.parent().unwrap().is_dir() {
+            not_found(name)
+        } else {
+            e
+        }
+    })?;
+    Ok(file.map(|file| StopLock { path, file }))
+}
+impl Drop for StopLock {
+    fn drop(&mut self) {
+        // Upgrading is not atomic on macOS. A failure may release our shared
+        // lock, so do not attempt any cleanup unless the upgrade succeeded.
+        if unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return;
+        }
+        // Unlink while still holding both locks, so another stop cannot acquire a
+        // replaced inode and an old ls cannot concurrently remove the name lock.
+        // If old ls already removed it, keep our marker for a later new ls to find.
+        if let Ok(Some(_lock)) = lock(&self.path.with_file_name("lock"), false)
+            && fs::metadata(&self.path)
+                .is_ok_and(|m| m.ino() == self.file.metadata().unwrap().ino())
+        {
+            let _ = fs::remove_file(&self.path);
         }
     }
 }
@@ -238,7 +276,7 @@ pub fn require(name: &str, req: Value) -> Result<Value> {
 }
 pub fn list() -> Result<Vec<Value>> {
     fn visit(p: &Path, root: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
-        if p != root && p.join("lock").is_file() {
+        if p != root && (p.join("lock").is_file() || p.join(STOP_LOCK).is_file()) {
             out.push(p.strip_prefix(root).unwrap().to_string_lossy().into_owned())
         }
         for e in fs::read_dir(p)? {
@@ -275,7 +313,13 @@ pub fn list() -> Result<Vec<Value>> {
             }
             Ok(_) | Err(_) => {
                 let d = dir(&name)?;
-                if let Some(_lock) = lock(&d.join("lock"), false)? {
+                let stop_lock = lock(&d.join(STOP_LOCK), false)?;
+                if stop_lock.is_none() && d.join(STOP_LOCK).exists() {
+                    continue;
+                }
+                // Old ls may have removed the name lock but left stop.lock behind.
+                // Recreate it only for orphan cleanup, serialized with same-name start.
+                if let Some(_lock) = lock(&d.join("lock"), stop_lock.is_some())? {
                     for f in FILES {
                         if *f != "lock" {
                             let _ = fs::remove_file(d.join(f));
