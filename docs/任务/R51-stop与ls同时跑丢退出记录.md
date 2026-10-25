@@ -84,3 +84,22 @@
 - 没做的事：未补跑被快照失败挡住的全套检查，未改 HANDOFF、DESIGN、R52 的两个文件，未操作用户 agent，未合并、推送或部署。
 - 踩过的坑：新增 `state::FILES` 条目时首次漏同步 `adapters_tables.json`，导致唯一一次全套验证提前停止；现已补齐预期数据，没有删除或放宽断言。
 - 交主控：实现及指定针对性检查已完成，没有新的设计待定项；还需要主控安排或批准一次修正快照后的全套测试，补齐上述验证缺口后再判断可否合并。
+
+### 交叉审查后返工
+
+2026-10-25，ranch/dev-r51。已读主仓库 `docs/任务/R51-审查.md` 的「审查意见」，按本轮主控决定返工。前一轮全套验证缺口已由主控和交叉审查补齐：审查文件记录两边均为 500 通过、0 失败、17 跳过；这不是本轮重新运行的结果。
+
+- 主控决定及做了什么：
+  - 第 1 条必须改：记下是否等过 stop.lock。等过且停止请求得到 not_found 时保留原错误，继续持锁等待、读退出记录；instance 与开头 status 一致才走原成功输出，不一致或无记录返回保留的原 not_found。没等过锁时的请求错误处理不变。补了两个 stop 并发停止同一个合成 agent 的测试；合成 shell 忽略 HUP、TERM，约 6 秒后 KILL，两边必须退出成功、完整记录相同。
+  - 第 2 条采纳：等锁、等 pen 停下共用一个 deadline，不再在发完停止请求后重新计算 timeout。
+  - 第 3 条采纳：CONTRACT 新增独立的「stop 与 ls 的退出记录（R51）」，从 Kimi 小节移出通用说明。写明同时停止的返回、双向新旧混用、agent 目录的 stop.lock、保留名字 bad_name、stop 进行中 status 失败时 ls 不列该项，以及 paddock 不读目录、不用改。
+  - 第 4 条采纳：ls 不带 create 获取 stop.lock；文件存在且被占则跳过，取得文件锁时保持原清理流程；文件不存在时只尝试已有运行锁，不建 stop.lock，也不新建运行锁。已有孤立 stop.lock 仍可通过重建并取得运行锁回收。扩展原遗留目录测试，核对启动中的项仍列 starting、不会被 ls 新建 stop.lock，结束后照常清理。
+  - 第 5、6、7、8 条按决定不改代码：5、6 的显示行为和旧名字影响已写入 CONTRACT；不改合成 pen 的 accept 等待方式，不改同名重开时删除 exit.json 的已有窗口。未采用共享锁、时间宽限或 pen 协议改动。
+- 验证了什么：全部使用本任务的 `CARGO_TARGET_DIR`，所有命令等待前台结束。
+  - RED：`cargo test -p corral-core --test protocol stop_ -- --nocapture` 在改生产代码之前运行，2 通过、2 失败（6.97 秒）。双 stop 测试失败于后到调用返回 not_found；扩展的 ls 检查失败于启动中目录被新建 stop.lock，均为本次目标行为，而非测试夹具或语法错误。
+  - GREEN：同一命令修改后 4 通过、0 失败（7.26 秒），包含双 stop、实例隔离、旧 ls 遗留目录及不新建锁、停止超时。
+  - `cargo test -p corral-core --lib pen::tests::final_kill_wait_is_bounded_and_records_remaining_processes -- --exact --nocapture` 通过（10.09 秒）；`cargo test -p corral-core --test protocol concurrent_unique_starts_and_listing_preserve_live_locks -- --exact --nocapture` 通过（0.97 秒）。共 6 条直接相关测试通过。
+  - `cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次，均通过。按本轮主控指示不跑全套。
+- 拿主意的地方：全部沿用主控对八条意见的取舍；fallback 只作用于明确等过锁的 not_found，不把其他错误或其他实例的记录改成成功，没有新的待定事项。
+- 没做的事：未改第 5–8 条对应的实现，未改其他仓库、R52 文件、DESIGN、HANDOFF；未操作用户 agent，未合并、推送、部署。
+- 踩过的坑：没有；两条预期 RED 都直接复现了审查所述问题，采用指定改法后通过。

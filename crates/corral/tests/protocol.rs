@@ -938,6 +938,48 @@ fn agent_exit_drains_last_output_to_attached_client() {
 }
 
 #[test]
+fn stop_concurrent_callers_receive_the_same_exit_record() {
+    let lab = Lab::new();
+    let start = lab.json(&[
+        "start",
+        "lab/main",
+        "--",
+        "/bin/sh",
+        "-c",
+        "trap '' HUP TERM; printf READY; while :; do read x; done",
+    ]);
+    eventually(|| {
+        String::from_utf8_lossy(&lab.out(&["read", "lab/main"]).stdout).contains("READY")
+    });
+    let mut command = lab.cmd();
+    command
+        .args(["stop", "lab/main", "--timeout", "10"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let first = command.spawn().unwrap();
+    eventually(|| lab.root.path().join("pens/lab/main/stop.lock").is_file());
+    let second = command.spawn().unwrap();
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+    for output in [&first, &second] {
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        first,
+        json!({"ok":true,"name":"lab/main","instance":start["instance"],
+            "exit_code":-libc::SIGKILL,"stopped_by":"SIGKILL"})
+    );
+}
+
+#[test]
 fn stop_does_not_reuse_exit_record_after_same_name_restart() {
     use std::io::BufRead;
     use std::os::unix::net::UnixListener;
@@ -1027,6 +1069,16 @@ fn stop_lock_left_by_old_ls_allows_restart_and_eventual_cleanup() {
 
     let lab = Lab::new();
     let dir = lab.root.path().join("pens/lab/main");
+    fs::create_dir_all(&dir).unwrap();
+    let starting = hold_stop_test_lock(&dir.join("lock"));
+    assert_eq!(
+        lab.json(&["ls"])["agents"],
+        json!([{"name":"lab/main","starting":true,"child_sandbox":null}])
+    );
+    assert!(!dir.join("stop.lock").exists());
+    drop(starting);
+    assert_eq!(lab.json(&["ls"])["agents"], json!([]));
+    assert!(!dir.exists());
     fs::create_dir_all(&dir).unwrap();
     // This is what old ls leaves: the name lock and all records are gone,
     // but it does not know about the lock still held by a new stop.

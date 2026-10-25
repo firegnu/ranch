@@ -305,16 +305,13 @@ pub fn list() -> Result<Vec<Value>> {
             }
             Ok(_) | Err(_) => {
                 let d = dir(&name)?;
-                let stop_lock = match lock(&d.join(STOP_LOCK), true) {
-                    Err(_) if !d.is_dir() => continue,
-                    result => result?,
-                };
-                let Some(_stop_lock) = stop_lock else {
+                let stop_lock = lock(&d.join(STOP_LOCK), false)?;
+                if stop_lock.is_none() && d.join(STOP_LOCK).exists() {
                     continue;
-                };
+                }
                 // Old ls may have removed the name lock but left stop.lock behind.
-                // Recreate it to serialize orphan cleanup with a same-name start.
-                if let Some(_lock) = lock(&d.join("lock"), true)? {
+                // Recreate it only for orphan cleanup, serialized with same-name start.
+                if let Some(_lock) = lock(&d.join("lock"), stop_lock.is_some())? {
                     for f in FILES {
                         if *f != "lock" {
                             let _ = fs::remove_file(d.join(f));

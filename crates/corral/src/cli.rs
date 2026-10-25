@@ -812,23 +812,28 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             let timeout = parsed.seconds("--timeout", 90.0)?;
             let s = state::require(name, json!({"op":"status"}))?;
             let m = state::read(state::dir(name)?.join("meta.json"));
-            let lock_deadline = now() + timeout.max(0.0);
+            let deadline = now() + timeout.max(0.0);
+            let mut waited_for_stop_lock = false;
             let stop_lock = loop {
                 if let Some(lock) = state::stop_lock(name)? {
                     break lock;
                 }
-                if now() >= lock_deadline {
+                waited_for_stop_lock = true;
+                if now() >= deadline {
                     return Err(
                         Error::new(4, "timeout", "pen keeps stopping").with("name", name.as_str())
                     );
                 }
                 thread::sleep(Duration::from_millis(50));
             };
-            state::require(
+            let not_found = match state::require(
                 name,
                 json!({"op":"stop","steps":agents::quit_steps(m["kind"].as_str().unwrap_or(""))}),
-            )?;
-            let deadline = now() + timeout.max(0.0);
+            ) {
+                Ok(_) => None,
+                Err(e) if waited_for_stop_lock && e.code == 2 => Some(e),
+                Err(e) => return Err(e),
+            };
             loop {
                 let d = state::dir(name)?;
                 if std::os::unix::net::UnixStream::connect(state::socket(name)?).is_err()
@@ -846,6 +851,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             let e = state::read(state::dir(name)?.join("exit.json"));
             drop(stop_lock);
             let matched = e["instance"] == s["instance"];
+            if !matched && let Some(e) = not_found {
+                return Err(e);
+            }
             let mut result = json!({"ok":true,"name":name,"instance":s["instance"],"exit_code":if matched{e["code"].clone()}else{Value::Null},"stopped_by":if matched{e["stop_step"].clone()}else{Value::Null}});
             if matched
                 && agents::find(m["kind"].as_str().unwrap_or(""))

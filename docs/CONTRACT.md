@@ -4,6 +4,17 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 前端读这里写的字段，遇到没写的字段要忽略，遇到不认识的取值（比如 `hooks`、`status` 的新值）要能显示、不报错。
 
+## stop 与 ls 的退出记录（R51）
+
+各家的新版 `corral stop` 与 `corral ls` 用文件锁协调清理，ls 不会抢在 stop 读取本次 `exit.json` 之前删除记录。命令、参数、JSON 字段和退出码不变；同时停同一个运行中实例的多个 stop 都返回这次的退出记录，仍为 `ok:true`、退出码 0。等过停止锁的调用若遇到 pen 已退出，只接受与开头 status 的 `instance` 一致的记录；记录缺失或实例不同仍返回原来的 `not_found`。等锁和等 pen 停下共用一个 `--timeout` 截止时间。
+
+- agent 状态目录兼容新增 `stop.lock`：stop 发请求前持有排他 flock，读完退出记录后释放并尽量删除文件；进程中途退出时系统释放 flock，后续 ls 可继续清理。ls 不主动创建此文件。旧版 ls 不认识该文件，可能留下只有 stop.lock 的目录；同名 agent 仍可重开，后续新版 ls 能回收残留。
+- 名字中任一段为 `stop.lock` 时，新版命令报 `bad_name`，与其他内部保留文件名相同。旧版允许这样的名字；已有这种名字的 agent 不能通过新版命令操作，并会使新版 ls 报错，需先用旧版处理。
+- stop 进行中，ls 的 status 查询成功时照常列出；status 失败且 stop.lock 被占时不列该项，也不清理目录。因此 pen 关 socket 后，该项不再暂时显示为 `starting`。pen 卡住不回 status，或同名新实例在旧 stop 尚未结束时处于启动阶段，也可能暂时不列；status 恢复成功后照常列出。没有被 stop 持锁的启动中 agent 仍显示 `starting:true`。
+- 过渡期两种混用都有原来的竞争：旧版 ls + 新版 stop，或旧版 stop + 新版 ls，都仍可能在读取前清掉退出记录，使 `exit_code`、`stopped_by` 为 `null`，Kimi 的 `remaining_pids` 也无法给出。`stopped_by:null` 表示没有取到记录，不能据此把缺少 remaining_pids 当成没有残留。
+
+对 paddock：不读 agent 状态目录，不用动；继续调用公开命令并读取现有 JSON 字段。
+
 ## `corral terminal-colors [--fg COLOR --bg COLOR | --clear]`（R50）
 
 设定本机新开的 agent 在没有客户端连着时，corral 拿什么颜色回答终端前景色、背景色查询（OSC 10、OSC 11）。
@@ -271,7 +282,7 @@ Kimi 内部 wire cursor 从 1 经 2 升到 3，并核对本实例启动时间，
 - 新窗口的可输入编辑器算 `idle`，不必等创建会话，`send` 不需要 `--force`；信任、登录、加载画面不算就绪。`start --prompt` 可用，等编辑器就绪后通过 PTY 送首句并提交，首句以 `-` 开头也支持；收到输入钩子前仍为 `starting`。不改变 Kimi 的模型、权限模式或信任设置。
 - 输入和主轮工具为 `working`；主 wire 的批准、提问交互为 `blocked`，当前屏幕的批准／提问导航提示补漏。只在主会话 `agents/main/wire.jsonl` 确认这一轮 `completed` 后转 `idle` 并提供回复：取本轮最后一个有文字的 step，同一 step 的文字片段按顺序连接，排除前面 step 的说明、思考和工具内容；子 agent 的 `Stop`、尚未完成的主 `Stop` 不结束主轮。未完成的新轮 `reply` 报 `no_reply`，不冒充上一轮回复。
 - 主轮 `cancelled` 沿用 `idle` 加 `interrupted:true`、`wait.result:"interrupted"`、`reply` 的 `no_reply`；提问框上的 Esc 只解除交互，仍为 `working`。主轮失败沿用 `StopFailure`，没有正常回复。阶段 1 不提供 pony 的结构化题目或批准按钮。
-- `stop` 首先 TERM、等 3 秒后 KILL，包含 Kimi 实际派生到其他进程组的命令。父进程先退也等子树清理，但最后一步 KILL 后最多再等 5 秒；还有残留时退出 pen，R48e 起 `corral stop` 的 JSON 输出兼容新增 `remaining_pids`（残留 PID 数组），仍为 `ok:true`、命令退出码为 0，Kimi 本身未退出时 `exit_code` 为 `null`。只取本次停止实例的残留记录；没有残留时不增加该字段，输出逐字不变，其他 agent 的停止输出也不变。`stopped_by` 为 `null` 表示这次没取到退出记录，这时不能因为没有 `remaining_pids` 就认为没有残留。R51 起各家 `stop` 与 `ls` 用文件锁协调清理；旧版 `ls` 不识别这把锁，和新版 `stop` 同时运行时仍可能抢先删除记录，使退出记录字段为 `null`，与旧行为相同。Kimi 有残留时停止约需 8 秒（TERM 后等 3 秒 KILL，再最多等 5 秒），调用方传 `--timeout` 时要留够时间。`pen.log` 和 `exit.json` 照旧保留残留记录。每次信号核对 PID 和进程出生标识，其他 agent 的停止行为不变。停止前已经完全脱离且失去父子关系的守护进程不在这份子树内。
+- `stop` 首先 TERM、等 3 秒后 KILL，包含 Kimi 实际派生到其他进程组的命令。父进程先退也等子树清理，但最后一步 KILL 后最多再等 5 秒；还有残留时退出 pen，R48e 起 `corral stop` 的 JSON 输出兼容新增 `remaining_pids`（残留 PID 数组），仍为 `ok:true`、命令退出码为 0，Kimi 本身未退出时 `exit_code` 为 `null`。只取本次停止实例的残留记录；没有残留时不增加该字段，输出逐字不变，其他 agent 的停止输出也不变。`stopped_by` 为 `null` 表示这次没取到退出记录，这时不能因为没有 `remaining_pids` 就认为没有残留。Kimi 有残留时停止约需 8 秒（TERM 后等 3 秒 KILL，再最多等 5 秒），调用方传 `--timeout` 时要留够时间。`pen.log` 和 `exit.json` 照旧保留残留记录。每次信号核对 PID 和进程出生标识，其他 agent 的停止行为不变。停止前已经完全脱离且失去父子关系的守护进程不在这份子树内。
 - Kimi 要由 R48c 及以后版本启动并操作；旧版不认识这一家、旧进程缺少所需环境，`upgrade` 只换 pen，不能补齐，需重新启动。
 - 对 paddock：兼容新增一家与可选 `install.format`，现有状态值和命令不变。列表按返回项显示；安装说明需在 paddock 自己的任务里识别 `marked-block`，说明只修改共享文件的一段、卸载保留配置文件。R48e 的 `stop.remaining_pids` 是兼容新增可选字段，现有调用不用改，可从命令输出获知残留 PID。paddock 不读 Kimi 的内部目录。
 
