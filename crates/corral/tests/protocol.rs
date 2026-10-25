@@ -793,7 +793,17 @@ fn injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved() 
     fs::remove_file(&public).unwrap();
     std::os::unix::fs::symlink("/usr/bin/false", &public).unwrap();
     let args_file = lab.root.path().join("pens/lab/main/events.args");
-    eventually(|| args_file.exists());
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !args_file.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "args missing: status={:?}, read={:?}, pen.log={:?}",
+            lab.out(&["status", "lab/main"]),
+            lab.out(&["read", "lab/main"]),
+            fs::read_to_string(lab.root.path().join("pens/lab/main/pen.log"))
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let bytes = fs::read(&args_file).unwrap();
     let args: Vec<_> = bytes
         .split(|c| *c == 0)
@@ -863,11 +873,13 @@ fn raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1() {
     let lab = Lab::new();
     lab.recognized();
     let instance = lab.json(&["status", "lab/main"])["instance"].clone();
-    let emit = |ev: &str, event: Value| {
-        let t = std::time::SystemTime::now()
+    let now = || {
+        std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs_f64();
+            .as_secs_f64()
+    };
+    let emit_at = |t: f64, ev: &str, event: Value| {
         let record = json!({"v":2,"inst":instance,"adapter":"omp","ev":ev,"t":t,"session_id":"main","cwd":"/tmp","has_ui":true,"event":event});
         writeln!(
             fs::OpenOptions::new()
@@ -878,6 +890,7 @@ fn raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1() {
         )
         .unwrap();
     };
+    let emit = |ev: &str, event: Value| emit_at(now(), ev, event);
     emit("session_start", json!({"reason":"startup"}));
     assert_eq!(lab.json(&["status", "lab/main"])["state"], "idle");
     std::thread::scope(|scope| {
@@ -890,24 +903,32 @@ fn raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1() {
         assert_eq!(sending.join().unwrap()["confirmed"], true);
     });
     assert_eq!(lab.json(&["status", "lab/main"])["state"], "working");
-    emit(
+    let t = now();
+    emit_at(
+        t,
         "message_end",
         json!({"message":{"role":"assistant","content":[{"type":"text","text":"raw reply"}]}}),
     );
-    emit(
+    emit_at(
+        t,
         "agent_end",
         json!({"messages":[{"role":"assistant","stopReason":"error","errorMessage":"503 unavailable"}]}),
     );
-    std::thread::sleep(Duration::from_millis(350));
+    // Queue each observation point before reading: the reader settles at the next event's
+    // timestamp, then agent_start clears a pending stop without changing working/idle.
+    // Thus 350 ms still distinguishes normal (250 ms) from retry (2.5 s) grace, even
+    // if this test thread is descheduled past the retry deadline before status runs.
+    emit_at(t + 0.35, "agent_start", json!({}));
     assert_eq!(lab.json(&["status", "lab/main"])["state"], "working");
-    emit("agent_start", json!({}));
-    emit("agent_end", json!({"willContinue":true}));
-    std::thread::sleep(Duration::from_millis(300));
+    emit_at(t + 0.35, "agent_end", json!({"willContinue":true}));
+    emit_at(t + 0.65, "agent_start", json!({}));
     assert_eq!(lab.json(&["status", "lab/main"])["state"], "working");
-    emit("agent_end", json!({}));
-    std::thread::sleep(Duration::from_millis(300));
+    emit_at(t + 0.65, "agent_end", json!({}));
+    emit_at(t + 0.95, "agent_start", json!({}));
     assert_eq!(lab.json(&["reply", "lab/main"])["text"], "raw reply");
     assert_eq!(lab.json(&["status", "lab/main"])["state"], "idle");
+    // Keep the real hook's timestamp after the synthetic observation points.
+    eventually(|| now() >= t + 0.95);
     lab.event(
         "PreToolUse",
         json!({"session_id":"main","tool_name":"v1-tool"}),
