@@ -49,7 +49,7 @@
 - `~/.cache` 是指向 HOME 外的符号链接时，墙里连临时目录都建不了（R20 审查；用户的不是链接）。
 - R18：旧运行的慢 `child-sandbox` 设定请求遇到同名重开，复核和写入之间还剩很小的窗口（CONTRACT 写明了）。
 - corral 对 Codex 在同一轮里会短暂报 idle，派活时提醒会提前到。
-- 全套测试偶有 1 个失败、再跑就过（hook 协议测试的偶发超时；`raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1` 也失败过一次）。
+- 全套测试偶有 1 个失败、再跑就过：hook 协议测试等合成 agent 写参数文件超时（R17b 见过一次，没复现，原因未查明；最像 `protocol.rs` 的 `injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved`，R54 在它的等待处加了诊断，再失败时断言信息里有 status、read、pen.log，照这些查）。
 - agy 的已知限制见 DESIGN §7「接入 agy」。
 - Kimi（R48g2 审查，可以不改的）：Kimi 子 agent 的 wire 每次 `status` 都从头读（8 个 8 MB 时约 38 ms）；子框和主框同时开、子框先关后，主框不重发提醒，仍停在「回电脑处理」。Kimi 的按键和框的行为照 2.3.1 摸的，Kimi 升级后要重新核对（见 `docs/调研/R48g-Kimi提问和批准框.md`）。
 - 套墙的 Kimi（R48f 审查）：墙内能读写所有 Kimi 会话（含批准记录、定时任务），墙外恢复时会生效，套过墙的会话不要在墙外直接恢复；`server.token`、`device_id`、`credentials/mcp/`、别的项目的会话墙里可读；种类数据不支持 `deny_read`。要隔离另开任务。
