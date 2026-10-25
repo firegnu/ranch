@@ -61,7 +61,7 @@
 
 ## 完成记录
 
-2026-10-25，ranch/dev-r51。本轮停在需要主控决定的地方，**修复未完成，当前提交只保存失败复现，不能合并**。
+2026-10-25，ranch/dev-r51。第一轮（提交 `53a7fe0`）停在需要主控决定的地方，当时只保存失败复现，不能合并；主控决定及后续实现见下文。
 
 - 做了什么：在 `pen.rs` 的 `final_kill_wait_is_bounded_and_records_remaining_processes` 中加入真实 CLI `ls` 清理。pen 写好记录、仍持锁且 socket 尚在时，暂停本测试自己的 stop CLI 子进程；确认暂停后关闭 socket、放锁，等隔离环境中的 ls 清理完成，再恢复并回收 stop CLI。这个固定调度模拟 stop 在两次轮询之间没有获得 CPU，不改变 pen 写记录、删 socket、放锁的次序。原有残留进程、耗时、退出记录和日志断言保留，文件内容在 ls 删除前读取。所有子进程均等待结束。
 - 验证了什么：使用指定 `CARGO_TARGET_DIR`，运行 `cargo test -p corral-core --lib pen::tests::final_kill_wait_is_bounded_and_records_remaining_processes -- --exact --nocapture`。原实现 RED：ls 成功且目录已删除，stop 输出 `exit_code:null`、`stopped_by:null`，缺少 `remaining_pids`，而预期是 `exit_code:0`、`stopped_by:SIGKILL` 和残留 PID。随后只试任务单参考方案：socket 连不上时先读并缓存 instance 匹配的 exit.json，再检查锁；同一条测试仍 RED，输出相同。两次均约 5.1 秒，测试命令均以前台完成、退出码 101；无效生产代码已撤回。
@@ -69,3 +69,18 @@
 - 需要主控决定：建议允许修改 stop 与 ls 的清理协调，让 stop 读完本实例退出记录前，ls 不能删除它；需同时明确旧版 ls 不参与新协调时的兼容边界。另一条路是 pen 通过停止请求的连接返回最终记录，但涉及内部协议和旧 pen 的兼容，改动更大。只缩短轮询或保留提前缓存仅能缩小窗口，达不到“不再丢”的要求，不建议作为修复交付。待主控决定后继续，将决定补记于此。
 - 没做的事：尚未达到 GREEN，未加或运行同名重开边角测试，未运行全套测试、clippy、fmt 三项最终验证；未修改 CONTRACT、DESIGN、HANDOFF，未动 R52 的两个文件，未合并、推送、部署，也未操作用户 agent。生产实现与原来一致，paddock 目前不用动。
 - 踩过的坑：审查参考方案所依赖的“pen 先写记录、再删 socket 和放锁”只保证写入先后，并不保证 stop 会在 ls 清理之前被调度。固定这个调度后，提前缓存也必然漏读，故撤回该尝试，没有继续替换方案。
+
+### 主控决定后的实现（2026-10-25）
+
+- 主控决定：采用「stop 与 ls 协调清理」，以文件锁实现，不用时间宽限，不改 pen 协议。stop 发请求前在 agent 目录持有专用排他 flock，读完 exit.json 才释放；ls 清理前非阻塞获取同一把锁，取不到就跳过且不列入输出。锁文件加进 `state::FILES`；stop 尽量删除自己的锁文件，中途退出由系统释放 flock，余下目录交后续 ls。旧版 ls 不认识这把锁，仍可能令新版 stop 返回 null；需要保证其遗留锁文件能回收、同名 agent 能重开。命令、字段、退出码不变，在 CONTRACT 写明旧版边界。
+- 做了什么：实现 `stop.lock`，沿用已有带 inode 复核的非阻塞 flock。stop 等待另一持锁者时沿用 `--timeout` 和现有 timeout 错误；持锁对象负责返回、报错时释放。删除自身锁文件前还尝试获取运行锁并核对 inode，避免和另一个 stop、旧 ls 的删除互相穿插；运行锁已经被旧 ls 删掉时留下标记，供新版 ls 发现。新版 ls 同时识别运行锁或 stop.lock，回收孤立标记时重建并取得运行锁，避免删除同名新实例。pen 启动清理保留 stop.lock，避免重开时换掉仍在用的锁 inode；退出记录写入次序、停止步骤及协议未改。补了保留文件名检查及文件清单快照，CONTRACT 已补旧版 ls 边界。
+- 验证了什么：命令均使用本任务的 `CARGO_TARGET_DIR`，并等待前台结束。
+  - 原竞争测试先前已 RED，本轮 `cargo test -p corral-core --lib pen::tests::final_kill_wait_is_bounded_and_records_remaining_processes -- --exact --nocapture` GREEN（10.15 秒）。固定相同调度，ls 不列已停 agent、保留等待中的退出记录，stop 给出完整字段；stop 结束后自身锁文件消失，后一次 ls 清理目录。原有两种父进程状态、残留 PID、5–7 秒上限、日志及记录断言保留。
+  - `cargo test -p corral-core --test protocol stop_does_not_reuse_exit_record_after_same_name_restart -- --exact --nocapture` 通过（1.20 秒）。合成 pen 在同名重开后故意保留旧实例记录，真实 CLI 不把旧退出码、停止步骤、残留 PID 用于当前实例；匹配实例时完整输出保持一致。
+  - `cargo test -p corral-core --test protocol stop_lock_left_by_old_ls_allows_restart_and_eventual_cleanup -- --exact --nocapture` 通过（0.90 秒）。构造旧 ls 只留下 stop.lock 的状态：持锁期间新版 ls 不删除、不列出，同名 `/bin/cat` 可启动且不替换锁 inode；持锁者退出后新 stop、ls 可正常清理。另核对无 flock 持有者的孤立标记可直接被新版 ls 回收，不需先重开；这里用关闭锁描述符模拟失去持锁者，没有实际杀 stop 进程。
+  - `cargo test --all-targets` 按预算跑一次：首个 lib 测试目标 43 通过、1 失败、1 跳过，失败是 `adapters_tables.json` 尚未加入已批准的 `stop.lock`，之后的目标因默认失败即停未执行。已只在预期清单加入这一项，保留原快照断言，删除测试生成的 `.actual.json`。**受“各跑一次”限制，未复跑，不能声称全套通过。**
+  - `cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各跑一次，均通过。
+- 拿主意的地方：实现沿用主控的锁方案，未采用提前缓存、宽限时间或协议改动。专用锁尽量在仍持锁时删除，以免另一 stop 拿到旧 inode 后锁文件被移除。旧 ls 留下的标记由之后的新版 ls 回收；如果始终只运行旧版 ls，它仍不认识标记，但不妨碍同名重开。公开输出及退出码保持，paddock 不用动。
+- 没做的事：未补跑被快照失败挡住的全套检查，未改 HANDOFF、DESIGN、R52 的两个文件，未操作用户 agent，未合并、推送或部署。
+- 踩过的坑：新增 `state::FILES` 条目时首次漏同步 `adapters_tables.json`，导致唯一一次全套验证提前停止；现已补齐预期数据，没有删除或放宽断言。
+- 交主控：实现及指定针对性检查已完成，没有新的设计待定项；还需要主控安排或批准一次修正快照后的全套测试，补齐上述验证缺口后再判断可否合并。

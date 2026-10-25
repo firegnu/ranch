@@ -812,6 +812,18 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             let timeout = parsed.seconds("--timeout", 90.0)?;
             let s = state::require(name, json!({"op":"status"}))?;
             let m = state::read(state::dir(name)?.join("meta.json"));
+            let lock_deadline = now() + timeout.max(0.0);
+            let stop_lock = loop {
+                if let Some(lock) = state::stop_lock(name)? {
+                    break lock;
+                }
+                if now() >= lock_deadline {
+                    return Err(
+                        Error::new(4, "timeout", "pen keeps stopping").with("name", name.as_str())
+                    );
+                }
+                thread::sleep(Duration::from_millis(50));
+            };
             state::require(
                 name,
                 json!({"op":"stop","steps":agents::quit_steps(m["kind"].as_str().unwrap_or(""))}),
@@ -832,6 +844,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                 thread::sleep(Duration::from_millis(50));
             }
             let e = state::read(state::dir(name)?.join("exit.json"));
+            drop(stop_lock);
             let matched = e["instance"] == s["instance"];
             let mut result = json!({"ok":true,"name":name,"instance":s["instance"],"exit_code":if matched{e["code"].clone()}else{Value::Null},"stopped_by":if matched{e["stop_step"].clone()}else{Value::Null}});
             if matched

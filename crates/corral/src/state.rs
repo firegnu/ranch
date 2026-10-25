@@ -15,8 +15,10 @@ use std::{
     time::Duration,
 };
 
+pub(crate) const STOP_LOCK: &str = "stop.lock";
 pub const FILES: &[&str] = &[
     "lock",
+    STOP_LOCK,
     "meta.json",
     "sock",
     "hook.py",
@@ -123,6 +125,34 @@ pub fn lock(path: &Path, create: bool) -> Result<Option<File>> {
         }
         if fs::metadata(path).is_ok_and(|m| m.ino() == f.metadata().unwrap().ino()) {
             return Ok(Some(f));
+        }
+    }
+}
+pub(crate) struct StopLock {
+    path: PathBuf,
+    file: File,
+}
+pub(crate) fn stop_lock(name: &str) -> Result<Option<StopLock>> {
+    let path = dir(name)?.join(STOP_LOCK);
+    let file = lock(&path, true).map_err(|e| {
+        if !path.parent().unwrap().is_dir() {
+            not_found(name)
+        } else {
+            e
+        }
+    })?;
+    Ok(file.map(|file| StopLock { path, file }))
+}
+impl Drop for StopLock {
+    fn drop(&mut self) {
+        // Unlink while still holding both locks, so another stop cannot acquire a
+        // replaced inode and an old ls cannot concurrently remove the name lock.
+        // If old ls already removed it, keep our marker for a later new ls to find.
+        if let Ok(Some(_lock)) = lock(&self.path.with_file_name("lock"), false)
+            && fs::metadata(&self.path)
+                .is_ok_and(|m| m.ino() == self.file.metadata().unwrap().ino())
+        {
+            let _ = fs::remove_file(&self.path);
         }
     }
 }
@@ -238,7 +268,7 @@ pub fn require(name: &str, req: Value) -> Result<Value> {
 }
 pub fn list() -> Result<Vec<Value>> {
     fn visit(p: &Path, root: &Path, out: &mut Vec<String>) -> std::io::Result<()> {
-        if p != root && p.join("lock").is_file() {
+        if p != root && (p.join("lock").is_file() || p.join(STOP_LOCK).is_file()) {
             out.push(p.strip_prefix(root).unwrap().to_string_lossy().into_owned())
         }
         for e in fs::read_dir(p)? {
@@ -275,7 +305,16 @@ pub fn list() -> Result<Vec<Value>> {
             }
             Ok(_) | Err(_) => {
                 let d = dir(&name)?;
-                if let Some(_lock) = lock(&d.join("lock"), false)? {
+                let stop_lock = match lock(&d.join(STOP_LOCK), true) {
+                    Err(_) if !d.is_dir() => continue,
+                    result => result?,
+                };
+                let Some(_stop_lock) = stop_lock else {
+                    continue;
+                };
+                // Old ls may have removed the name lock but left stop.lock behind.
+                // Recreate it to serialize orphan cleanup with a same-name start.
+                if let Some(_lock) = lock(&d.join("lock"), true)? {
                     for f in FILES {
                         if *f != "lock" {
                             let _ = fs::remove_file(d.join(f));

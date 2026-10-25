@@ -1,6 +1,7 @@
 {
   "files": [
     "lock",
+    "stop.lock",
     "meta.json",
     "sock",
     "hook.py",

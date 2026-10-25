@@ -222,7 +222,8 @@ mod tests {
             drop(listener);
             fs::remove_file(dir.join("sock")).unwrap();
             drop(lock);
-            let ls = Command::new(std::env::current_exe().unwrap())
+            let mut ls_command = Command::new(std::env::current_exe().unwrap());
+            ls_command
                 .args([
                     "--ignored",
                     "--exact",
@@ -232,8 +233,9 @@ mod tests {
                 .env("CORRAL_HOME", home.path())
                 .env("KIMI_CODE_HOME", home.path().join("kimi-home"))
                 .env("CORRAL_TEST_STOP_LS", "1")
-                .env("CORRAL_TEST_STOP_EXPECTED", r#"{"ok":true,"agents":[]}"#)
-                .output();
+                .env("CORRAL_TEST_STOP_EXPECTED", r#"{"ok":true,"agents":[]}"#);
+            let ls = ls_command.output();
+            let protected_exit = state::read(dir.join("exit.json"));
             drop(resume);
             let cli = cli.wait_with_output().unwrap();
             let ls = ls.unwrap();
@@ -244,7 +246,6 @@ mod tests {
                 String::from_utf8_lossy(&ls.stdout),
                 String::from_utf8_lossy(&ls.stderr)
             );
-            assert!(!dir.exists(), "ls did not clean up the stopped pen");
             assert!(
                 still_running,
                 "pen waited until the cleanup guard killed the residual process"
@@ -259,6 +260,11 @@ mod tests {
                 String::from_utf8_lossy(&cli.stdout),
                 String::from_utf8_lossy(&cli.stderr)
             );
+            assert_eq!(protected_exit, exit, "ls deleted the pending stop record");
+            assert!(!dir.join("stop.lock").exists());
+            let ls = ls_command.output().unwrap();
+            assert!(ls.status.success());
+            assert!(!dir.exists(), "ls did not clean up after stop finished");
             assert_eq!(exit["remaining_pids"], json!([pid]));
             assert_eq!(exit["stop_step"], "SIGKILL");
             assert_eq!(
@@ -1031,7 +1037,7 @@ pub fn worker() -> i32 {
         let (name, lock) = state::acquire(name, cfg["unique"] == true)?;
         let dir = state::dir(&name)?;
         for file in state::FILES {
-            if *file != "lock" {
+            if *file != "lock" && *file != state::STOP_LOCK {
                 let _ = fs::remove_file(dir.join(file));
             }
         }
