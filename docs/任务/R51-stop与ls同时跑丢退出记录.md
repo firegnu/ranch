@@ -120,3 +120,13 @@
 - 拿主意的地方：严格采用主控的共享锁方案，未选择记录缺失时返回 null 的排队补救，也未额外加入 pen 协议或重开行为改动。原有同名重开窗口、双向旧版混用边界保持。paddock 不用动，没有新的待定事项。
 - 没做的事：未改其他仓库、R52 文件、DESIGN、HANDOFF，未操作用户 agent，未合并、推送或部署。
 - 踩过的坑：新夹具最初给已关闭的空探测 socket 设置读取超时，macOS 返回 EINVAL（0.82 秒）；这次失败不算 RED。改用带统一截止时间的非阻塞读取，并给测试自己的 CLI 加 Drop 回收后，才取得上述真实退出码失败；生产修复之前没有把夹具错误当成目标缺陷。
+
+## 主控审查
+
+2026-10-25，ranch/main。
+- 第一轮停下请主控定方案：证实「stop 轮询时提前缓存」不够（pen 写记录到 ls 删目录可以全落在两次轮询之间），主控定用 `stop.lock` 文件锁协调。`fa239ed` 主控审查通过，重跑全套 500 过、clippy、fmt 通过。
+- 交叉审查（ranch/review-r51，opus[1m] / xhigh，见 `R51-审查.md`）三轮：第一轮必须改 1 条（两个 stop 同时停，后到的从成功变成退出码 2），采纳 2、3、4 条；第一次复核发现推荐改法在两个 stop 交接锁时仍有 50 毫秒空档、等锁后可能停错同名新实例，主控改定共享锁（stop LOCK_SH、ls LOCK_EX），stop 之间不再排队；第二次复核「可以合并」。
+- 合并后在 main（含 R52）上重跑：`cargo test --all-targets` 502 通过、0 失败、17 跳过；clippy、fmt 通过。
+- 公开命令、字段、退出码不变，CONTRACT 新增「stop 与 ls 的退出记录（R51）」一段，paddock 不用动。旧版 ls 与新版 stop（或反过来）混用时仍可能拿到 null，和改前一样。
+- 建议改、未做：第二次复核发现 `protocol.rs` 的 `injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved` 偶发失败（文件建出就读、内容可能没写完），和 R51 无关，记进 HANDOFF 已知问题，要不要另开小活由用户定。
+- 结果：返工 2 次（主控定方案 1 次、交叉审查后 2 轮改动；均在碰要害档，同一 agent）

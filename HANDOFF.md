@@ -38,7 +38,6 @@
 
 ## 还没派的草稿
 
-- `docs/任务/R51-stop与ls同时跑丢退出记录.md`：R48e 审查发现，`stop` 和同时跑的 `ls` 竞争丢退出记录；审查给了修法，改的是所有 agent 共用的 `stop` 等待。用户 10-24：记草稿，以后再做。
 - `docs/任务/R39-pony后续想法.md`：pony 后续各条，按档排好，各条写了什么时候再做；手机上答确认框那条已由 R46、R47a–R47d 做完。
 - `docs/任务/R40b-pony-setup新机器一条命令装好.md`（未提交）：新机器上 `pony setup`，要给别的机器装 pony 时再做。
 - `docs/任务/R17c-Linux上验sandbox.md`（未提交）：5090 上验 sandbox，暂缓（用户 10-19：「先不做R17c了，先把全部的在macos上跑通」）。
@@ -50,10 +49,7 @@
 - `~/.cache` 是指向 HOME 外的符号链接时，墙里连临时目录都建不了（R20 审查；用户的不是链接）。
 - R18：旧运行的慢 `child-sandbox` 设定请求遇到同名重开，复核和写入之间还剩很小的窗口（CONTRACT 写明了）。
 - corral 对 Codex 在同一轮里会短暂报 idle，派活时提醒会提前到。
-- 全套测试偶有 1 个失败、再跑就过（hook 协议测试的偶发超时；`raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1` 也失败过一次；R48g2 合并前 `crates/corral/tests/sandbox.rs` 的 `wrapped_agent_keeps_kind_hooks_prompt_and_lifecycle` 失败一次，单独复跑 3 次都过，像是文件出现后内容还没写完就读）。
-- `crates/corral/tests/lifecycle.rs` 跑完会在 `/tmp` 留一个空的测试目录（`/tmp/.tmp…/pens/test/cat`，R50b 审查发现，没有进程在用）。
-- `corral start --help` 的用法行没列 `--sandbox`（CONTRACT 有）。
+- 全套测试偶有 1 个失败、再跑就过（hook 协议测试的偶发超时；`raw_v2_events_keep_original_input_reply_and_retry_grace_with_v1` 也失败过一次；`crates/corral/tests/protocol.rs` 的 `injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved` 用「文件存在」等假 claude 写参数，内容没写完就读会越界 panic，R51 复核时失败一次，单独复跑 3 次都过；改法同 R52：先写临时文件再 mv，或等内容完整）。
 - agy 的已知限制见 DESIGN §7「接入 agy」。
-- `corral stop` 和同时跑的 `corral ls` 竞争：`ls` 可能先删掉刚停的 agent 的 `exit.json`，`stop` 输出 `exit_code`、`stopped_by` 为 null（Kimi 的 `remaining_pids` 也丢）；所有 agent 都会碰上，开着 paddock 时约 4%。修法草稿见 R51。
 - Kimi（R48g2 审查，可以不改的）：Kimi 子 agent 的 wire 每次 `status` 都从头读（8 个 8 MB 时约 38 ms）；子框和主框同时开、子框先关后，主框不重发提醒，仍停在「回电脑处理」。Kimi 的按键和框的行为照 2.3.1 摸的，Kimi 升级后要重新核对（见 `docs/调研/R48g-Kimi提问和批准框.md`）。
 - 套墙的 Kimi（R48f 审查）：墙内能读写所有 Kimi 会话（含批准记录、定时任务），墙外恢复时会生效，套过墙的会话不要在墙外直接恢复；`server.token`、`device_id`、`credentials/mcp/`、别的项目的会话墙里可读；种类数据不支持 `deny_read`。要隔离另开任务。
