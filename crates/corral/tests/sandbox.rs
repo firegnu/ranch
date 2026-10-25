@@ -592,6 +592,7 @@ trap ':' HUP INT TERM
 "$@" <&0 &
 child=$!
 echo "$child" > "$HOME/child-pid"
+touch "$HOME/fence-ready"
 while kill -0 "$child" 2>/dev/null; do wait "$child"; result=$?; done
 exit "$result"
 "#);
@@ -601,6 +602,7 @@ exit "$result"
 printf '%s\n' "$@" > "$HOME/agent-args"
 printf '%s\n' "$CORRAL_NAME" > "$HOME/agent-env"
 trap 'exit 7' HUP
+touch "$HOME/agent-ready"
 while :; do sleep 0.05; done
 "#,
     );
@@ -622,7 +624,11 @@ while :; do sleep 0.05; done
     ]);
     assert_eq!(started["kind"], "claude");
     assert_eq!(started["sandbox"], json!({"profile":"dev"}));
-    eventually(|| l.root.path().join("agent-args").exists());
+    // File creation precedes its contents, and both processes must finish setup
+    // before we read their files or exercise pause/resume/stop.
+    eventually(|| {
+        l.root.path().join("agent-ready").exists() && l.root.path().join("fence-ready").exists()
+    });
     let args = fs::read_to_string(l.root.path().join("agent-args")).unwrap();
     assert!(args.contains("--settings\n"), "{args}");
     assert!(args.contains("first prompt"));

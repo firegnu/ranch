@@ -1,4 +1,4 @@
-// From Saddle `crates/corral-core/tests/lifecycle.rs` at commit `a31dea2`, unchanged.
+// From Saddle `crates/corral-core/tests/lifecycle.rs` at commit `a31dea2`; ranch has changed it since.
 mod common;
 use serde_json::Value;
 use std::process::{Command, Output};
@@ -237,6 +237,8 @@ while IFS= read -r text; do turn "$text"; done
 }
 #[test]
 fn deferred_send_is_delivered_by_detached_worker() {
+    use std::os::fd::AsRawFd;
+
     let lab = Lab::new();
     let s = lab.json(&["start", "test/cat", "--", "/bin/cat"]);
     let p = lab.json(&[
@@ -259,6 +261,32 @@ fn deferred_send_is_delivered_by_detached_worker() {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    // PTY output precedes the worker's final record write. Let it finish before
+    // stopping the agent and removing the directory it is still writing into.
+    let id = p["request_id"].as_str().unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .open(
+            lab.root
+                .path()
+                .join(format!("pens/test/cat/.after/{id}.lock")),
+        )
+        .unwrap();
+    loop {
+        let after = lab.json(&["after", "test/cat", "--request-id", id]);
+        if after["records"][0]["phase"] == "sent"
+            && unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0
+        {
+            assert_eq!(after["records"][0]["result"]["confirmed"], false);
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{after}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    drop(lock);
+    let root = lab.root.path().to_owned();
+    drop(lab);
+    assert!(!root.exists(), "test directory was not removed: {root:?}");
 }
 #[test]
 fn skill_install_requires_consent_and_preserves_unowned_removal() {
