@@ -6,9 +6,9 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 ## stop 与 ls 的退出记录（R51）
 
-各家的新版 `corral stop` 与 `corral ls` 用文件锁协调清理，ls 不会抢在 stop 读取本次 `exit.json` 之前删除记录。命令、参数、JSON 字段和退出码不变；同时停同一个运行中实例的多个 stop 都返回这次的退出记录，仍为 `ok:true`、退出码 0。等过停止锁的调用若遇到 pen 已退出，只接受与开头 status 的 `instance` 一致的记录；记录缺失或实例不同仍返回原来的 `not_found`。等锁和等 pen 停下共用一个 `--timeout` 截止时间。
+各家的新版 `corral stop` 对 `stop.lock` 持共享锁（`LOCK_SH`），`corral ls` 清理前非阻塞取排他锁（`LOCK_EX`）；任一个 stop 仍持共享锁时，ls 不会删除退出记录。多个 stop 互不排队，拿到共享锁后各自立刻发停止请求；同时停同一个运行中实例的几个 stop 都返回 `ok:true`、退出码 0 和同一份退出记录。命令、参数、JSON 字段和退出码不变，等锁和等 pen 停下仍共用一个 `--timeout` 截止时间。
 
-- agent 状态目录兼容新增 `stop.lock`：stop 发请求前持有排他 flock，读完退出记录后释放并尽量删除文件；进程中途退出时系统释放 flock，后续 ls 可继续清理。ls 不主动创建此文件。旧版 ls 不认识该文件，可能留下只有 stop.lock 的目录；同名 agent 仍可重开，后续新版 ls 能回收残留。
+- agent 状态目录兼容新增 `stop.lock`：stop 发请求前持有共享 flock，读完退出记录后释放并尽量删除文件；删除前须取得排他锁，没有取得时只释放自己的锁。进程中途退出时系统释放 flock，后续 ls 可继续清理。ls 不主动创建此文件。旧版 ls 不认识该文件，可能留下只有 stop.lock 的目录；同名 agent 仍可重开，后续新版 ls 能回收残留。
 - 名字中任一段为 `stop.lock` 时，新版命令报 `bad_name`，与其他内部保留文件名相同。旧版允许这样的名字；已有这种名字的 agent 不能通过新版命令操作，并会使新版 ls 报错，需先用旧版处理。
 - stop 进行中，ls 的 status 查询成功时照常列出；status 失败且 stop.lock 被占时不列该项，也不清理目录。因此 pen 关 socket 后，该项不再暂时显示为 `starting`。pen 卡住不回 status，或同名新实例在旧 stop 尚未结束时处于启动阶段，也可能暂时不列；status 恢复成功后照常列出。没有被 stop 持锁的启动中 agent 仍显示 `starting:true`。
 - 过渡期两种混用都有原来的竞争：旧版 ls + 新版 stop，或旧版 stop + 新版 ls，都仍可能在读取前清掉退出记录，使 `exit_code`、`stopped_by` 为 `null`，Kimi 的 `remaining_pids` 也无法给出。`stopped_by:null` 表示没有取到记录，不能据此把缺少 remaining_pids 当成没有残留。

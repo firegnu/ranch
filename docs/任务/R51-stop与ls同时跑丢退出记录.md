@@ -103,3 +103,20 @@
 - 拿主意的地方：全部沿用主控对八条意见的取舍；fallback 只作用于明确等过锁的 not_found，不把其他错误或其他实例的记录改成成功，没有新的待定事项。
 - 没做的事：未改第 5–8 条对应的实现，未改其他仓库、R52 文件、DESIGN、HANDOFF；未操作用户 agent，未合并、推送、部署。
 - 踩过的坑：没有；两条预期 RED 都直接复现了审查所述问题，采用指定改法后通过。
+
+### 复核后返工
+
+2026-10-25，ranch/dev-r51。已读主仓库 `docs/任务/R51-审查.md` 末尾「复核」，按主控决定以共享锁方案同时处理第 1、2 条，替代上一轮排他锁排队及 not_found fallback。
+
+- 主控决定及做了什么：stop 对 stop.lock 取 `LOCK_SH`，几个 stop 可以同时持锁，拿到锁后各自立刻发停止请求。删除「等过锁」标志和容忍 not_found 的分支，恢复 status → 共享锁 → 停止请求 → 等待 → 读取 exit.json 的流程；取锁重试及等停止仍使用同一 deadline。ls 保持非阻塞 `LOCK_EX`，任一 stop 持锁即跳过，不主动创建 stop.lock。CONTRACT 相应写明共享／排他锁、多个 stop 均返回 ok:true、退出码 0 和同一份记录，去掉上一轮关于等过锁及 not_found 的两句。
+- 释放与 inode 核对：StopLock 的 Drop 先在自己的描述符上尝试 `LOCK_EX | LOCK_NB`；任何失败都直接结束 Drop、关闭描述符，不再做删除判断，也不假设共享锁仍保留。升级成功后才取运行锁，并核对路径和所持文件 inode 一致再删除。取锁共用原来的 inode 复核循环：成功 flock 后路径已删或 inode 已换，就关闭旧描述符并重新打开、取锁；stop 的共享模式也走此循环，避免接受已删 inode 上的锁。没有改变 pen 协议、写退出记录的次序或 ls 的缺文件路径。
+- 新测试：保留原有并发 stop 测试，新增 `stop_concurrent_callers_keep_the_record_across_listing`。合成 pen 通过真实 socket 接收两个 CLI 的 status／stop；共享锁实现收到第二个停止请求后，明确对本测试第二个 CLI 发 SIGSTOP，并用 waitpid 确认停住。随后写退出记录、关闭 pen socket、放运行锁，等第一个 stop 结束，跑真实 ls，再 SIGCONT 第二个，断言三个命令均退出码 0、两个 stop 的完整输出相同且记录非空，并确认后续 ls 能清理目录。当前排他锁基线无法发出第二个停止请求，测试在有界等待后暂停其等锁进程，仍执行同一段 ls 插入顺序；失败信号来自第二个 CLI 的真实退出码，不把夹具等待超时当作 RED。新测试的 CLI 子进程有 Drop 清理，断言失败时也只杀并回收自己启动的两个 PID。
+- 验证了什么：全部使用本任务的 `CARGO_TARGET_DIR`，命令均在前台等待结束。
+  - 有效 RED：生产代码仍为 `6999b3c` 时运行 `cargo test -p corral-core --test protocol stop_concurrent_callers_keep_the_record_across_listing -- --exact --nocapture`，第二个 stop 返回 `not_found`、`exited:null`、退出码 2，预期为 0，测试失败（5.83 秒）。
+  - GREEN：共享锁修改后，同一命令通过（0.87 秒）。第二个 stop 已持锁且发出自己的停止请求，第一个结束和一次 ls 之后仍返回与第一个相同的记录。
+  - `cargo test -p corral-core --test protocol stop_ -- --nocapture`：5 通过（6.72 秒），包含两条并发 stop、实例隔离、旧 ls 遗留目录及不新建锁、停止超时。
+  - `cargo test -p corral-core --lib pen::tests::final_kill_wait_is_bounded_and_records_remaining_processes -- --exact --nocapture`：通过（10.17 秒）；`cargo test -p corral-core --test protocol concurrent_unique_starts_and_listing_preserve_live_locks -- --exact --nocapture`：通过（1.27 秒）。共 7 条直接相关测试通过。
+  - `cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次，均通过；按主控指示不跑全套。
+- 拿主意的地方：严格采用主控的共享锁方案，未选择记录缺失时返回 null 的排队补救，也未额外加入 pen 协议或重开行为改动。原有同名重开窗口、双向旧版混用边界保持。paddock 不用动，没有新的待定事项。
+- 没做的事：未改其他仓库、R52 文件、DESIGN、HANDOFF，未操作用户 agent，未合并、推送或部署。
+- 踩过的坑：新夹具最初给已关闭的空探测 socket 设置读取超时，macOS 返回 EINVAL（0.82 秒）；这次失败不算 RED。改用带统一截止时间的非阻塞读取，并给测试自己的 CLI 加 Drop 回收后，才取得上述真实退出码失败；生产修复之前没有把夹具错误当成目标缺陷。

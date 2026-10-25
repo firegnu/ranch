@@ -103,6 +103,9 @@ fn write_record(path: &Path, v: &Value, durable: bool) -> Result<()> {
     Ok(())
 }
 pub fn lock(path: &Path, create: bool) -> Result<Option<File>> {
+    lock_mode(path, create, libc::LOCK_EX)
+}
+fn lock_mode(path: &Path, create: bool, mode: i32) -> Result<Option<File>> {
     loop {
         let f = match OpenOptions::new()
             .read(true)
@@ -116,7 +119,7 @@ pub fn lock(path: &Path, create: bool) -> Result<Option<File>> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !create => return Ok(None),
             Err(e) => return Err(e.into()),
         };
-        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        if unsafe { libc::flock(f.as_raw_fd(), mode | libc::LOCK_NB) } != 0 {
             let e = std::io::Error::last_os_error();
             if e.kind() == std::io::ErrorKind::WouldBlock {
                 return Ok(None);
@@ -134,7 +137,7 @@ pub(crate) struct StopLock {
 }
 pub(crate) fn stop_lock(name: &str) -> Result<Option<StopLock>> {
     let path = dir(name)?.join(STOP_LOCK);
-    let file = lock(&path, true).map_err(|e| {
+    let file = lock_mode(&path, true, libc::LOCK_SH).map_err(|e| {
         if !path.parent().unwrap().is_dir() {
             not_found(name)
         } else {
@@ -145,6 +148,11 @@ pub(crate) fn stop_lock(name: &str) -> Result<Option<StopLock>> {
 }
 impl Drop for StopLock {
     fn drop(&mut self) {
+        // Upgrading is not atomic on macOS. A failure may release our shared
+        // lock, so do not attempt any cleanup unless the upgrade succeeded.
+        if unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return;
+        }
         // Unlink while still holding both locks, so another stop cannot acquire a
         // replaced inode and an old ls cannot concurrently remove the name lock.
         // If old ls already removed it, keep our marker for a later new ls to find.

@@ -980,6 +980,140 @@ fn stop_concurrent_callers_receive_the_same_exit_record() {
 }
 
 #[test]
+fn stop_concurrent_callers_keep_the_record_across_listing() {
+    use std::io::BufRead;
+    use std::os::unix::net::UnixListener;
+
+    struct StopCli(Option<std::process::Child>);
+    impl StopCli {
+        fn finish(mut self) -> std::io::Result<Output> {
+            self.0.take().unwrap().wait_with_output()
+        }
+    }
+    impl Drop for StopCli {
+        fn drop(&mut self) {
+            if let Some(child) = &mut self.0 {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    let lab = Lab::new();
+    let dir = lab.root.path().join("pens/lab/main");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("meta.json"), r#"{"kind":"cat"}"#).unwrap();
+    let lock = hold_stop_test_lock(&dir.join("lock"));
+    let listener = UnixListener::bind(dir.join("sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let reply = |op: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let (mut socket, _) = match listener.accept() {
+                Ok(socket) => socket,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => panic!("{e}"),
+            };
+            socket.set_nonblocking(true).unwrap();
+            let mut line = String::new();
+            let mut reader = std::io::BufReader::new(&socket);
+            loop {
+                match reader.read_line(&mut line) {
+                    Ok(_) => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() >= deadline {
+                            return false;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            }
+            if line.is_empty() {
+                // stop also probes socket liveness without sending a request.
+                continue;
+            }
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["op"], op);
+            writeln!(
+                socket,
+                "{}",
+                json!({"ok":true,"proto":1,"instance":"three-way-stop"})
+            )
+            .unwrap();
+            return true;
+        }
+        false
+    };
+    let mut command = lab.cmd();
+    command
+        .args(["stop", "lab/main", "--timeout", "15"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let first = StopCli(Some(command.spawn().unwrap()));
+    assert!(reply("status"));
+    assert!(reply("stop"));
+    let second = StopCli(Some(command.spawn().unwrap()));
+    let second_pid = second.0.as_ref().unwrap().id() as i32;
+    assert!(reply("status"));
+    // With shared locks the second request proves its lock is held. The old
+    // exclusive implementation cannot send it yet; pause that waiter instead,
+    // so RED is the real exit-code/record regression after ls, not a fixture timeout.
+    let second_requested_stop = reply("stop");
+    assert_eq!(unsafe { libc::kill(second_pid, libc::SIGSTOP) }, 0);
+    let mut status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(second_pid, &mut status, libc::WUNTRACED) },
+        second_pid
+    );
+    assert!(libc::WIFSTOPPED(status));
+    fs::write(
+        dir.join("exit.json"),
+        r#"{"instance":"three-way-stop","code":0,"stop_step":"SIGHUP"}"#,
+    )
+    .unwrap();
+    drop(listener);
+    fs::remove_file(dir.join("sock")).unwrap();
+    drop(lock);
+    let first = first.finish();
+    let ls = lab.out(&["ls"]);
+    assert_eq!(unsafe { libc::kill(second_pid, libc::SIGCONT) }, 0);
+    let second = second.finish().unwrap();
+    let first = first.unwrap();
+    for output in [&first, &second, &ls] {
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(
+        second_requested_stop,
+        "second caller did not send its own stop request"
+    );
+    let first: Value = serde_json::from_slice(&first.stdout).unwrap();
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(
+        first,
+        json!({"ok":true,"name":"lab/main","instance":"three-way-stop",
+        "exit_code":0,"stopped_by":"SIGHUP"})
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&ls.stdout).unwrap()["agents"],
+        json!([])
+    );
+    assert!(!dir.join("stop.lock").exists());
+    assert_eq!(lab.json(&["ls"])["agents"], json!([]));
+    assert!(!dir.exists());
+}
+
+#[test]
 fn stop_does_not_reuse_exit_record_after_same_name_restart() {
     use std::io::BufRead;
     use std::os::unix::net::UnixListener;
