@@ -758,9 +758,10 @@ fn hook_is_fail_open_and_sandbox_public_commands_leave_no_state() {
 fn injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved() {
     let lab = Lab::new();
     let fake = lab.root.path().join("claude");
+    // Publish the argument file only after printf has finished writing it.
     fs::write(
         &fake,
-        "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$CORRAL_EVENTS.args\"\nexec /bin/cat\n",
+        "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$CORRAL_EVENTS.args.tmp\" && mv \"$CORRAL_EVENTS.args.tmp\" \"$CORRAL_EVENTS.args\"\nexec /bin/cat\n",
     )
     .unwrap();
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o700)).unwrap();

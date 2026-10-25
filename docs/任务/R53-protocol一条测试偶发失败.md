@@ -44,3 +44,12 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：只改目标测试的假 claude 脚本，先把参数写到同目录的 `events.args.tmp`，`printf` 成功完成后用 `mv` 原子发布 `events.args`。原有的文件存在检查因此只能看到完整内容；所有参数、hook、upgrade 断言及 3 秒等待上限均保留。没有改程序行为或公开约定，paddock 不用动。
+- 原因与修前证据：原脚本的 shell 重定向先创建 `events.args`，然后才执行 `printf`；测试只等文件存在，可能读到空内容，随后 `args[2..]` 越界。修前临时改为 `{ sleep 0.2; printf ...; } > "$CORRAL_EVENTS.args"`，只放大创建文件与写入之间已有的调度窗口。运行 `cargo test --test protocol injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved -- --exact --nocapture`，在原断言处复现 `range start index 2 out of range for slice of length 0`（1 failed，退出码 101）。这确认了实际存在的竞态并复现同类越界；没有 R51 当次的完整运行现场，不能追溯证明历史失败的全部时序。临时停顿已移除。
+- 验证了什么：全部 Cargo 命令使用 `.target/r53-protocol-flaky` 独立编译目录并在前台等到退出。修后目标测试以 `--exact` 连续运行 20 次，20 次全部通过；最后 `cargo test --all-targets` 一次通过（502 passed、17 ignored、0 failed），`cargo clippy --all-targets -- -D warnings` 一次通过，`cargo fmt --check` 一次通过。自查 diff 只有本测试的脚本、说明注释及本完成记录，没有诊断停顿、断言放宽或超时修改。
+- 拿主意的地方：采用同目录临时文件写完再发布，直接消除读半份文件的窗口，不引入固定等待或额外辅助代码。没有需要主控决定的事。
+- 没做的事：不改 `src/`、其他测试、HANDOFF、设计文档或其他仓库；不碰用户 agent，不合并、不推送、不部署，只在任务分支提交。按任务验证预算，没有额外扩展测试。
+- 踩过的坑：没有。
