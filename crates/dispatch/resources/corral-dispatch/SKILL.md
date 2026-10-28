@@ -232,6 +232,8 @@ model = "用户选定的模型"
   corral start demo/dev-backend --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 env 对应的 --env 参数> <读表 labels 对应的 --label 参数> --prompt "先读 AGENTS.md，再读 <任务文件>，照做。命令都在前台跑完，全部做完后，回复最后一行写 DONE。" -- <读表 command>
   ```
 
+  `corral start` 单独一条运行：前后不用 `&&`、`;`、`|` 接别的命令，一次运行里也只开一个 agent；建 worktree、提交、下面的 `corral wait`、用 `jq` 取结果都另起一条。用户的放行规则只认单独的 `corral start`，串起来就交给 Claude Code 的自动权限检查，开免确认 agent 时会被拦下。单独一条仍被拦，把这条命令交给用户，请用户在会话里用 `!` 开头运行。
+
   若所选 `choices` 项有 `env`，每项原样作为一个 `--env` 的参数传在 `--` 之前，按 shell 规则引用整个 `KEY=VALUE`，不执行其中的变量或命令；缺省或空数组就不带。
 
   派给 amp 时不能带 `--prompt`：先 `corral start <名字> --unique --cwd <worktree> --env CAIRN_DISABLE=1 <读表 env 对应的 --env 参数> -- <读表 amp 的 command>`，下面的 `corral wait` 等到 `idle` 后，再用 `corral send <名字> "<同样那句话>"` 送第一句（见 corral 技能）。
