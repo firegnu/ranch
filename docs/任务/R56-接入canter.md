@@ -78,3 +78,7 @@ paddock 拆两件：A 图标、New Agent 选 canter（默认 `canter --yolo`）�
 
 - 部署 `5f065af`（R56b + R56c）后，用户在场和 paddock、canter 一起做了冒烟测试，paddock/main 转告全部通过：paddock 里新建 canter（`canter --yolo`）、图标、点信任后 `starting` 转 `idle`、发话后 `working` 再回 `idle`、`reply` 取得到、暂停按钮和菜单里的 Pause 都是灰的、Integrations 显示 Built in、停止时 corral 报 `exiting` 后消失（这次没有剩下的会话，没出 `remaining_sessions` 提示）。
 - 没测、留给 ranch 以后自己测（用户定这次不测）：`/fork` 出来的会话 corral 报的状态对不对（R56b 审查第 8 条）；子 agent 的批准框关掉后 corral 能不能回到 idle（R56b 审查第 2 条，已按建议改，没实测）。
+
+## 结束（11-03）
+
+用户 11-03 定关掉这件活。第 1～10 条已做完、部署（`5f065af`）、联调通过；R56a、R56b、R56c 各自的收尾提交已在 main 上。留给以后、不算这件没做完的：上面「联调」一节的两件没测的；canter 的 `--yolo` 改成不套沙箱后，技能、`AGENT_USAGE.md`、CONTRACT、DESIGN 里「`--yolo` 时命令仍在 canter 自带沙箱里跑」那句要跟着改（用户 11-03：等 canter 改完再叫 ranch）。
