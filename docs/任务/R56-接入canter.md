@@ -73,3 +73,8 @@ paddock 拆两件：A 图标、New Agent 选 canter（默认 `canter --yolo`）�
 3. fence：`fence profiles` 的 kinds 里不列 canter 就行吗（paddock 按它决定选择器给不给档案）？`corral start --sandbox <档案> -- canter` 报什么错误码？canter 自带沙箱有没有要 corral 报出来给 paddock 显示的字段？
 4. `integration status` 的 canter 一行：`hooks` 字段是什么值（现在只有 `launch`、`global`）？「状态来源」有没有字段说明（例如事件／快照订阅），还是 paddock 按 `hooks` 值自己写一句？有没有 `install` 段？
 5. `ls` 里 `kind` 是不是就是 `canter`？`--prompt` 对 canter 怎么放（canter 首句是位置参数）？
+
+## 联调（11-03）
+
+- 部署 `5f065af`（R56b + R56c）后，用户在场和 paddock、canter 一起做了冒烟测试，paddock/main 转告全部通过：paddock 里新建 canter（`canter --yolo`）、图标、点信任后 `starting` 转 `idle`、发话后 `working` 再回 `idle`、`reply` 取得到、暂停按钮和菜单里的 Pause 都是灰的、Integrations 显示 Built in、停止时 corral 报 `exiting` 后消失（这次没有剩下的会话，没出 `remaining_sessions` 提示）。
+- 没测、留给 ranch 以后自己测（用户定这次不测）：`/fork` 出来的会话 corral 报的状态对不对（R56b 审查第 8 条）；子 agent 的批准框关掉后 corral 能不能回到 idle（R56b 审查第 2 条，已按建议改，没实测）。
