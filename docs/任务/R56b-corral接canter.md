@@ -75,3 +75,13 @@
 - 看了 diff：canter 的订阅、翻译、重连、收尾确认都在 `agents/canter.rs`；公共代码只加 `watcher()`、`unsupported()`、`validate_args()` 三个默认方法，`pen/watcher.rs` 起停线程，pen 在 `run()` 开头起线程、升级前收回（停不下就取消升级）、退出时取 `remaining_sessions`；`events.rs` 门槛改成「带了字段就留」，存 `interaction`；`hooks.rs` 只是把 `command()` 改成包内可见，钩子行为没变，部署时共用 helper 不用换。别家不出现 `unsupported`、`interaction`，没碰 R56c 的范围，没加依赖。
 - 主控重跑 `cargo test --all-targets`：516 通过、0 失败、18 跳过（多出的跳过是默认 `#[ignore]` 的真 canter 测试，对方说本机手动跑过）。
 - 交叉审查交 Claude Code，见 `docs/任务/R56b-审查.md`。
+
+## 返工记录
+
+2026-11-03，ranch/dev-r56b-1，按主控对交叉审查第 1～6 条的决定返工；主仓库审查文件只读，第 7、8 条未改。
+
+- **改了什么**：认 `turn.retracted`，等 idle 时写 `Interrupt`，不把撤回当失败或返回上一轮回复。框全关且没有轮在跑、以及没有轮的 working／blocked 收到 idle 时，写 `idle_only` 的 `Stop`，保留 reply 和 interrupted；initialize 同步翻译器状态。
+- **读取与收尾**：SSE 单帧、HTTP 单个 chunk、JSON 正文各限 64 MiB，chunk 头限 64 KiB；会话文件和 server.json 拒绝符号链接、FIFO 等非普通文件，打开时防替换，再限长读取 64 KiB。坏 SSE 保留游标，不因重连、原始字节或随后心跳刷新 last_contact，直到收到新的合法事件；持续失败会按现有 20 秒规则变 unknown，同一错误不重复刷日志。选择这条路是为了不静默跳过可能影响状态的坏帧。
+- **线程与旧暂停实例**：pen 在 agent 退出后另设 15 秒上限，异常线程未退出时列出全部跟过的会话到 remaining_sessions 并退出。重起只看 JoinHandle，已在收尾就不重起；退出时同一会话不再 track，保留 initialized 和游标。CLI 和 pen 都允许 paused:true 的旧 canter 恢复，未暂停仍拒绝 resume。CONTRACT 补上升级到不支持 canter 的程序报 incompatible、退出码 9；同步写明恢复旧暂停实例和异常收尾上限，DESIGN 对齐这两点。paddock 没有新的适配要求。
+- **验证了什么**：撤回、无轮恢复 idle、坏 SSE 健康时间、非普通发现文件、超大 chunk、pen 退出上限、CLI／pen 恢复旧暂停实例，都先跑出对应缺陷的失败，再修到通过。canter 翻译／读取单测 11 项、watcher 单测 3 项、pen 相关单测 3 项及旧快照兼容检查通过；`cargo test -p corral-core --test canter` 10 项通过、真实测试默认忽略。手动 `real_canter_lifecycle -- --ignored --nocapture` 已通过，假模型新增出字前挂住，按 Esc 后断言 interrupted:true、interaction.running:false、reply 报 no_reply。直接相关 `interrupted`／`pause`／`upgrade` 回归分别 29／11／17 项通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。未重跑全套，所有命令均在前台等完。
+- **测试衔接与边界**：真 canter 撤回后把输入放回编辑框，第一次继续发题目时拼进了旧草稿；测试现通过既有 keys 的 `text:` 发送 Ctrl-U 清草稿（`ctrl-u` 不是 corral 的命名键），产品按键路径未改。测试继续使用隔离 HOME／CORRAL_HOME／CANTER_HOME 和本地假模型，无真实模型调用。未改其他仓库、R56c 范围或用户状态，未部署、合并、推送；没有待主控决定的事项。

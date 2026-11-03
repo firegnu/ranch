@@ -720,8 +720,12 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "status" => status(name)?.public,
         "pause" | "resume" => {
             let meta = state::read(state::dir(name)?.join("meta.json"));
-            agents::check_supported(meta["kind"].as_str().unwrap_or(""), op)
-                .map_err(|e| e.with("name", name.as_str()))?;
+            if let Err(error) = agents::check_supported(meta["kind"].as_str().unwrap_or(""), op)
+                && (op != "resume"
+                    || state::require(name, json!({"op":"status"}))?["paused"] != true)
+            {
+                return Err(error.with("name", name.as_str()));
+            }
             let reply = state::request(name, json!({"op":op}))?;
             if reply["error"] == "bad_op" {
                 return Err(Error::new(

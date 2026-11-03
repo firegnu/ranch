@@ -27,6 +27,7 @@ pub(crate) struct State {
     pub last_contact: f64,
     pub error: Option<String>,
     pub finished: bool,
+    pub tracked: Vec<String>,
     pub remaining: Vec<String>,
 }
 pub(super) struct Running {
@@ -53,6 +54,7 @@ impl Running {
             last_contact: crate::now(),
             error: None,
             finished: false,
+            tracked: vec![],
             remaining: vec![],
         }));
         let stop = Arc::new(AtomicBool::new(false));
@@ -80,13 +82,21 @@ impl Running {
         json!({"running":self.thread.as_ref().is_some_and(|h| !h.is_finished()),"last_contact":s.last_contact,"error":s.error})
     }
     pub fn finished(&self) -> bool {
-        lock(&self.shared).finished || self.thread.as_ref().is_none_or(|h| h.is_finished())
+        self.thread.as_ref().is_none_or(|h| h.is_finished())
+    }
+    pub fn should_restart(&self) -> bool {
+        self.restart_on_exit && !self.exiting.load(Ordering::SeqCst) && self.finished()
     }
     pub fn finish(&self) {
         self.exiting.store(true, Ordering::SeqCst);
     }
-    pub fn remaining(&self) -> Vec<String> {
-        lock(&self.shared).remaining.clone()
+    pub fn remaining(&self, timed_out: bool) -> Vec<String> {
+        let state = lock(&self.shared);
+        if timed_out {
+            state.tracked.clone()
+        } else {
+            state.remaining.clone()
+        }
     }
     pub fn cursor(&self) -> Value {
         lock(&self.shared).cursor.clone()
@@ -124,6 +134,90 @@ impl Drop for Running {
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct SlowExit(bool);
+    impl Watcher for SlowExit {
+        fn run(&self, context: Context) {
+            lock(&context.shared).finished = self.0;
+            thread::sleep(Duration::from_millis(600));
+        }
+    }
+    #[test]
+    fn an_observers_finished_flag_is_not_a_join_and_finishing_never_restarts() {
+        let mut running = Running::start(
+            &SlowExit(true),
+            PathBuf::new(),
+            "test".into(),
+            "".into(),
+            crate::now(),
+            json!({}),
+        );
+        while !lock(&running.shared).finished {
+            thread::yield_now();
+        }
+        running.restart_on_exit = true;
+        let prematurely_finished = running.finished();
+        let prematurely_restart = running.should_restart();
+        running.finish();
+        assert!(running.stop(Duration::from_secs(2)));
+        assert!(!prematurely_finished);
+        assert!(!prematurely_restart);
+        assert!(!running.should_restart());
+    }
+    #[test]
+    fn pen_shutdown_has_its_own_deadline_and_never_restarts_a_finishing_observer() {
+        use crate::pen::{Pen, upgrade::Upgrade};
+        use std::{
+            fs::File,
+            os::{fd::AsRawFd, unix::net::UnixListener},
+        };
+        for finished in [false, true] {
+            let root = tempfile::tempdir_in("/tmp").unwrap();
+            let listener = UnixListener::bind(root.path().join("sock")).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let master = File::open("/dev/null").unwrap();
+            let file_lock = crate::state::lock(&root.path().join("lock"), true)
+                .unwrap()
+                .unwrap();
+            let mut pen: Pen = serde_json::from_value(json!({
+                "agent":1,"master":master.as_raw_fd(),"listener":listener.as_raw_fd(),"lock":file_lock.as_raw_fd(),
+                "custody":"owner","observer":true,"upgrade":Upgrade::default(),"dir":root.path(),
+                "metadata":{"kind":"unknown","cwd":root.path()},"labels":{},"instance":"slow-exit","started":crate::now(),
+                "clients":{},"ring":[],"last_output":null,"input":[],"next_input":0.0,"stopping":false,
+                "stop_at":null,"stopped_by":null,"exit":0,"exit_at":crate::now()-16.,"pty_open":false,
+                "writer":null,"next_order":0,"size":[40,120],"resize_at":null,
+                "term":crate::terminal::Terminal::default(),"human":null,"recent":[],"stop_steps":[]
+            })).unwrap();
+            let mut running = Running::start(
+                if finished {
+                    &SlowExit(true)
+                } else {
+                    &SlowExit(false)
+                },
+                root.path().into(),
+                "slow-exit".into(),
+                "".into(),
+                crate::now(),
+                json!({"followed":"s"}),
+            );
+            let shared = running.shared.clone();
+            lock(&shared).remaining = if finished { vec![] } else { vec!["s".into()] };
+            lock(&shared).tracked = vec!["s".into()];
+            running.restart_on_exit = true;
+            running.finish();
+            pen.watcher = Some(running);
+            let start = Instant::now();
+            pen.run().unwrap();
+            let elapsed = start.elapsed();
+            // Give the synthetic observer time to leave, including when testing the old implementation.
+            thread::sleep(Duration::from_millis(650));
+            assert!(
+                elapsed < Duration::from_millis(300),
+                "pen exceeded its own deadline: {elapsed:?}"
+            );
+            let exit = crate::state::read(root.path().join("exit.json"));
+            assert_eq!(exit["remaining_sessions"], json!(["s"]));
+        }
+    }
     struct Stubborn;
     static RELEASE: AtomicBool = AtomicBool::new(false);
     impl Watcher for Stubborn {

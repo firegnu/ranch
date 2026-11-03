@@ -80,7 +80,11 @@ impl Translation {
     fn dialog(&self) -> Value {
         let Some(request) = self.requests.first() else {
             return if self.agent_requests.is_empty() {
-                json!({"ev":"PostToolUse"})
+                if self.running {
+                    json!({"ev":"PostToolUse"})
+                } else {
+                    json!({"ev":"Stop","idle_only":true})
+                }
             } else {
                 json!({"ev":"PermissionRequest","tool_name":null})
             };
@@ -129,6 +133,11 @@ impl Translation {
             "turn.completed" => {
                 self.running = false;
                 self.turn = frame["turn"]["status"].as_str().map(str::to_owned);
+                None
+            }
+            "turn.retracted" => {
+                self.running = false;
+                self.turn = Some("interrupted".into());
                 None
             }
             "request.opened" => {
@@ -194,17 +203,21 @@ impl Translation {
                 self.agent_requests.clear();
                 Some(json!({"ev":"SessionEnd"}))
             }
-            "session.status" if frame["status"] == "idle" => self.turn.take().map(|result| {
-                let mut e = json!({"ev":match result.as_str() {
-                    "completed" => "Stop", "interrupted" => "Interrupt", _ => "StopFailure"
-                }});
-                if result == "completed"
-                    && let Some(text) = self.message.take()
-                {
-                    e["last_assistant_message"] = json!(text);
-                }
-                e
-            }),
+            "session.status" if frame["status"] == "idle" => self
+                .turn
+                .take()
+                .map(|result| {
+                    let mut e = json!({"ev":match result.as_str() {
+                        "completed" => "Stop", "interrupted" => "Interrupt", _ => "StopFailure"
+                    }});
+                    if result == "completed"
+                        && let Some(text) = self.message.take()
+                    {
+                        e["last_assistant_message"] = json!(text);
+                    }
+                    e
+                })
+                .or_else(|| (self.state != "idle").then(|| json!({"ev":"Stop","idle_only":true}))),
             _ => None,
         };
         event
@@ -240,6 +253,7 @@ mod tests {
                 last_contact: 1.,
                 error: None,
                 finished: false,
+                tracked: vec![],
                 remaining: vec![],
             })),
             stop: Arc::new(AtomicBool::new(false)),
@@ -332,6 +346,244 @@ mod tests {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         v
+    }
+    #[test]
+    fn exiting_keeps_the_current_sessions_initialization_and_cursor() {
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let context = context(dir.path());
+        let shared = context.shared.clone();
+        let session = Session {
+            session_id: "s".into(),
+            state_dir: dir.path().into(),
+        };
+        fs::write(
+            dir.path().join("canter-session.json"),
+            serde_json::to_vec(&session).unwrap(),
+        )
+        .unwrap();
+        let socket = dir.path().join("sock");
+        fs::write(
+            dir.path().join("server.json"),
+            json!({"socketPath":socket}).to_string(),
+        )
+        .unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            // Read the GET before replying so macOS does not reset the closing connection.
+            use std::io::BufRead;
+            let mut reader = io::BufReader::new(&mut stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let body = json!({"session":{"status":"closed"}}).to_string();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        context.save(&Cursor {
+            current: Some(session.clone()),
+            sessions: vec![Tracked {
+                session,
+                seq: 42,
+                translation: Translation::default(),
+                initialized: true,
+            }],
+        });
+        context.exiting.store(true, Ordering::SeqCst);
+        Canter.run(context);
+        server.join().unwrap();
+        let state = watcher::lock(&shared);
+        assert_eq!(state.cursor["sessions"][0]["initialized"], true);
+        assert_eq!(state.cursor["sessions"][0]["seq"], 42);
+        assert!(state.finished);
+        assert!(state.remaining.is_empty());
+    }
+    #[test]
+    fn sse_frames_and_streamed_json_have_independent_body_limits() {
+        let mut bytes = vec![b'x'; 64 * 1024 * 1024];
+        let mut scanned = 0;
+        assert!(next_sse(&mut bytes, &mut scanned).unwrap().is_none());
+        bytes.push(b'x');
+        assert!(next_sse(&mut bytes, &mut scanned).is_err());
+        bytes.extend_from_slice(b"\n\n");
+        assert!(next_sse(&mut bytes, &mut scanned).is_err());
+        drop(bytes);
+
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let context = context(dir.path());
+        let socket = dir.path().join("sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let _ = (|| -> io::Result<()> {
+                stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")?;
+                // Individually legal chunks, but their combined JSON string exceeds 64 MiB.
+                let chunk = vec![b'a'; 32 * 1024 * 1024];
+                stream.write_all(b"1\r\n\"\r\n")?;
+                for _ in 0..2 {
+                    write!(stream, "{:x}\r\n", chunk.len())?;
+                    stream.write_all(&chunk)?;
+                    stream.write_all(b"\r\n")?;
+                }
+                stream.write_all(b"1\r\n\"\r\n0\r\n\r\n")
+            })();
+        });
+        let error = get_json_until(
+            &context,
+            &socket,
+            "/v1/info",
+            Instant::now() + Duration::from_secs(10),
+        )
+        .unwrap_err();
+        server.join().unwrap();
+        assert!(
+            error.to_string().contains("JSON body exceeds 64 MiB"),
+            "{error}"
+        );
+    }
+    #[test]
+    fn oversized_http_chunks_are_rejected_before_reading_their_body() {
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let mut response = Http {
+            socket,
+            buffer: b"4000001\r\n".to_vec(),
+            chunked: true,
+            left: None,
+            done: false,
+        };
+        assert!(response.decoded().is_err());
+        response.buffer = vec![b'f'; 65537];
+        assert!(
+            response.decoded().is_err(),
+            "unterminated chunk header must also be bounded"
+        );
+    }
+    #[test]
+    fn discovery_files_reject_links_fifos_and_oversized_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["canter-session.json", "server.json"] {
+            let path = dir.path().join(name);
+            let target = dir.path().join("target");
+            let json =
+                json!({"sessionId":"s","stateDir":dir.path(),"socketPath":dir.path().join("sock")})
+                    .to_string();
+            fs::write(&target, &json).unwrap();
+            let read = || {
+                if name == "server.json" {
+                    discover(dir.path()).map(|_| ())
+                } else {
+                    published(dir.path()).map(|_| ())
+                }
+            };
+            std::os::unix::fs::symlink(&target, &path).unwrap();
+            assert!(read().is_err(), "must not follow {name}");
+            fs::remove_file(&path).unwrap();
+            use std::os::unix::ffi::OsStrExt;
+            let cpath = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+            assert!(read().is_err(), "must not block on {name}");
+            fs::remove_file(&path).unwrap();
+            fs::write(&path, format!("{json}{}", " ".repeat(65536))).unwrap();
+            assert!(read().is_err(), "must bound {name}");
+            fs::write(&path, &json).unwrap();
+            read().unwrap();
+        }
+    }
+    #[test]
+    fn idle_child_dialogs_and_work_without_a_turn_return_to_idle_without_a_new_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        let context = context(dir.path());
+        let mut tracked = Tracked {
+            session: Session {
+                session_id: "s".into(),
+                state_dir: dir.path().into(),
+            },
+            seq: 0,
+            translation: Translation::default(),
+            initialized: false,
+        };
+        initialize(&context, &mut tracked, &json!({"createdAt":2000})).unwrap();
+        let frames = [
+            frame("turn.started", json!({"turn":{"input":[]}})),
+            frame(
+                "item.completed",
+                json!({"item":{"type":"agentMessage","text":"previous reply"}}),
+            ),
+            frame("turn.completed", json!({"turn":{"status":"completed"}})),
+            frame("session.status", json!({"status":"idle"})),
+            frame("turn.started", json!({"turn":{"input":[]}})),
+            frame("turn.retracted", json!({})),
+            frame("session.status", json!({"status":"idle"})),
+            frame(
+                "agent.request.opened",
+                json!({"agentId":"a","request":{"id":"r"}}),
+            ),
+            frame(
+                "agent.request.resolved",
+                json!({"agentId":"a","requestId":"r"}),
+            ),
+            frame("session.status", json!({"status":"working"})),
+            frame("session.status", json!({"status":"idle"})),
+        ];
+        for (index, mut f) in frames.into_iter().enumerate() {
+            f["seq"] = json!(index + 1);
+            consume(&context, &mut tracked, &f).unwrap();
+            if index == 8 || index == 10 {
+                let state = crate::events::read(dir.path(), "i", dir.path(), false).unwrap();
+                assert_eq!(state["state"], "idle");
+                assert_eq!(state["interrupted"], true);
+                assert_eq!(state["reply"], "previous reply");
+                assert_eq!(state["interaction"]["count"], 0);
+            }
+        }
+        for status in ["working", "waiting_approval"] {
+            initialize(&context, &mut tracked, &json!({"createdAt":0,"lastEventSeq":40,"status":status,
+                "pendingRequests":if status == "working" { json!([]) } else { json!([{"id":"r","kind":{"type":"approval"}}]) }
+            })).unwrap();
+            assert_eq!(
+                tracked.translation.state,
+                if status == "working" {
+                    "working"
+                } else {
+                    "blocked"
+                }
+            );
+            let end = tracked
+                .translation
+                .event(&frame("session.status", json!({"status":"idle"})));
+            assert_eq!(end[0]["ev"], "Stop");
+            assert_eq!(end[0]["idle_only"], true);
+        }
+    }
+    #[test]
+    fn retract_before_the_first_model_word_is_an_interruption() {
+        let mut t = Translation::default();
+        t.event(&frame("turn.started", json!({"turn":{"input":[]}})));
+        t.event(&frame("session.status", json!({"status":"working"})));
+        t.event(&frame(
+            "item.completed",
+            json!({"item":{"type":"userMessage"}}),
+        ));
+        assert!(
+            t.event(&frame("turn.retracted", json!({"turnId":"t"})))
+                .is_empty()
+        );
+        let end = t.event(&frame("session.status", json!({"status":"idle"})));
+        assert_eq!(end[0]["ev"], "Interrupt");
+        assert_eq!(end[0]["interaction"]["running"], false);
+        assert!(end[0].get("last_assistant_message").is_none());
     }
     #[test]
     fn translates_a_turn_only_when_the_session_becomes_idle() {
@@ -454,6 +706,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+const BODY_LIMIT: usize = 64 * 1024 * 1024;
+const HEADER_LIMIT: usize = 64 * 1024;
+
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Session {
@@ -493,11 +748,12 @@ impl Context {
     fn save(&self, cursor: &Cursor) {
         let mut state = watcher::lock(&self.shared);
         state.cursor = serde_json::to_value(cursor).unwrap();
-        state.remaining = cursor
+        state.tracked = cursor
             .sessions
             .iter()
             .map(|s| s.session.session_id.clone())
             .collect();
+        state.remaining = state.tracked.clone();
     }
 }
 impl Watcher for Canter {
@@ -505,14 +761,20 @@ impl Watcher for Canter {
         let mut cursor: Cursor =
             serde_json::from_value(watcher::lock(&context.shared).cursor.clone())
                 .unwrap_or_default();
+        context.save(&cursor);
         let mut stream: Option<Http> = None;
         let mut sse = Vec::new();
+        let mut scanned = 0;
+        // After invalid data, only a new valid event can establish progress again.
+        let mut allow_heartbeat = true;
         let mut retry = Instant::now();
         let mut next_session_check = Instant::now();
         while !context.cancelled() {
             if context.exiting.load(Ordering::SeqCst) {
                 // Capture a publication that raced the terminal's exit, even before first connect.
-                if let Ok(session) = published(&context.dir) {
+                if let Ok(session) = published(&context.dir)
+                    && cursor.current.as_ref() != Some(&session)
+                {
                     track(&mut cursor, session);
                 }
                 context.save(&cursor);
@@ -527,6 +789,8 @@ impl Watcher for Canter {
                             track(&mut cursor, session);
                             stream = None;
                             sse.clear();
+                            scanned = 0;
+                            allow_heartbeat = true;
                             retry = Instant::now();
                             context.save(&cursor);
                         }
@@ -583,27 +847,43 @@ impl Watcher for Canter {
                         ),
                         Instant::now() + Duration::from_secs(2),
                     )?);
-                    context.contact();
                 }
-                let Some(bytes) = stream.as_mut().unwrap().next()? else {
+                let Some(bytes) = stream.as_mut().unwrap().next().inspect_err(|e| {
+                    if e.kind() == io::ErrorKind::InvalidData {
+                        allow_heartbeat = false;
+                    }
+                })?
+                else {
                     return Err(io::Error::other("event stream ended; reconnecting"));
                 };
-                if !bytes.is_empty() {
-                    context.contact();
-                }
                 sse.extend(bytes.into_iter().filter(|b| *b != b'\r'));
-                while let Some(end) = sse.windows(2).position(|w| w == b"\n\n") {
-                    let frame: Vec<_> = sse.drain(..end + 2).collect();
+                while let Some(frame) = next_sse(&mut sse, &mut scanned).inspect_err(|_| {
+                    allow_heartbeat = false;
+                })? {
                     let data = frame
                         .split(|b| *b == b'\n')
                         .filter_map(|l| l.strip_prefix(b"data:"))
                         .flat_map(|l| l.strip_prefix(b" ").unwrap_or(l).iter().copied())
                         .collect::<Vec<_>>();
                     if data.is_empty() {
+                        if allow_heartbeat {
+                            context.contact();
+                        }
                         continue;
                     }
-                    let frame: Value = serde_json::from_slice(&data).map_err(io::Error::other)?;
+                    let frame: Value = serde_json::from_slice(&data).map_err(|e| {
+                        allow_heartbeat = false;
+                        io::Error::other(format!("invalid SSE event: {e}"))
+                    })?;
+                    if frame["seq"].as_u64().is_some_and(|seq| seq > tracked.seq)
+                        && frame["sessionId"] == tracked.session.session_id
+                    {
+                        allow_heartbeat = true;
+                    }
                     consume(&context, tracked, &frame)?;
+                    if allow_heartbeat {
+                        context.contact();
+                    }
                     if frame["type"] == "session.status"
                         && frame["status"] == "closed"
                         && frame["closeReason"] == "serverShutdown"
@@ -620,6 +900,7 @@ impl Watcher for Canter {
                 context.failed(e);
                 stream = None;
                 sse.clear();
+                scanned = 0;
                 retry = Instant::now() + Duration::from_secs(1);
             }
         }
@@ -627,8 +908,9 @@ impl Watcher for Canter {
     }
 }
 fn published(dir: &Path) -> io::Result<Session> {
-    let session: Session = serde_json::from_slice(&fs::read(dir.join("canter-session.json"))?)
-        .map_err(io::Error::other)?;
+    let session: Session =
+        serde_json::from_slice(&read_public_file(&dir.join("canter-session.json"))?)
+            .map_err(io::Error::other)?;
     if session.session_id.is_empty() || !session.state_dir.is_absolute() {
         return Err(io::Error::other("invalid session file"));
     }
@@ -654,13 +936,33 @@ fn track(cursor: &mut Cursor, session: Session) {
     cursor.current = Some(session);
 }
 fn discover(dir: &Path) -> io::Result<PathBuf> {
-    let registration: Value =
-        serde_json::from_slice(&fs::read(dir.join("server.json"))?).map_err(io::Error::other)?;
+    let registration: Value = serde_json::from_slice(&read_public_file(&dir.join("server.json"))?)
+        .map_err(io::Error::other)?;
     registration["socketPath"]
         .as_str()
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .ok_or_else(|| io::Error::other("server.json has no absolute socketPath"))
+}
+fn read_public_file(path: &Path) -> io::Result<Vec<u8>> {
+    const LIMIT: usize = 64 * 1024;
+    if !fs::symlink_metadata(path)?.is_file() {
+        return Err(io::Error::other("expected a regular file"));
+    }
+    // Recheck the opened file, without following a swapped symlink or blocking on a FIFO.
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("expected a regular file"));
+    }
+    let mut bytes = Vec::new();
+    file.take((LIMIT + 1) as u64).read_to_end(&mut bytes)?;
+    if bytes.len() > LIMIT {
+        return Err(io::Error::other("discovery file exceeds 64 KiB"));
+    }
+    Ok(bytes)
 }
 fn record(context: &Context, tracked: &Tracked, mut event: Value, seq: u64) -> io::Result<()> {
     event["v"] = json!(1);
@@ -736,6 +1038,12 @@ fn initialize(context: &Context, tracked: &mut Tracked, snapshot: &Value) -> io:
             None
         };
         if let Some(ref mut event) = event {
+            tracked.translation.state = if event["ev"] == "PermissionRequest" {
+                "blocked"
+            } else {
+                "working"
+            }
+            .into();
             event["t"] = json!(crate::now());
             event["interaction"] = tracked.translation.interaction();
             record(context, tracked, event.clone(), tracked.seq)?;
@@ -807,6 +1115,23 @@ fn encode(text: &str) -> String {
             }
         })
         .collect()
+}
+
+fn next_sse(buffer: &mut Vec<u8>, scanned: &mut usize) -> io::Result<Option<Vec<u8>>> {
+    if let Some(end) = buffer[*scanned..].windows(2).position(|w| w == b"\n\n") {
+        let length = *scanned + end + 2;
+        if length > BODY_LIMIT {
+            return Err(io::Error::other("SSE frame exceeds 64 MiB"));
+        }
+        *scanned = 0;
+        Ok(Some(buffer.drain(..length).collect()))
+    } else {
+        if buffer.len() > BODY_LIMIT {
+            return Err(io::Error::other("SSE frame exceeds 64 MiB"));
+        }
+        *scanned = buffer.len().saturating_sub(1);
+        Ok(None)
+    }
 }
 
 /// Minimal HTTP/1.1 GET over the public Unix socket. Chunk boundaries are unrelated to SSE frames.
@@ -884,11 +1209,30 @@ impl Http {
     fn decoded(&mut self) -> io::Result<Option<Vec<u8>>> {
         if self.chunked {
             let Some(end) = self.buffer.windows(2).position(|w| w == b"\r\n") else {
+                if self.buffer.len() > HEADER_LIMIT {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "chunk header exceeds 64 KiB",
+                    ));
+                }
                 return Ok(None);
             };
-            let line = std::str::from_utf8(&self.buffer[..end]).map_err(io::Error::other)?;
+            if end > HEADER_LIMIT {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "chunk header exceeds 64 KiB",
+                ));
+            }
+            let line = std::str::from_utf8(&self.buffer[..end])
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             let size = usize::from_str_radix(line.split(';').next().unwrap().trim(), 16)
-                .map_err(io::Error::other)?;
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            if size > BODY_LIMIT {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "HTTP chunk exceeds 64 MiB",
+                ));
+            }
             if size == 0 {
                 self.done = true;
                 return Ok(Some(vec![]));
@@ -901,7 +1245,10 @@ impl Http {
                 return Ok(None);
             }
             if &self.buffer[tail - 2..tail] != b"\r\n" {
-                return Err(io::Error::other("invalid chunk terminator"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid chunk terminator",
+                ));
             }
             let bytes = self.buffer[end + 2..tail - 2].to_vec();
             self.buffer.drain(..tail);
@@ -968,10 +1315,18 @@ fn get_json_until(
     deadline: Instant,
 ) -> io::Result<Value> {
     let mut response = Http::get(context, socket, path, deadline)?;
+    if response.left.is_some_and(|length| length > BODY_LIMIT) {
+        return Err(io::Error::other("JSON body exceeds 64 MiB"));
+    }
     let mut bytes = Vec::new();
     while !context.cancelled() && Instant::now() < deadline {
         match response.next()? {
-            Some(chunk) => bytes.extend(chunk),
+            Some(chunk) => {
+                if chunk.len() > BODY_LIMIT - bytes.len() {
+                    return Err(io::Error::other("JSON body exceeds 64 MiB"));
+                }
+                bytes.extend(chunk);
+            }
             None => return serde_json::from_slice(&bytes).map_err(io::Error::other),
         }
     }

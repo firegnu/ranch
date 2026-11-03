@@ -281,6 +281,20 @@ fn real_canter_lifecycle() {
     assert_eq!(sent["confirmed"], true);
     lab.wait_state("idle");
     assert_eq!(lab.json(&["reply", NAME])["text"], "real fake-model answer");
+    lab.json(&["send", NAME, "r56b-retract"]);
+    lab.wait_state("working");
+    lab.json(&["keys", NAME, "esc"]);
+    let interrupted = lab.wait_state("idle");
+    assert_eq!(interrupted["interrupted"], true);
+    assert_eq!(interrupted["interaction"]["running"], false);
+    let reply = lab.out(&["reply", NAME]);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&reply.stdout).unwrap()["error"],
+        "no_reply"
+    );
+    assert!(!reply.status.success());
+    // Esc retracts the input back into canter's composer; clear it before the next prompt.
+    lab.json(&["keys", NAME, "text:\u{15}"]);
     lab.json(&["send", NAME, "r56b-question"]);
     assert_eq!(
         lab.wait_state("blocked")["questions"]["items"][0]["question"],
@@ -465,8 +479,13 @@ fn fake_connection(mut stream: UnixStream, state: Arc<Mutex<FakeState>>, stop: A
                 .unwrap_or_default();
             let mut body = String::from(": heartbeat\n\n");
             for event in events.iter().filter(|e| e["seq"].as_u64().unwrap() > after) {
+                let data = if event["malformed"] == true {
+                    "{".into()
+                } else {
+                    event.to_string()
+                };
                 body.push_str(&format!(
-                    "id: {}\nevent: message\ndata: {event}\n\n",
+                    "id: {}\nevent: message\ndata: {data}\n\n",
                     event["seq"]
                 ));
             }
@@ -743,6 +762,50 @@ fn session_switch_resume_socket_replacement_and_pen_upgrade_preserve_event_curso
 }
 
 #[test]
+fn malformed_sse_does_not_keep_old_status_alive_or_repeat_the_error_log() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "malformed.sock");
+    lab.start(&["--", "canter"]);
+    server.session("s", millis() as f64 / 1000. + 0.001);
+    lab.publish("s");
+    lab.wait_state("idle");
+    turn(&server, "s", "previous reply");
+    eventually(|| {
+        lab.records()
+            .iter()
+            .any(|e| e["last_assistant_message"] == "previous reply")
+    });
+    server.emit("s", "broken", json!({"malformed":true}));
+    eventually(|| lab.request(json!({"op":"status"}))["watcher"]["error"].is_string());
+    let contact = lab.request(json!({"op":"status"}))["watcher"]["last_contact"].clone();
+    eventually(|| {
+        server
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .filter(|r| r.contains("after=4"))
+            .count()
+            >= 3
+    });
+    assert_eq!(
+        lab.request(json!({"op":"status"}))["watcher"]["last_contact"],
+        contact
+    );
+    let log = fs::read_to_string(lab.path("pens").join(NAME).join("pen.log")).unwrap();
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.starts_with("canter:"))
+            .count(),
+        1,
+        "{log}"
+    );
+    server.close_all();
+    lab.json(&["stop", NAME]);
+}
+
+#[test]
 fn older_upgrade_targets_cannot_silently_remove_the_watcher() {
     let lab = Lab::new();
     lab.start(&["--", "canter"]);
@@ -812,6 +875,10 @@ impl ModelServer {
                         let last = request["messages"].as_array().unwrap().last().unwrap();
                         let content = last["content"].as_str().unwrap_or("");
                         let is_tool = last["role"] == "tool";
+                        if content.contains("r56b-retract") && !is_tool {
+                            while !done.load(Ordering::SeqCst) { std::thread::sleep(Duration::from_millis(50)); }
+                            return;
+                        }
                         let tool = if !is_tool && content.contains("r56b-command") {
                             Some(("shell", json!({"command":"mkdir -p r56b-output && touch r56b-output/probe"})))
                         } else if !is_tool && content.contains("r56b-question") {
@@ -880,6 +947,61 @@ fn inherited_sandbox_is_rejected_before_calling_fence() {
         "unsupported_kind"
     );
     assert!(!lab.path("pens/ranch/test-r56b-child/sock").exists());
+}
+
+#[test]
+fn an_old_pen_that_paused_canter_can_still_be_resumed() {
+    let lab = Lab::new();
+    let dir = lab.path("pens").join(NAME);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("meta.json"),
+        json!({"kind":"canter","instance":"old","proto":1}).to_string(),
+    )
+    .unwrap();
+    let listener = UnixListener::bind(dir.join("sock")).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let done = Arc::new(AtomicBool::new(false));
+    let stop = done.clone();
+    let thread = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        while !stop.load(Ordering::SeqCst) {
+            if let Ok((mut socket, _)) = listener.accept() {
+                let mut line = String::new();
+                BufReader::new(socket.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                requests.push(request["op"].clone());
+                writeln!(
+                    socket,
+                    "{}",
+                    json!({"ok":true,"proto":1,"instance":"old","paused":request["op"] != "resume"})
+                )
+                .unwrap();
+            } else {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        requests
+    });
+    let out = lab.out(&["resume", NAME]);
+    done.store(true, Ordering::SeqCst);
+    let requests = thread.join().unwrap();
+    fs::remove_file(dir.join("sock")).unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["paused"],
+        false
+    );
+    assert_eq!(
+        requests,
+        json!(["status", "resume"]).as_array().unwrap().clone()
+    );
 }
 
 #[test]
