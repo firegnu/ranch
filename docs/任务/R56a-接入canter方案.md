@@ -91,3 +91,85 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、查了哪些来源、实测了什么、拿主意的地方、没查清的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-11-03，ranch/dev-r56a。
+
+### 做了什么
+
+- 写了 `docs/调研/R56a-接入canter方案.md`，结构如下：
+  - 开头「结论先说」；
+  - 「实测记录」：19 条看到的事实，外加一份没实测的清单；
+  - 第 1–14 节，每节都有推荐做法，并标明依据：canter 公开文档的行号、corral 代码的 `文件:行`，或者【实测 n】；
+  - 最后一节「要用户定的」，两条。
+- 没改代码、资源、DESIGN、CONTRACT，也没改 canter、paddock 仓库。
+
+### 查了哪些来源
+
+- ranch：R56 总任务、本任务文件、DESIGN §6–§10、CONTRACT。
+- corral 代码：`agents/mod.rs`、`agents/kimi.rs`、`events.rs`、`events/raw.rs`、`hooks.rs`、`cli.rs`、`pen.rs`、`pen/upgrade.rs`、`state.rs`、`integration.rs`、`environment.rs`、`child_sandbox.rs`、fence 的 `data.rs`。
+- pony：`corral.rs`、`core/engine.rs`、`core/engine/buttons.rs`。
+- 派活：`dispatch.toml`、corral-dispatch 技能、corral 技能和 `AGENT_USAGE.md`。
+- canter：`canter --help`、`canter --version`；canter DESIGN 的 P2-83 节及其中引到的 P2-168、P2-178、P2-191、P2-192；协议 README 全文；canter-server README 的 config 段；canter-model README；调研报告 P2-83 §1、§3.2。
+- paddock：为确认现在怎么显示，只读了两处，没改：
+  - `app/src/integrations.rs`：怎么显示 `hooks` 的值；
+  - `app/src/pause.rs`：怎么把 `unsupported` 显示成「needs corral upgrade」。
+
+### 实测了什么
+
+环境：
+- 隔离的 `HOME`、`CANTER_HOME`，放在 `/tmp/r56a-probe`。
+- 一次性的假 Chat Completions 服务（Node 脚本，放在 scratchpad，不进仓库），`prompt_suggestions:false`。
+- 用 corral 开了一个测试 agent `ranch/test-r56a-probe`（`--label role=test`、`--env CAIRN_DISABLE=1`、隔离的 HOME 和 CANTER_HOME），用完 `corral stop`。
+
+看了这些：
+- `server.json`、`/v1/info`、会话文件、SSE 帧的样子；
+- 正常的一轮、出错的一轮、批准、提问、两种 Esc；
+- 标题、框上重画；
+- `/new`、`serve --replace`；
+- `corral stop`（HUP）和 `kill -9` 之后服务端怎么关会话；
+- 终端自己起的服务端的进程关系；
+- `folderTrust`、快照。
+
+自己起的服务端和假模型都按 PID 停掉，临时目录删了，`corral ls` 里没有留下 `ranch/test-r56a*`。没调真实模型，没碰 `~/.canter` 和用户的服务端。
+
+### 拿主意的地方
+
+这些都写成了方案里的推荐，没有落地：
+
+- 线程把事件翻译成 v1 事件写进 `events`。没选「读取方现算」（Kimi 那样），也没选 v2 原始事件。
+- 换 pen 时，fork 前先停线程。
+- 不加 `--tag`。
+- 停只靠 `--close-on-exit` 加上 12 秒的确认，不调 DELETE。
+- `hooks` 仍写 `"launch"`，不加新的接法名。
+- 暂停和 sandbox 共用新错误码 `unsupported_kind`，暂停在 CLI 和 pen 两头拦。
+- canter 也报 `interaction`，pony 改用结构化核对，不比屏幕。
+- 断开 20 秒报 `unknown`。
+- 实现拆成 R56b、R56c 两件。
+
+### 没查清的事
+
+- 子 agent 的 `agent.request.*`。
+- `sandboxApproval`、`planApproval`。
+- 目标续跑、后台命令叫醒。
+- `/resume`、分叉、交接。
+- 提问框上按 Esc。
+- 服务端 replace 时正好有一轮在跑。
+- `session.status error`。
+- 多行送话后 `turn.input` 是什么样。
+- SSE 是不是 chunked。
+- canter 跑的命令里 `CORRAL_NAME` 对不对：按文档写的，没实测。
+
+这些都写进了方案的「没实测的」和第 13 节联调。
+
+### 踩过的坑
+
+- 假模型让 shell 工具带了 `justification`、没带 `sandboxRequest`，canter 回工具错误「sandboxRequest requires a nonempty justification」。只给 `command` 才行。
+- `echo` 在只读白名单里，不弹批准框；换成 `mkdir … && touch …` 才看到批准框。
+- 假模型回 400 的第一版，先写了 200 的头，再改状态码，没生效。改成先判断再写头。
+- `POST /v1/sessions` 不带 `"model":""` 会报 `invalid_request`。
+- macOS 没有 `timeout` 命令，订阅 SSE 改用 `curl --max-time`。
+- `/v1/info` 的版本字段叫 `serverVersion`，和主控转述的 `version` 不一样。已写进方案第 12 节。
+- 框开着时 canter 每 2 秒重画一次，pony 现有的「比屏幕」核对对 canter 永远不成立。设计因此改成结构化核对。
+- 有一次误把假模型的 `/push` 请求发到了 canter 的 socket，回了 404，没有影响。
