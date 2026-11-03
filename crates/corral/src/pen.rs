@@ -4,6 +4,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub(crate) mod upgrade;
+pub(crate) mod watcher;
 use std::{
     collections::{BTreeMap, VecDeque},
     fs::{self, File},
@@ -104,6 +105,52 @@ fn read_ready(mut output: impl Read + AsRawFd, timeout: std::time::Duration) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_canter_snapshot_that_is_already_paused_can_resume_only_once() {
+        let root = tempfile::tempdir_in("/tmp").unwrap();
+        let listener = UnixListener::bind(root.path().join("sock")).unwrap();
+        let master = File::open("/dev/null").unwrap();
+        let lock = state::lock(&root.path().join("lock"), true)
+            .unwrap()
+            .unwrap();
+        let mut pen: Pen = serde_json::from_value(json!({
+            "agent":2147483647u32,"master":master.as_raw_fd(),"listener":listener.as_raw_fd(),"lock":lock.as_raw_fd(),
+            "custody":"owner","observer":true,"upgrade":Upgrade::default(),"dir":"/unused",
+            "metadata":{"kind":"canter"},"labels":{},"instance":"old","started":0.,
+            "clients":{},"ring":[],"last_output":null,"input":[],"next_input":0.,"stopping":false,
+            "stop_at":null,"stopped_by":null,"exit":null,"exit_at":0.,"pty_open":false,
+            "writer":null,"next_order":0,"size":[40,120],"resize_at":null,
+            "term":crate::terminal::Terminal::default(),"human":null,"recent":[],"stop_steps":[],
+            "paused":1.,"frozen":[]
+        })).unwrap();
+        // Synthetic legacy snapshot, with no real process/group to signal.
+        let (socket, _peer) = UnixStream::pair().unwrap();
+        let fd = socket.as_raw_fd();
+        pen.clients.insert(
+            fd,
+            Client {
+                sock: Handle::new(socket),
+                input: vec![],
+                output: VecDeque::new(),
+                mode: Mode::Handshake,
+                rows: 40,
+                cols: 120,
+                order: 0,
+            },
+        );
+        pen.request(fd, json!({"op":"resume"}));
+        let first: Value =
+            serde_json::from_slice(pen.clients.get_mut(&fd).unwrap().output.make_contiguous())
+                .unwrap();
+        assert_eq!(first["ok"], true, "{first}");
+        assert_eq!(first["paused"], false);
+        pen.clients.get_mut(&fd).unwrap().output.clear();
+        pen.request(fd, json!({"op":"resume"}));
+        let second: Value =
+            serde_json::from_slice(pen.clients.get_mut(&fd).unwrap().output.make_contiguous())
+                .unwrap();
+        assert_eq!(second["error"], "unsupported_kind");
+    }
     #[test]
     fn readiness_deadline_includes_a_partial_line() {
         let (reader, mut writer) = UnixStream::pair().unwrap();
@@ -316,6 +363,10 @@ struct Chunk {
 }
 #[derive(Serialize, Deserialize)]
 struct Pen {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    watcher_cursor: Option<Value>,
+    #[serde(skip)]
+    watcher: Option<watcher::Running>,
     agent: u32,
     master: Handle<File>,
     listener: Handle<UnixListener>,
@@ -409,6 +460,32 @@ impl Drop for Pen {
     }
 }
 impl Pen {
+    fn start_watcher(&mut self) {
+        if self.watcher.is_none()
+            && let Some(cursor) = &self.watcher_cursor
+            && let Some(adapter) = crate::agents::find(self.metadata["kind"].as_str().unwrap_or(""))
+            && let Some(watcher) = adapter.watcher()
+        {
+            self.watcher = Some(watcher::Running::start(
+                watcher,
+                self.dir.clone(),
+                self.instance.clone(),
+                self.metadata["cwd"].as_str().unwrap_or("").into(),
+                self.started,
+                cursor.clone(),
+            ));
+        }
+    }
+    fn stop_watcher(&mut self) -> bool {
+        if let Some(watcher) = &mut self.watcher {
+            if !watcher.stop(std::time::Duration::from_secs(3)) {
+                return false;
+            }
+            self.watcher_cursor = Some(watcher.cursor());
+        }
+        self.watcher = None;
+        true
+    }
     fn first_prompt(&mut self) {
         if self.pending_prompt.is_none() || self.stopping || self.paused.is_some() {
             return;
@@ -495,6 +572,9 @@ impl Pen {
         status["capabilities"] =
             json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1});
         status["upgrade"] = self.upgrade.public();
+        if let Some(watcher) = &self.watcher {
+            status["watcher"] = watcher.status();
+        }
         if let Some(text) = self.screen.as_ref().and_then(|s| s.text()) {
             status["screen"] = json!(text);
         }
@@ -595,6 +675,18 @@ impl Pen {
             return;
         }
         let reply = match req["op"].as_str() {
+            Some(op @ ("pause" | "resume"))
+                if crate::agents::check_supported(
+                    self.metadata["kind"].as_str().unwrap_or(""),
+                    op,
+                )
+                .is_err()
+                    && !(op == "resume" && self.paused.is_some()) =>
+            {
+                crate::agents::check_supported(self.metadata["kind"].as_str().unwrap_or(""), op)
+                    .unwrap_err()
+                    .value
+            }
             Some("status") => self.status(),
             Some("upgrade") => self.prepare_upgrade(&req),
             Some("recover") => {
@@ -776,6 +868,7 @@ impl Pen {
         }
     }
     fn run(&mut self) -> Result<()> {
+        self.start_watcher();
         if self.screen.is_none()
             && crate::agents::reads_screen(self.metadata["kind"].as_str().unwrap_or(""))
         {
@@ -785,14 +878,39 @@ impl Pen {
             self.screen = Some(screen);
         }
         let mut remaining_pids = Vec::new();
+        let mut watcher_timed_out = false;
         loop {
+            if let Some(watcher) = &mut self.watcher {
+                let restart = self.exit.is_none() && watcher.should_restart();
+                watcher.reap();
+                if restart {
+                    self.watcher_cursor = Some(watcher.cursor());
+                    self.watcher = None;
+                    self.start_watcher();
+                }
+            }
             if let Some(target) = self.pending_upgrade.take() {
-                self.handoff(target);
+                if self.stop_watcher() {
+                    self.handoff(target);
+                    self.start_watcher();
+                } else {
+                    self.upgrade.watcher_failed();
+                }
             }
             self.finish_upgrade();
             self.first_prompt();
             let was_running = self.exit.is_none();
             self.observe_exit()?;
+            if self.exit.is_some()
+                && let Some(watcher) = &self.watcher
+            {
+                watcher.finish();
+                if !watcher.finished() && now() - self.exit_at >= 15. {
+                    watcher_timed_out = true;
+                    eprintln!("watcher: observer did not finish within 15 seconds of agent exit");
+                    break;
+                }
+            }
             if was_running && self.exit.is_some() && self.metadata["sandbox"].is_object() {
                 // The runner owns the sandbox proxies. Nothing in its group may outlive it.
                 unsafe {
@@ -808,6 +926,7 @@ impl Pen {
             if self.exit.is_some()
                 && (!self.pty_open || now() - self.exit_at > 0.3)
                 && self.stop_tree.as_mut().is_none_or(|tree| tree.is_empty())
+                && self.watcher.as_ref().is_none_or(|w| w.finished())
             {
                 break;
             }
@@ -1011,6 +1130,18 @@ impl Pen {
         });
         let mut exit =
             json!({"instance":self.instance,"code":code,"t":now(),"stop_step":self.stopped_by});
+        if let Some(watcher) = &self.watcher {
+            let remaining = watcher.remaining(watcher_timed_out);
+            if !remaining.is_empty() {
+                exit["remaining_sessions"] = json!(remaining);
+            }
+        }
+        if watcher_timed_out {
+            // No more upgrades/forks: dropping signals cancellation; process exit ends the thread.
+            self.watcher = None;
+        } else {
+            self.stop_watcher();
+        }
         if !remaining_pids.is_empty() {
             use std::os::unix::fs::OpenOptionsExt;
             let mut log = fs::OpenOptions::new()
@@ -1166,6 +1297,9 @@ pub fn worker() -> i32 {
             eprintln!("trust: {}", e.value);
             Some(home)
         });
+        let watcher_started = crate::agents::find(&crate::agents::kind(program))
+            .and_then(|a| a.watcher())
+            .map(|_| now());
         let agent = match command.spawn() {
             Ok(agent) => agent,
             Err(e) => {
@@ -1175,9 +1309,13 @@ pub fn worker() -> i32 {
         };
         drop(command);
         drop(slave);
-        let started = now();
+        let started = watcher_started.unwrap_or_else(now);
         let kind = crate::agents::kind(program);
         let mut pen = Pen {
+            watcher_cursor: crate::agents::find(&kind)
+                .and_then(|a| a.watcher())
+                .map(|_| json!({})),
+            watcher: None,
             agent: agent.id(),
             master: Handle::new(master),
             listener: Handle::new(listener),

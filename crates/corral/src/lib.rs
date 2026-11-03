@@ -83,7 +83,7 @@ pub fn run() -> i32 {
     if args.first().is_some_and(|s| s == "__pen-probe") {
         println!(
             "{}",
-            json!({"ok":true,"schema":pen::upgrade::SCHEMA,"pause":1})
+            json!({"ok":true,"schema":pen::upgrade::SCHEMA,"pause":1,"watchers":agents::all().filter(|a| a.watcher().is_some()).map(|a| a.kind()).collect::<Vec<_>>()})
         );
         return 0;
     }

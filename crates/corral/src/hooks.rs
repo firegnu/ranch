@@ -71,7 +71,7 @@ pub fn run(event: &str) {
     })();
 }
 
-fn command(input: &Value) -> Option<Value> {
+pub(crate) fn command(input: &Value) -> Option<Value> {
     let input = input.as_str()?;
     let mut result = json!({"text":"", "truncated":false});
     let mut remaining = 16 * 1024 - result.to_string().len();

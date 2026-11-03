@@ -227,6 +227,8 @@ fn lists_every_registered_agent_in_order_even_when_none_is_installed() {
             {"kind":"kimi","path":null,"version":null,"hooks":"global",
              "install":{"path":format!("{home}/.kimi-code/config.toml"),"status":"create","version":null,"format":"marked-block"},
              "skills":[{"target":"codex","path":format!("{home}/.agents/skills/corral/SKILL.md"),"status":"create"}]},
+            {"kind":"canter","path":null,"version":null,"hooks":"launch","unsupported":["pause","sandbox"],
+             "skills":[{"target":"codex","path":format!("{home}/.agents/skills/corral/SKILL.md"),"status":"create"}]},
         ]})
     );
 }
@@ -270,6 +272,7 @@ fn finds_programs_and_reads_versions_without_hanging() {
             (json!("amp"), Value::Null, Value::Null),
             (json!("agy"), Value::Null, Value::Null),
             (json!("kimi"), Value::Null, Value::Null),
+            (json!("canter"), Value::Null, Value::Null),
         ]
     );
     // The hanging program and the child it left behind were both killed.

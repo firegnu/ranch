@@ -41,6 +41,9 @@ pub fn status() -> Result<Value> {
             }
         }
         let mut item = json!({"kind":adapter.kind(),"path":path,"version":version,"hooks":"launch","skills":places});
+        if !adapter.unsupported().is_empty() {
+            item["unsupported"] = json!(adapter.unsupported());
+        }
         if let Some(g) = adapter.global() {
             let p = plan(&g, &home, false)?;
             item["hooks"] = json!("global");

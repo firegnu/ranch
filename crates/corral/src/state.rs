@@ -24,6 +24,7 @@ pub const FILES: &[&str] = &[
     "hook.py",
     "hook_pi.ts",
     "hook_omp.ts",
+    "canter-session.json",
     "events",
     "cursor",
     "exit.json",
@@ -307,6 +308,11 @@ pub fn list() -> Result<Vec<Value>> {
                     json!({})
                 };
                 agents.push(json!({"name":name,"instance":st["instance"],"kind":m["kind"],"cwd":m["cwd"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"],"sandbox":crate::sandbox::public(&m),"child_sandbox":crate::child_sandbox::public(&d, &st["instance"])}));
+                if let Some(adapter) = crate::agents::find(m["kind"].as_str().unwrap_or(""))
+                    && !adapter.unsupported().is_empty()
+                {
+                    agents.last_mut().unwrap()["unsupported"] = json!(adapter.unsupported());
+                }
             }
             Err(e) if e.code == 9 => {
                 agents.push(json!({"name":name,"incompatible":true,"proto":e.value["proto"],"child_sandbox":null}))
