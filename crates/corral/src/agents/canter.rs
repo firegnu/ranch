@@ -847,6 +847,9 @@ impl Watcher for Canter {
                         ),
                         Instant::now() + Duration::from_secs(2),
                     )?);
+                    if allow_heartbeat {
+                        context.contact();
+                    }
                 }
                 let Some(bytes) = stream.as_mut().unwrap().next().inspect_err(|e| {
                     if e.kind() == io::ErrorKind::InvalidData {

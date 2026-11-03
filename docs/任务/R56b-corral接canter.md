@@ -85,3 +85,6 @@
 - **线程与旧暂停实例**：pen 在 agent 退出后另设 15 秒上限，异常线程未退出时列出全部跟过的会话到 remaining_sessions 并退出。重起只看 JoinHandle，已在收尾就不重起；退出时同一会话不再 track，保留 initialized 和游标。CLI 和 pen 都允许 paused:true 的旧 canter 恢复，未暂停仍拒绝 resume。CONTRACT 补上升级到不支持 canter 的程序报 incompatible、退出码 9；同步写明恢复旧暂停实例和异常收尾上限，DESIGN 对齐这两点。paddock 没有新的适配要求。
 - **验证了什么**：撤回、无轮恢复 idle、坏 SSE 健康时间、非普通发现文件、超大 chunk、pen 退出上限、CLI／pen 恢复旧暂停实例，都先跑出对应缺陷的失败，再修到通过。canter 翻译／读取单测 11 项、watcher 单测 3 项、pen 相关单测 3 项及旧快照兼容检查通过；`cargo test -p corral-core --test canter` 10 项通过、真实测试默认忽略。手动 `real_canter_lifecycle -- --ignored --nocapture` 已通过，假模型新增出字前挂住，按 Esc 后断言 interrupted:true、interaction.running:false、reply 报 no_reply。直接相关 `interrupted`／`pause`／`upgrade` 回归分别 29／11／17 项通过；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。未重跑全套，所有命令均在前台等完。
 - **测试衔接与边界**：真 canter 撤回后把输入放回编辑框，第一次继续发题目时拼进了旧草稿；测试现通过既有 keys 的 `text:` 发送 Ctrl-U 清草稿（`ctrl-u` 不是 corral 的命名键），产品按键路径未改。测试继续使用隔离 HOME／CORRAL_HOME／CANTER_HOME 和本地假模型，无真实模型调用。未改其他仓库、R56c 范围或用户状态，未部署、合并、推送；没有待主控决定的事项。
+
+2026-11-03 复核补改：按主控采纳的 A，在事件流连上且 allow_heartbeat 为真时 contact 一次，坏帧后重连仍不刷新；按 B 仅在 CONTRACT 补明 agent 没在跑时 resume 报 not_found，paddock 不用动。
+假服务端新增首次心跳延迟 15 秒的模式，先复现安静会话切换后误报 unknown，再验证 status／wait 保持 idle；`cargo test -p corral-core --test canter` 11 通过、1 默认忽略（含坏帧回归），clippy、fmt 均通过，未跑全套，命令均在前台等完。

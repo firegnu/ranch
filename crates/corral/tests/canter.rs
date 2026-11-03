@@ -354,6 +354,7 @@ struct FakeState {
     sessions: BTreeMap<String, Value>,
     events: BTreeMap<String, Vec<Value>>,
     requests: Vec<String>,
+    delayed_heartbeat: bool,
 }
 struct FakeServer {
     state: Arc<Mutex<FakeState>>,
@@ -469,6 +470,18 @@ fn fake_connection(mut stream: UnixStream, state: Arc<Mutex<FakeState>>, stop: A
         let id = parts["session"];
         let mut after = parts["after"].parse::<u64>().unwrap();
         if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n").is_err() { return; }
+        let delayed = state.lock().unwrap().delayed_heartbeat;
+        let heartbeat_interval = if delayed {
+            Duration::from_secs(15)
+        } else {
+            Duration::from_millis(50)
+        };
+        let mut heartbeat_at = Instant::now()
+            + if delayed {
+                heartbeat_interval
+            } else {
+                Duration::ZERO
+            };
         while !stop.load(Ordering::SeqCst) {
             let events = state
                 .lock()
@@ -477,7 +490,11 @@ fn fake_connection(mut stream: UnixStream, state: Arc<Mutex<FakeState>>, stop: A
                 .get(id)
                 .cloned()
                 .unwrap_or_default();
-            let mut body = String::from(": heartbeat\n\n");
+            let mut body = String::new();
+            if Instant::now() >= heartbeat_at {
+                body.push_str(": heartbeat\n\n");
+                heartbeat_at = Instant::now() + heartbeat_interval;
+            }
             for event in events.iter().filter(|e| e["seq"].as_u64().unwrap() > after) {
                 let data = if event["malformed"] == true {
                     "{".into()
@@ -759,6 +776,68 @@ fn session_switch_resume_socket_replacement_and_pen_upgrade_preserve_event_curso
             .get("remaining_sessions")
             .is_none()
     );
+}
+
+#[test]
+fn a_quiet_session_switch_stays_idle_before_its_first_fifteen_second_heartbeat() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "delayed-heartbeat.sock");
+    server.state.lock().unwrap().delayed_heartbeat = true;
+    lab.start(&["--", "canter"]);
+    server.session("first", millis() as f64 / 1000. + 0.001);
+    lab.publish("first");
+    lab.wait_state("idle");
+    eventually(|| {
+        server
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|r| r.starts_with("/v1/events?session=first&"))
+    });
+    let first_contact = lab.request(json!({"op":"status"}))["watcher"]["last_contact"]
+        .as_f64()
+        .unwrap();
+    // Switch before the first stream's heartbeat. The next stream is also silent for 15 seconds.
+    std::thread::sleep(Duration::from_secs(10));
+    server.session("quiet", 1.);
+    lab.publish("quiet");
+    eventually(|| {
+        server
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|r| r.starts_with("/v1/events?session=quiet&"))
+    });
+    let until = Instant::now() + Duration::from_secs(12);
+    while Instant::now() < until {
+        assert_eq!(
+            lab.status()["state"],
+            "idle",
+            "a connected quiet stream must not become unknown"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        lab.json(&["wait", NAME, "--timeout", "1"])["result"],
+        "idle"
+    );
+    let connected_contact = lab.request(json!({"op":"status"}))["watcher"]["last_contact"]
+        .as_f64()
+        .unwrap();
+    assert!(connected_contact > first_contact);
+    // The delayed heartbeat subsequently advances the contact time again.
+    eventually(|| {
+        lab.request(json!({"op":"status"}))["watcher"]["last_contact"]
+            .as_f64()
+            .unwrap()
+            > connected_contact
+    });
+    server.close_all();
+    lab.json(&["stop", NAME]);
 }
 
 #[test]

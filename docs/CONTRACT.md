@@ -321,7 +321,7 @@ R56b 实现、部署后生效；之前的 corral 不认识 canter，当未知程
   - `interaction:{kind,count,running}`：含义同「Kimi 提问、批准与处理结果」一节；canter 不给 `resolved`、`action`。
   - `unsupported:["pause","sandbox"]`：只有 canter 有这个字段，别家输出不变。前端据此事先不给 canter 显示暂停、不给选 fence 档案。
   - `sandbox` 对 canter 恒为 `null`：这个字段只指 fence。canter 自带的沙箱是它服务端的全局配置，corral 不报；它和 fence 是两回事，`--yolo` 只是不弹批准框，命令仍在 canter 自带沙箱里跑。
-- **`pause`、`resume`**：对 canter 报 `{"ok":false,"error":"unsupported_kind","name":…,"message":…}`，退出码 1。例外：pen 报 `paused:true` 时允许 `resume`，用于恢复旧版 corral 已经暂停的 canter。和 `unsupported`（退出码 9，旧 pen 要 `corral upgrade`）是两回事，不要显示成「要升级」。
+- **`pause`、`resume`**：对 canter 报 `{"ok":false,"error":"unsupported_kind","name":…,"message":…}`，退出码 1。例外：pen 报 `paused:true` 时允许 `resume`，用于恢复旧版 corral 已经暂停的 canter；agent 没在跑时 `resume` 报 `not_found`。和 `unsupported`（退出码 9，旧 pen 要 `corral upgrade`）是两回事，不要显示成「要升级」。
 - **`start --sandbox <档案>`，或从父实例继承了 child-sandbox 档案**：开 canter 报 `unsupported_kind`，退出码 1，不起 pen，不退成无墙。
 - **`stop`**：没确认 canter 服务端上的会话关掉时，输出多一个 `remaining_sessions:["s-…"]`，仍 `ok:true`、退出码 0；全关了就没有这个字段。正常停一次最多约 18 秒（HUP 3 秒、TERM 3 秒，再等会话关闭最多 12 秒）；线程异常时 pen 另设 agent 退出后 15 秒的上限，超时把跟过的会话列进 `remaining_sessions` 并退出，`--timeout` 要留够。
 - **`upgrade`**：换到跟不了 canter 的程序时报 `incompatible`、退出码 9；`--all` 时该错误列在对应的 `results` 项里。
