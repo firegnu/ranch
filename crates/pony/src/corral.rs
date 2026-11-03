@@ -61,7 +61,11 @@ pub struct Interaction {
 
 impl Status {
     pub fn kimi_dialog(&self) -> bool {
-        self.kind.as_deref() == Some("kimi")
+        self.kind.as_deref() == Some("kimi") && self.structured_dialog()
+    }
+
+    pub fn structured_dialog(&self) -> bool {
+        matches!(self.kind.as_deref(), Some("kimi" | "canter"))
             && self.state == "blocked"
             && self
                 .interaction

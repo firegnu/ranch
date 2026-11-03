@@ -25,6 +25,33 @@ fn local(home: &TempDir, data: &str) {
 }
 
 #[test]
+fn canter_is_opt_in_with_yolo_and_no_model_or_labels() {
+    let home = TempDir::new().unwrap();
+    let cell = run(&home, &["cell", "canter"], 0)["cell"].clone();
+    let table = run(&home, &["table"], 0);
+    assert_eq!(cell, table["cells"]["canter"]);
+    assert_eq!(cell["agents"], json!(["canter"]));
+    assert!(cell["model"].is_null() && cell["effort"].is_null());
+    assert_eq!(
+        cell["choices"],
+        json!([{
+            "agent":"canter", "source":"builtin", "argv":["canter", "--yolo"],
+            "command":"canter --yolo", "labels":[]
+        }])
+    );
+    for (name, other) in table["cells"].as_object().unwrap() {
+        if name != "canter" {
+            assert!(
+                !other["agents"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("canter"))
+            );
+        }
+    }
+}
+
+#[test]
 fn kimi_is_opt_in_with_trusted_workspace_and_default_model() {
     let home = TempDir::new().unwrap();
     let cell = run(&home, &["cell", "kimi"], 0)["cell"].clone();
@@ -71,7 +98,7 @@ fn kimi_is_opt_in_with_trusted_workspace_and_default_model() {
 fn default_cells_preserve_commands_labels_and_review_assignments() {
     let home = TempDir::new().unwrap();
     let table = run(&home, &["table"], 0);
-    assert_eq!(table["cells"].as_object().unwrap().len(), 13);
+    assert_eq!(table["cells"].as_object().unwrap().len(), 14);
     let cases = [
         (
             "middle-design",

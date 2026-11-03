@@ -3316,6 +3316,111 @@ fn kimi_approval_refuses_dangerous_incomplete_non_bash_and_changed_commands() {
 }
 
 #[test]
+fn canter_buttons_check_interaction_escape_once_and_require_interrupted() {
+    for state in ["blocked", "working"] {
+        let mut f = Fixture::new();
+        f.memory.borrow_mut().buttons = true;
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"kind":"canter", "state":state,
+                "interaction":{"kind":if state == "blocked" {Some("approval")} else {None},
+                    "count":usize::from(state == "blocked"), "running":true}}),
+        );
+        f.corral
+            .screens
+            .insert("paddock/dev".into(), Ok("frame 1".into()));
+        if state == "working" {
+            f.message("summary", None, "?", true);
+        }
+        f.step(2.);
+        f.step(4.);
+        let posted = f
+            .memory
+            .borrow()
+            .posted
+            .iter()
+            .find(|p| !p.buttons.is_empty())
+            .unwrap()
+            .clone();
+        assert_eq!(posted.buttons.len(), 1);
+        assert_eq!(
+            posted.buttons[0].label,
+            if state == "blocked" {
+                "拒绝"
+            } else {
+                "打断"
+            }
+        );
+        let reads = f.corral.screen_reads.len();
+        f.corral
+            .screens
+            .insert("paddock/dev".into(), Ok("frame 2".into()));
+        f.corral.agents.get_mut("paddock/dev").unwrap().last_output = Some(9.);
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert_eq!(f.corral.escapes, [("paddock/dev".into(), false)]);
+        assert_eq!(f.corral.screen_reads.len(), reads);
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"state":"idle", "interrupted":false, "interaction":null}),
+        );
+        f.step(11.);
+        assert!(!f.texts().contains("框已拒绝") && !f.texts().contains("停下了，会话还在"));
+        f.corral.agents.get_mut("paddock/dev").unwrap().interrupted = true;
+        f.step(12.);
+        assert!(f.texts().contains(if state == "blocked" {
+            "框已拒绝"
+        } else {
+            "停下了，会话还在"
+        }));
+        assert!(f.corral.approvals.is_empty() && f.corral.question_keys.is_empty());
+    }
+
+    for (state, kind, count) in [
+        ("blocked", None, 1),
+        ("blocked", Some("approval"), 2),
+        ("working", None, 1),
+    ] {
+        let mut f = Fixture::new();
+        f.memory.borrow_mut().buttons = true;
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"kind":"canter", "state":state,
+                "interaction":{"kind":kind, "count":count, "running":true}}),
+        );
+        f.step(2.);
+        f.step(4.);
+        if state == "blocked" {
+            assert!(
+                f.memory
+                    .borrow()
+                    .posted
+                    .iter()
+                    .all(|p| p.buttons.is_empty())
+            );
+            assert!(f.texts().contains("回电脑处理"));
+        }
+        f.message("stop", None, "停 dev", true);
+        f.step(10.);
+        assert!(f.corral.escapes.is_empty());
+        assert!(f.texts().contains("回电脑处理"));
+    }
+
+    for title in ["⠋ canter · repo", "✓ canter · repo", "✋ Canter · repo"] {
+        let mut f = Fixture::new();
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"kind":"canter", "title":title}),
+        );
+        f.message("summary", None, "?", true);
+        f.step(600.);
+        let text = f.texts();
+        let line = text.lines().find(|l| l.starts_with("• dev —")).unwrap();
+        assert!(!line.contains(" · 「"), "{line}");
+    }
+}
+
+#[test]
 fn kimi_stop_and_reject_use_two_escapes_on_a_frame_one_working_and_none_idle_or_legacy() {
     for (state, frame, expected) in [
         ("blocked", true, Some(true)),

@@ -53,6 +53,13 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   resolved；旧 corral 缺字段时回电脑处理、不按键。无需换 Kimi 钩子或 helper。
   部署时先使 pony 调用新版 corral，再更新 pony；Slack 权限、凭证和 `pony status`
   不变，paddock 不用动。真实 Slack 测试在主控部署后与用户一起做。
+- R56c：canter 的「拒绝」「打断」和线程回「停」只按一次 Esc，须确认原轮
+  idle 且 interrupted 才报告成功。框上沿用 Kimi 的 interaction 单框核对，
+  核对实例、轮次、框时间、工具、命令／题目和人工输入，不比较不断重画的屏幕；
+  缺字段、子框或多框不按，提示回电脑处理。提醒仍可读屏幕末尾，
+  `⠋ canter · <目录>`（含 ✓、✋ 状态符号）不当作任务摘要。
+  不提供允许、远程回答或结构化题目展示。需 R56b corral 提供 canter 字段；
+  本件只用假 corral 验证，真机联调留给用户在场时做。公开 pony 格式不变，paddock 不用动。
 - `corral.rs` 只调用公开命令。按配置、PATH、`~/.local/bin/corral` 找程序，
   启动检查 `--version` 的 contract 1；只用 ls、status、reply、send、read、keys。
   打断／拒绝用 Esc，amp 连发两个 Esc，Kimi 框上两个、无框 working 时一个；

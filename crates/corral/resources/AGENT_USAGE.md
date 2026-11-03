@@ -20,6 +20,7 @@ corral reply <名字>
 - 换成 amp：`-- amp`，不能带 `--prompt`（会退回 1）：start 完先 `corral wait <名字> --timeout 60` 等到 `idle`，再 `corral send <名字> "<你的问题>"` 送第一句，然后 wait。amp 靠装在它配置目录里的 corral 插件报状态；一直是 `starting`，可能是插件没装、没加载成功，或者卡在对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent amp`，装完要重开这个 amp），不要自己装。
 - 换成 agy：`-- agy --dangerously-skip-permissions`，同样**必须**带 `--prompt`（agy 收到第一句话之前什么都不报，不带就一直是 `starting`）。agy 也靠装在它配置目录里的 corral 插件报状态；带了 `--prompt` 还一直是 `starting`，可能是插件没装、被停用，或者卡在「是否信任这个目录」的对话框上，告诉人用 `corral integration status` 查（没装就 `corral integration install --agent agy`，停用了就 `agy plugin enable corral`，之后要重开这个 agy；对话框要人 `corral attach <名字>` 去点），不要自己装。
 - 换成 Kimi Code：`-- kimi`，照常带 `--prompt`，不指定模型或强度，用用户自己设的默认。免确认派活用 `-- kimi --auto`，在 corral 的 `--` 前加 `--env KIMI_CODE_TRUST_WORKSPACE=1`，只对这次启动免信任确认，不写信任记录；`--auto` 不弹提问框，需要提问就用普通模式。一直是 `starting`，可能是 corral 钩子没装，或卡在信任、登录、加载画面；告诉人用 `corral integration status` 查（没装就 `corral integration install --agent kimi`，装完重开这个 Kimi），不要自己装；需要人处理的画面用 `corral attach <名字>` 去看。普通模式提问框的题目由 `corral status` 的 `questions` 给出，pony 提醒只显示题目，回答请回电脑。
+- 换成 canter：`-- canter`，照常带 `--prompt`；被其他 agent 委派时一律用 `-- canter --yolo`，不指定模型或强度，用 canter 服务端配置的模型。`--yolo` 是 Allow all，从不弹批准框，命令仍在 canter 自带沙箱里跑；该沙箱和 fence 是两回事。canter 不支持 fence 的 `--sandbox`，显式指定或从主控继承 `child-sandbox` 都报退出码 1 `unsupported_kind`，不要去掉墙重试，停下来告诉用户。`--yolo` 不跳过「是否信任」框，也没有免掉它的开关；卡住时一直是 `starting`，请用户 `corral attach <名字>` 去点，不替用户记信任。
 - `--env CAIRN_DISABLE=1` 让临时委派的 agent 不用 cairn（工作接续记忆）：它开在同一个目录，会把它的停点存到你这条工作线上。没装 cairn 时这个变量不起作用，照写即可，不要删。人要开一个以后自己长期对话的 agent，直接 `corral start <名字> --cwd <目录> -- claude`，不带这个变量。
 - `reply` 的 `text` 是回复原文，多段文字和代码块原样保留。最近一轮被打断时退回 1 `no_reply`，带 `interrupted: true`，不返回上一轮的回复。
 
@@ -61,6 +62,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 - `wait` 返回的 `result`：`idle` 这一轮结束；`interrupted` 这一轮被打断，不能当成答完；`blocked` 弹了权限框或提问框，要人处理（告诉人去 `corral attach <名字>`）；`stopped-quiet` 只有加了 `--quiet 秒` 才会出现，表示 agent 在 working 状态下长时间没动静，可能被打断，但不能据此确定。
 - `status.interrupted` 是布尔值：已识别最近这一轮被打断为 `true`，状态仍是 `idle`；新输入开始下一轮就回到 `false`。没有可靠中断事件的 agent 不能据此排除打断，仍要核实回复。
 - 已实测可识别：Codex、amp、加载新采集器的 pi（旧 pi 需要重开；amp 要连续两次 Esc）。Claude Code 从对话记录末尾识别晚于最近一次输入的明确打断标记；调用方和提醒进程需用新版，且该 CORRAL_HOME 的 `.runtime/helper` 要经新版 `corral upgrade` 等方式切到能记录路径的版本；单纯切换 CLI 或重开不够，记录读不到或格式不认识时仍认不出。omp 在一轮最终 `agent_end` 的最后一条 assistant 消息同时带 `stopReason: "aborted"`、`errorMessage: "Interrupted by user"`、`errorId` 的 UserInterrupt 位（67108864）时识别为打断；调用方和提醒进程用新版即可，采集器不用换、omp 不用重开。只取消命令后模型继续正常结束不算打断，其他中止和 `willContinue` 照旧。agy 未报中断钩子的路径仍有识别限制，不能仅凭 `interrupted: false` 或旧回复判断完成。
+- canter 按一次 Esc，corral 从 canter 的事件认出被打断；等到 `idle` 且 `interrupted:true` 才确认这一轮停下。
 - `idle` 只表示这一轮结束，agent 之后可能自己再开一轮。拿到 `reply` 后如果 `last_input_source` 是 `agent`，说明这一轮是它自己开的。
 - `wait` 默认最多等 600 秒，可用 `--timeout` 改；超时退出码 4。你的 shell 工具如果有超时（常见是两分钟），就用 `--timeout 90` 反复调用，直到返回结果。状态一直是 `starting`，说明它启动时卡在对话框里，让人接入去看。
 
@@ -96,6 +98,7 @@ corral resume <名字>
 - `keys` 送原始按键（`enter` `esc` `up` `down` `ctrl-c`，或 `text:<文字>`），不看状态，后果自负；`esc` 可以打断正在干活的 agent。按完键 agent 要过一会儿才反应，紧接着 `send` 可能因为状态还没变被退回 7，先 `status` 或 `wait` 再送。`keys` 不算人在打字，不会触发 8。
 - `read` 给的是**累积的输出**（最近若干字节的滚动缓冲），不是当前画面：启动横幅、早已过去的提示都还在里面，拿整段做子串匹配会被历史内容骗到。要判断「现在屏幕上是什么」只看尾部（最后几百字符），并且只作排查，不要靠它做决定。
 - `pause` 把 agent 连同它的子孙进程一起冻住（`SIGSTOP`），不占 CPU、不联网；`resume` 从原地接着跑（`SIGCONT`）。`status`、`ls` 里 `paused` 为 `true` 表示暂停中，原来的 `state` 不变。暂停中 `send`、`keys` 退回 10，接入窗口里打的字被丢掉，`wait` 和 `send --after` 一直等到它恢复（或超时），`stop` 先恢复再停。暂停和恢复由人决定：别人的 agent 不要替人 `pause` 或 `resume`。运行中的旧版 corral 管着的 agent 返回 9 `unsupported`，要先 `corral upgrade`。
+- canter 不支持 `pause`、`resume`，报退出码 1 `unsupported_kind`，和旧 pen 的 9 `unsupported` 不同，不要当成需要升级。
 - 退出码 2：不存在或已退出；6：你在 Codex 沙箱里，corral 用不了，需要调用方不带沙箱启动；9：版本不兼容，报告给用户，不自行重启。
 
 ## 通用升级
