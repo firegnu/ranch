@@ -41,6 +41,12 @@ argv = ["kimi", "--auto"]
 labels = []
 env = ["KIMI_CODE_TRUST_WORKSPACE=1"]
 
+[agents.canter]
+efforts = []
+models = []
+argv = ["canter", "--yolo"]
+labels = []
+
 [cells.low-design]
 description = "低档：界面和设计"
 agents = ["pi", "omp"]
@@ -114,3 +120,7 @@ agents = ["agy"]
 [cells.kimi]
 description = "只在用户或任务文件点名 Kimi 时使用"
 agents = ["kimi"]
+
+[cells.canter]
+description = "只在用户或任务文件点名 canter 时使用"
+agents = ["canter"]

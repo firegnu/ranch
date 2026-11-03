@@ -48,3 +48,24 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-11-03，ranch/dev-r56c 在 `r56c` 分支实现并自查，交主控审查。
+
+- 做了什么：pony 对 canter 的拒绝、打断及线程回「停」复用 Kimi 的结构化单框核对，核对实例、轮次、框时间、人工输入和框内容，不比较重画的屏幕；仅按一次 Esc，须原轮 idle 且 interrupted 才报成功。子框、多框或缺 interaction 时不按，提示回电脑处理。摘要忽略带转圈、✓、✋ 的 `canter · <目录>` 标题。派活表新增 canter 家和同名点名格，命令 `canter --yolo`，无模型、强度、标签或专用环境变量；同步两份技能、AGENT_USAGE 和 pony README，写明信任框处理、暂停不支持，以及 canter 自带沙箱与 fence 的区别和不能去墙重试。
+- 验证了什么：按任务只新增一条 pony 测试和一条派活表测试。先确认 RED：框重画后 pony 没发 Esc、派活表返回 unknown_cell；实现后两条均 GREEN。pony 测试覆盖拒绝／打断按钮、重画不影响操作、一次 Esc、idle 未 interrupted 时不报成功、子框／多框不按和标题过滤；派活表核对完整命令、空标签、默认模型／强度及不进入其他格子。既有格子数量断言随新增从 13 改为 14，未放宽断言。随后 `cargo test --all-targets` 一次通过（504 passed、0 failed、17 ignored），`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次通过，`git diff --check` 通过。命令均前台跑完，编译目录始终为 `.target/r56c`。
+- 拿主意的地方：照 R56a 和本任务的既定方案执行，无偏离设计或需主控新增决定的事项。共享的 `structured_dialog` 只用于单框核对，保留 Kimi 专用的 `kimi_dialog` 门槛，避免把 canter 接进回答、允许和双 Esc 流程。
+- 没做的事：未提供 canter 的允许、远程回答或结构化题目展示；未改 R56b 的 corral 本体、DESIGN、CONTRACT。未连 Slack、读凭证、操作用户 agent 或服务，未打包、部署、安装技能、改本机派活表、合并 main 或推送。真 corral 和 canter 联调仍待 R56b 部署后由用户在场进行。
+- 对 paddock 的影响：pony 公开格式不变，paddock 不用动；派活表兼容新增 canter 家和格子，现有调用不变，前端若要增加展示由 paddock 自己的任务接。canter 能力和错误码仍以 R56b 的既定 CONTRACT 为准。
+- 踩过的坑：没有。
+- 需要主控决定的事：没有。
+
+## 主控审查
+
+2026-11-03，ranch/main。
+- 实际开的是 `ranch/dev-r56c-1`，Codex gpt-6-astra / high。
+- 看了 diff：只动了 pony、`dispatch.toml`、两份技能、`AGENT_USAGE.md` 和相关测试、README，没碰 R56b 的范围。canter 走 Kimi 的结构化核对（`structured_dialog`），框上、干活时都只按一次 Esc（按两次仍只给 amp 和 Kimi 的框），要求 `interrupted`；子框或多框不按；标题去掉 `✓`、`✋` 后 `canter ·` 开头的不当摘要；派活表 `canter --yolo`、标签为空、只在点名时派；技能写明信任框照「卡在信任框」处理、不能套墙、自带沙箱和 fence 分开。
+- 主控重跑 `cargo test --all-targets`：504 通过、0 失败、17 跳过，与完成记录一致。
+- 对方没有要主控定的取舍。合并等 R56b 审完一起合（pony 依赖 R56b 报的 `interaction`、`unsupported`），真实联调在部署后。
+结果：一次过

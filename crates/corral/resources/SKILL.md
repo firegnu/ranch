@@ -23,6 +23,8 @@ corral stop <名字>
 
    要开 Kimi Code，把最后换成 `-- kimi`，照常带 `--prompt`，不指定模型或强度，用用户自己设的默认。免确认派活用 `-- kimi --auto`，在 corral 的 `--` 前加 `--env KIMI_CODE_TRUST_WORKSPACE=1`，只对这次启动免信任确认，不写信任记录；`--auto` 不弹提问框，要让它提问就用普通模式。Kimi 支持 `--sandbox dev`，也继承主控的 `child-sandbox dev`；墙内用自带搜索、读网页查资料，不注入 Exa，不能再开 agent。一直是 `starting`，可能是 Kimi 没装 corral 钩子，或卡在信任、登录、加载画面：告诉用户运行 `corral integration status` 查（没装就运行 `corral integration install --agent kimi`，装完重开这个 Kimi），不要自己装；需要人处理的画面让用户 `corral attach <名字>` 去看。普通模式提问框上的题目可从 `corral status <名字>` 的 `questions` 读取，pony 提醒只显示题目，回答请回电脑。
 
+   要开 canter，把最后换成 `-- canter`，照常带 `--prompt`；被其他 agent 委派时一律用 `-- canter --yolo`（Allow all，从不弹批准框，命令仍在 canter 自带沙箱里跑），不指定模型或强度，用 canter 服务端配置的模型。`--yolo` 不跳过「是否信任」框，也没有免掉它的开关；卡在这个框上时一直是 `starting`，请用户 `corral attach <名字>` 去点，不替用户记信任。canter 自带沙箱和 fence 是两回事：canter 不支持 `pause`、`resume` 和 fence 的 `--sandbox`，报退出码 1 `unsupported_kind`，不是旧 pen 的 9 `unsupported`。主控设了 `child-sandbox` 时也不能开 canter，不要去掉墙重试，停下来告诉用户。
+
 2. **wait**：你的 shell 工具有超时，所以每次只等 90 秒；退出码 4 就再运行一次，直到返回。看输出里的 `result`：
    - `idle`：这一轮结束，去 reply。
    - `interrupted`：这一轮被打断，告诉用户，不当成已经答完。`status` 的 `interrupted` 也为 `true`，状态仍是 `idle`；新输入开始下一轮后清为 `false`。
@@ -30,6 +32,7 @@ corral stop <名字>
    - `stopped-quiet`：对方 120 秒没有动静，可能被人打断了。告诉用户，不要当成已经答完；没有可靠中断事件的 agent 仍要靠回复核实。
 3. **reply**：`text` 是对方回复的原文，整理后告诉用户，并说明对方还开着、名字是什么。最近一轮被打断时退回 1 `no_reply`，带 `interrupted: true`，不返回上一轮的回复，不能当成完成。
    已实测可识别 Codex、amp 和加载新采集器的 pi（旧 pi 需重开，amp 连按两次 Esc）。Claude Code 从对话记录末尾识别晚于最近一次输入的明确打断标记；调用方和提醒进程需用新版，且该 CORRAL_HOME 的 `.runtime/helper` 要经新版 `corral upgrade` 等方式切到能记录路径的版本；单纯切换 CLI 或重开不够，记录读不到或格式不认识时仍认不出。omp 在一轮最终 `agent_end` 的最后一条 assistant 消息同时带 `stopReason: "aborted"`、`errorMessage: "Interrupted by user"`、`errorId` 的 UserInterrupt 位（67108864）时识别为打断；调用方和提醒进程用新版即可，采集器不用换、omp 不用重开。只取消命令后模型继续正常结束不算打断，其他中止和 `willContinue` 照旧。agy 未报中断钩子的路径仍有识别限制，`interrupted: false` 不保证没有被打断，不要把旧回复当成本轮完成。
+   canter 按一次 Esc，corral 从 canter 的事件认出被打断；等到 `idle` 且 `interrupted:true` 才确认这一轮停下。
 4. **stop**：**不要自己关**。用户可能还要接着让对方做。用户说「关掉」「不用了」时才 stop。
    要接着做或追问：`corral send <名字> "<新的话>"`，短活再 wait、reply；长活按下一节挂提醒。
 

@@ -114,13 +114,15 @@ impl Engine {
             || status.paused
             || status.kind.as_deref() == Some("agy")
             || (status.state == "blocked"
-                && status.kind.as_deref() == Some("kimi")
-                && !status.kimi_dialog())
+                && matches!(status.kind.as_deref(), Some("kimi" | "canter"))
+                && !status.structured_dialog())
             || !matches!(status.state.as_str(), "working" | "blocked")
         {
             return Ok(None);
         }
-        let screen = if status.state == "blocked" && status.kind.as_deref() != Some("kimi") {
+        let screen = if status.state == "blocked"
+            && !matches!(status.kind.as_deref(), Some("kimi" | "canter"))
+        {
             match corral.read(&status.name) {
                 Ok(screen) => Some(screen),
                 Err(_) => return Ok(None),
@@ -265,7 +267,9 @@ impl Engine {
         if content.form.is_some() {
             return self.question_action(i, action, corral, at);
         }
-        if content.status.state == "blocked" && status.kind.as_deref() != Some("kimi") {
+        if content.status.state == "blocked"
+            && !matches!(status.kind.as_deref(), Some("kimi" | "canter"))
+        {
             let screen = match corral.read(&status.name) {
                 Ok(screen) => screen,
                 Err(_) => return self.finish_button(i, "读不出屏幕，没按 Esc", false, at),
@@ -432,9 +436,9 @@ pub(super) fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static 
                 .is_some_and(|t| t > old.state_started.unwrap_or(button.created)))
     {
         Some("已在电脑上处理")
-    } else if old.kind.as_deref() == Some("kimi")
+    } else if matches!(old.kind.as_deref(), Some("kimi" | "canter"))
         && old.state == "blocked"
-        && (!status.kimi_dialog()
+        && (!status.structured_dialog()
             || old.kind != status.kind
             || old.command != status.command
             || old.questions != status.questions

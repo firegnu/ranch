@@ -897,14 +897,18 @@ impl Engine {
             Some("启动中，没按 Esc")
         } else if !matches!(status.state.as_str(), "working" | "blocked") {
             Some("读不出 agent 当前是否在干活，没按 Esc")
-        } else if status.kind.as_deref() == Some("kimi")
+        } else if matches!(status.kind.as_deref(), Some("kimi" | "canter"))
             && (status.interaction.is_none()
-                || (status.state == "blocked" && !status.kimi_dialog())
+                || (status.state == "blocked" && !status.structured_dialog())
                 || (status.state == "working"
                     && status.interaction.as_ref().is_some_and(|i| i.count != 0)))
         {
-            Some("无法核对 Kimi 的框，没按；请回电脑处理")
-        } else if status.kind.as_deref() == Some("kimi")
+            Some(if status.kind.as_deref() == Some("canter") {
+                "无法核对 canter 的框，没按；请回电脑处理"
+            } else {
+                "无法核对 Kimi 的框，没按；请回电脑处理"
+            })
+        } else if matches!(status.kind.as_deref(), Some("kimi" | "canter"))
             && status.state == "blocked"
             && status
                 .last_human_input
@@ -940,7 +944,7 @@ impl Engine {
             }
         }
         self.state.interrupts.push(Interrupt {
-            require_interrupted: status.kind.as_deref() == Some("kimi"),
+            require_interrupted: matches!(status.kind.as_deref(), Some("kimi" | "canter")),
             address: address.clone(),
             agent: status.name.clone(),
             instance: status.instance.clone(),
@@ -2297,9 +2301,10 @@ fn summary_title(status: &Status) -> Option<String> {
         .trim_start_matches(|c: char| {
             c.is_whitespace()
                 || ('\u{2800}'..='\u{28ff}').contains(&c)
-                || "◐◑◒◓◴◵◶◷✻✽✶✳✢·\u{fe0e}\u{fe0f}".contains(c)
+                || "◐◑◒◓◴◵◶◷✻✽✶✳✢·✓✋\u{fe0e}\u{fe0f}".contains(c)
         });
     if title.is_empty()
+        || title.to_ascii_lowercase().starts_with("canter ·")
         || status
             .kind
             .as_deref()
@@ -2327,7 +2332,7 @@ fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
 }
 
 fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
-    if status.kind.as_deref() == Some("kimi")
+    if matches!(status.kind.as_deref(), Some("kimi" | "canter"))
         && status
             .interaction
             .as_ref()
