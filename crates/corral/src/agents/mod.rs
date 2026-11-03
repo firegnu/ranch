@@ -27,6 +27,7 @@ use std::{
 
 mod agy;
 mod amp;
+mod canter;
 mod claude;
 mod codex;
 mod kimi;
@@ -42,11 +43,21 @@ static ADAPTERS: &[&dyn Adapter] = &[
     &amp::Amp,
     &agy::Agy,
     &kimi::Kimi,
+    &canter::Canter,
 ];
 
 pub(crate) trait Adapter: Sync {
     /// The program's file name that selects this adapter; also recorded as the agent's `kind`.
     fn kind(&self) -> &'static str;
+    fn validate_args(&self, _args: &[String]) -> Result<()> {
+        Ok(())
+    }
+    fn unsupported(&self) -> &'static [&'static str] {
+        &[]
+    }
+    fn watcher(&self) -> Option<&'static dyn crate::pen::watcher::Watcher> {
+        None
+    }
     /// Arguments placed right after the program to connect corral's hooks for this run.
     fn hook_args(&self, launch: &Launch) -> Result<Vec<String>>;
     /// Steps the pen follows to stop the agent (it always ends with SIGKILL).
@@ -165,6 +176,7 @@ pub(crate) struct Trust {
 pub(crate) struct Launch<'a> {
     helper: String,
     dir: &'a Path,
+    args: &'a [String],
 }
 impl Launch<'_> {
     /// Shell command that records `event` through the namespace's stable helper entry.
@@ -214,6 +226,21 @@ pub fn adopts_session(kind: &str) -> bool {
 }
 pub fn known(kind: &str) -> bool {
     find(kind).is_some()
+}
+pub(crate) fn check_supported(kind: &str, operation: &str) -> Result<()> {
+    let capability = if operation == "resume" {
+        "pause"
+    } else {
+        operation
+    };
+    if find(kind).is_some_and(|a| a.unsupported().contains(&capability)) {
+        return Err(crate::Error::new(
+            1,
+            "unsupported_kind",
+            format!("{kind} does not support {operation}"),
+        ));
+    }
+    Ok(())
 }
 /// Extra environment for an agent whose hooks are a global file: they act only when
 /// `CORRAL_KIND` names their agent and the agent's parent is the pen `CORRAL_PEN_PID` (an agent
@@ -269,7 +296,12 @@ pub fn argv(argv: &[String], dir: &Path, prompt: Option<&str>) -> Result<Vec<Str
     )
     .into_owned();
     if let Some(adapter) = find(&kind(&argv[0])) {
-        out.extend(adapter.hook_args(&Launch { helper, dir })?);
+        adapter.validate_args(&argv[1..])?;
+        out.extend(adapter.hook_args(&Launch {
+            helper,
+            dir,
+            args: &argv[1..],
+        })?);
     }
     out.extend_from_slice(&argv[1..]);
     if let Some(p) = prompt {
@@ -292,6 +324,7 @@ mod tests {
         let launch = Launch {
             helper: "helper".into(),
             dir: dir.path(),
+            args: &[],
         };
         let mut kinds = Vec::new();
         for a in all() {

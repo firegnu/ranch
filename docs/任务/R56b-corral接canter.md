@@ -57,3 +57,13 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+2026-11-03，ranch/dev-r56b，分支 `r56b`。
+
+- **做了什么**：实现 R56 第 1～8 条。canter 适配器负责会话文件跟随、公开 HTTP/SSE 订阅、事件翻译、重连、停止后的会话关闭确认；pen 只增加通用 watcher 起停和不透明游标交接。状态、回复、打断、题目、命令和送话确认沿用现有 v1 事件路径。升级前必须收回线程，旧目标没有 watcher 能力时报 `incompatible`；暂停、继续和显式／继承的 fence 报 `unsupported_kind`。登记 canter 的 `integration status`，没有新增依赖。对 paddock 都是兼容新增：canter 一家及其 `unsupported`、`interaction`、题目／命令和 stop 的 `remaining_sessions`，由 paddock 自己的任务接；别家输出回归测试通过。
+- **验证了什么**：先以未注册 canter、尚未翻译事件、未拒绝不支持操作／旧升级目标的失败检查确认 RED，再实现并跑到 GREEN。新增 5 项翻译／游标纯测试、8 项隔离 pen 集成测试，以及线程停不下时取消升级的测试，扩充旧快照兼容检查；覆盖会话文件晚出现、换会话／恢复旧会话、服务端换 socket、升级不丢不重、旧 pen 报 unknown、剩余会话和 fence 继承。默认忽略的 `real_canter_lifecycle` 已手动通过（本机 canter `0.1.0 · 16fb98c`）：隔离 HOME／CORRAL_HOME／CANTER_HOME、本地假模型，验证带首句启动、多行送话确认、回复、提问与按键、shell 批准框、打断、升级 pen、工作中停止并确认服务端会话 closed；不调用真实模型。最后 `cargo test --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 全通过，统一使用 `.target/r56b`，所有命令均等待完成。
+- **拿主意的地方**：方案和 CONTRACT 对用户传启动参数的处理原先冲突，已按主控 11-03 决定执行：用户自己传 `--session-file` 报 `usage`；自己传 `--close-on-exit` 接受，corral 不再重复添加。已修正 `docs/CONTRACT.md`「canter（R56）」对应句子，并用启动参数测试覆盖。没有其他待主控决定的事。
+- **没做的事**：未改 R56c 范围、canter 或 paddock 仓库；未碰用户真实会话／状态，未替用户记目录信任，未调用 DELETE，未加依赖，未打包、部署、合并或推送。真实测试只为临时目录通过公开 folderTrust 接口建立信任，测试结束收回自己启动的终端和服务端。主控审查、合并部署及用户在场的最终联合验收留给后续。
+- **踩过的坑**：corral 会重建登录环境的 PATH，假 canter 最初未被选中，测试改用隔离脚本的绝对路径。macOS Unix socket 在对端已关连接后再次设置读取超时会报 EINVAL，HTTP 客户端改为连接后一次设置超时，读取循环另检查总时限。真实 canter 提问框刚出现时立即按 Enter 未被处理，测试等待终端提示并留 600 毫秒再按键；产品的送话、按键路径没有为此改动。

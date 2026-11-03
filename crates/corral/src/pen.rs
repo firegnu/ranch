@@ -4,6 +4,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub(crate) mod upgrade;
+pub(crate) mod watcher;
 use std::{
     collections::{BTreeMap, VecDeque},
     fs::{self, File},
@@ -316,6 +317,10 @@ struct Chunk {
 }
 #[derive(Serialize, Deserialize)]
 struct Pen {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    watcher_cursor: Option<Value>,
+    #[serde(skip)]
+    watcher: Option<watcher::Running>,
     agent: u32,
     master: Handle<File>,
     listener: Handle<UnixListener>,
@@ -409,6 +414,32 @@ impl Drop for Pen {
     }
 }
 impl Pen {
+    fn start_watcher(&mut self) {
+        if self.watcher.is_none()
+            && let Some(cursor) = &self.watcher_cursor
+            && let Some(adapter) = crate::agents::find(self.metadata["kind"].as_str().unwrap_or(""))
+            && let Some(watcher) = adapter.watcher()
+        {
+            self.watcher = Some(watcher::Running::start(
+                watcher,
+                self.dir.clone(),
+                self.instance.clone(),
+                self.metadata["cwd"].as_str().unwrap_or("").into(),
+                self.started,
+                cursor.clone(),
+            ));
+        }
+    }
+    fn stop_watcher(&mut self) -> bool {
+        if let Some(watcher) = &mut self.watcher {
+            if !watcher.stop(std::time::Duration::from_secs(3)) {
+                return false;
+            }
+            self.watcher_cursor = Some(watcher.cursor());
+        }
+        self.watcher = None;
+        true
+    }
     fn first_prompt(&mut self) {
         if self.pending_prompt.is_none() || self.stopping || self.paused.is_some() {
             return;
@@ -495,6 +526,9 @@ impl Pen {
         status["capabilities"] =
             json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1});
         status["upgrade"] = self.upgrade.public();
+        if let Some(watcher) = &self.watcher {
+            status["watcher"] = watcher.status();
+        }
         if let Some(text) = self.screen.as_ref().and_then(|s| s.text()) {
             status["screen"] = json!(text);
         }
@@ -595,6 +629,17 @@ impl Pen {
             return;
         }
         let reply = match req["op"].as_str() {
+            Some(op @ ("pause" | "resume"))
+                if crate::agents::check_supported(
+                    self.metadata["kind"].as_str().unwrap_or(""),
+                    op,
+                )
+                .is_err() =>
+            {
+                crate::agents::check_supported(self.metadata["kind"].as_str().unwrap_or(""), op)
+                    .unwrap_err()
+                    .value
+            }
             Some("status") => self.status(),
             Some("upgrade") => self.prepare_upgrade(&req),
             Some("recover") => {
@@ -776,6 +821,7 @@ impl Pen {
         }
     }
     fn run(&mut self) -> Result<()> {
+        self.start_watcher();
         if self.screen.is_none()
             && crate::agents::reads_screen(self.metadata["kind"].as_str().unwrap_or(""))
         {
@@ -786,13 +832,32 @@ impl Pen {
         }
         let mut remaining_pids = Vec::new();
         loop {
+            if let Some(watcher) = &mut self.watcher {
+                let restart = watcher.restart_on_exit && watcher.finished();
+                watcher.reap();
+                if restart {
+                    self.watcher_cursor = Some(watcher.cursor());
+                    self.watcher = None;
+                    self.start_watcher();
+                }
+            }
             if let Some(target) = self.pending_upgrade.take() {
-                self.handoff(target);
+                if self.stop_watcher() {
+                    self.handoff(target);
+                    self.start_watcher();
+                } else {
+                    self.upgrade.watcher_failed();
+                }
             }
             self.finish_upgrade();
             self.first_prompt();
             let was_running = self.exit.is_none();
             self.observe_exit()?;
+            if self.exit.is_some()
+                && let Some(watcher) = &self.watcher
+            {
+                watcher.finish();
+            }
             if was_running && self.exit.is_some() && self.metadata["sandbox"].is_object() {
                 // The runner owns the sandbox proxies. Nothing in its group may outlive it.
                 unsafe {
@@ -808,6 +873,7 @@ impl Pen {
             if self.exit.is_some()
                 && (!self.pty_open || now() - self.exit_at > 0.3)
                 && self.stop_tree.as_mut().is_none_or(|tree| tree.is_empty())
+                && self.watcher.as_ref().is_none_or(|w| w.finished())
             {
                 break;
             }
@@ -1011,6 +1077,13 @@ impl Pen {
         });
         let mut exit =
             json!({"instance":self.instance,"code":code,"t":now(),"stop_step":self.stopped_by});
+        if let Some(watcher) = &self.watcher {
+            let remaining = watcher.remaining();
+            if !remaining.is_empty() {
+                exit["remaining_sessions"] = json!(remaining);
+            }
+        }
+        self.stop_watcher();
         if !remaining_pids.is_empty() {
             use std::os::unix::fs::OpenOptionsExt;
             let mut log = fs::OpenOptions::new()
@@ -1166,6 +1239,9 @@ pub fn worker() -> i32 {
             eprintln!("trust: {}", e.value);
             Some(home)
         });
+        let watcher_started = crate::agents::find(&crate::agents::kind(program))
+            .and_then(|a| a.watcher())
+            .map(|_| now());
         let agent = match command.spawn() {
             Ok(agent) => agent,
             Err(e) => {
@@ -1175,9 +1251,13 @@ pub fn worker() -> i32 {
         };
         drop(command);
         drop(slave);
-        let started = now();
+        let started = watcher_started.unwrap_or_else(now);
         let kind = crate::agents::kind(program);
         let mut pen = Pen {
+            watcher_cursor: crate::agents::find(&kind)
+                .and_then(|a| a.watcher())
+                .map(|_| json!({})),
+            watcher: None,
             agent: agent.id(),
             master: Handle::new(master),
             listener: Handle::new(listener),

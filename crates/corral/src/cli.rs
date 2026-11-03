@@ -117,6 +117,11 @@ pub(crate) fn status(name: &str) -> Result<Status> {
     };
     let mut public = json!({"ok":true,"name":name,"instance":st["instance"],"kind":m["kind"],"proto":st["proto"],"state":"unknown","state_started":null,"last_tool":null,"turn_started":null,"last_event":null,"last_event_at":null,"last_input_at":null,"last_input_source":null,"title":st["title"],"last_output":st["last_output"],"idle_for":st["last_output"].as_f64().map(|t|((now()-t)*1000.0).round()/1000.0),"attached":st["attached"],"last_human_input":st["last_human_input"],"started":st["started"],"labels":labels,"paused":st["paused"] == true,"paused_at":st["paused_at"]});
     public["sandbox"] = crate::sandbox::public(&m);
+    if let Some(adapter) = agents::find(m["kind"].as_str().unwrap_or(""))
+        && !adapter.unsupported().is_empty()
+    {
+        public["unsupported"] = json!(adapter.unsupported());
+    }
     public["interrupted"] = json!(false);
     public["child_sandbox"] = crate::child_sandbox::public(&d, &st["instance"]);
     for key in [
@@ -183,14 +188,13 @@ pub(crate) fn status(name: &str) -> Result<Status> {
             public["state_started"] = snap["state_started"].clone();
         }
         if public["state"] == "blocked"
-            && snap["last_tool"] == "AskUserQuestion"
+            && (snap["last_tool"] == "AskUserQuestion" || kind == "canter")
             && let Some(questions) = snap.get("questions").filter(|v| !v.is_null())
         {
             public["questions"] = questions.clone();
         }
-        if kind == "claude"
+        if ((kind == "claude" && snap["last_tool"] == "Bash") || kind == "canter")
             && public["state"] == "blocked"
-            && snap["last_tool"] == "Bash"
             && let Some(command) = snap.get("command").filter(|v| !v.is_null())
         {
             public["command"] = command.clone();
@@ -231,6 +235,21 @@ pub(crate) fn status(name: &str) -> Result<Status> {
     } else {
         None
     };
+    if m["kind"] == "canter" {
+        public["interaction"] = snapshot
+            .as_ref()
+            .map_or(Value::Null, |s| s["interaction"].clone());
+        if st["watcher"]["last_contact"]
+            .as_f64()
+            .is_none_or(|t| now() - t > 20.)
+        {
+            public["state"] = json!("unknown");
+            public["state_started"] = Value::Null;
+            public["interaction"] = Value::Null;
+            public.as_object_mut().unwrap().remove("questions");
+            public.as_object_mut().unwrap().remove("command");
+        }
+    }
     Ok(Status {
         public,
         snapshot,
@@ -572,11 +591,22 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         if let Some(name) = p.words.first() {
             state::validate(name)?;
         }
-        return Ok(Some(crate::upgrade::run(
+        let result = crate::upgrade::run(
             p.words.first().map(String::as_str),
             &target,
             op == "recover",
-        )?));
+        )?;
+        if result["error"]["error"] == "incompatible" {
+            return Err(Error::new(
+                9,
+                "incompatible",
+                result["error"]["message"]
+                    .as_str()
+                    .unwrap_or("incompatible target"),
+            )
+            .with("name", result["name"].clone()));
+        }
+        return Ok(Some(result));
     }
     if op == "child-sandbox" {
         let p = Args::parse(&args[1..], &["--clear"], &[])?;
@@ -641,6 +671,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                 return Err(Error::new(1, "bad_cwd", "no such directory").with("cwd", json!(cwd)));
             }
             let argv = &args[sep + 1..];
+            if let Some(adapter) = agents::find(&agents::kind(&argv[0])) {
+                adapter.validate_args(&argv[1..])?;
+            }
             if parsed.has("--prompt") {
                 match agents::find(&agents::kind(&argv[0])) {
                     None => return Err(usage("--prompt requires a recognized agent")),
@@ -658,7 +691,10 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                 None => crate::child_sandbox::inherited()?,
             };
             let sandbox = match profile.as_deref() {
-                Some(profile) => crate::sandbox::check(profile, &argv[0], &cwd, name, &extra)?,
+                Some(profile) => {
+                    agents::check_supported(&agents::kind(&argv[0]), "sandbox")?;
+                    crate::sandbox::check(profile, &argv[0], &cwd, name, &extra)?
+                }
                 None => Value::Null,
             };
             let (colors, warning) = match crate::terminal_colors::read() {
@@ -683,6 +719,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         }
         "status" => status(name)?.public,
         "pause" | "resume" => {
+            let meta = state::read(state::dir(name)?.join("meta.json"));
+            agents::check_supported(meta["kind"].as_str().unwrap_or(""), op)
+                .map_err(|e| e.with("name", name.as_str()))?;
             let reply = state::request(name, json!({"op":op}))?;
             if reply["error"] == "bad_op" {
                 return Err(Error::new(
@@ -846,6 +885,11 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             drop(stop_lock);
             let matched = e["instance"] == s["instance"];
             let mut result = json!({"ok":true,"name":name,"instance":s["instance"],"exit_code":if matched{e["code"].clone()}else{Value::Null},"stopped_by":if matched{e["stop_step"].clone()}else{Value::Null}});
+            if matched
+                && let Some(sessions) = e["remaining_sessions"].as_array().filter(|a| !a.is_empty())
+            {
+                result["remaining_sessions"] = json!(sessions);
+            }
             if matched
                 && agents::find(m["kind"].as_str().unwrap_or(""))
                     .is_some_and(|a| a.stop_descendants())

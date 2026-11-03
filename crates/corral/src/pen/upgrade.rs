@@ -85,6 +85,12 @@ pub(super) struct Upgrade {
     alive: Option<Handle<File>>,
 }
 impl Upgrade {
+    pub(super) fn watcher_failed(&mut self) {
+        self.state.clear();
+        self.result = Some("failed".into());
+        self.last_error =
+            Some("observer thread did not stop within 3 seconds; upgrade cancelled".into());
+    }
     /// An upgrade has started and not yet finished or failed.
     pub(super) fn busy(&self) -> bool {
         !self.state.is_empty()
@@ -204,8 +210,8 @@ fn unpausable() -> Value {
 pub(crate) fn probe_target(path: &Path) -> Result<PathBuf> {
     probe(path).map(|(path, _)| path)
 }
-/// The target image and whether it can keep a paused agent paused.
-fn probe(path: &Path) -> Result<(PathBuf, bool)> {
+/// The target image and its advertised capabilities.
+fn probe(path: &Path) -> Result<(PathBuf, Value)> {
     if !path.is_absolute() {
         return Err(failure("target must be an absolute executable path"));
     }
@@ -237,10 +243,19 @@ fn probe(path: &Path) -> Result<(PathBuf, bool)> {
     if reply["schema"] != SCHEMA || !status.is_some_and(|s| s.success()) {
         return Err(failure("target does not support this snapshot schema"));
     }
-    Ok((path, reply["pause"] == 1))
+    Ok((path, reply))
 }
 
 impl Pen {
+    fn supports_watcher(&self, capabilities: &Value) -> bool {
+        self.watcher_cursor.is_none()
+            || capabilities["watchers"]
+                .as_array()
+                .is_some_and(|kinds| kinds.contains(&self.metadata["kind"]))
+    }
+    fn missing_watcher(&self) -> Value {
+        json!({"ok":false,"error":"incompatible","message":"target corral cannot observe this agent's state"})
+    }
     fn fds(&self) -> Vec<i32> {
         let mut fds = vec![
             self.master.as_raw_fd(),
@@ -320,7 +335,8 @@ impl Pen {
         }
         let path = Path::new(req["exe"].as_str().unwrap_or(""));
         let target = match probe(path) {
-            Ok((_, false)) if self.paused.is_some() => return unpausable(),
+            Ok((_, caps)) if self.paused.is_some() && caps["pause"] != 1 => return unpausable(),
+            Ok((_, caps)) if !self.supports_watcher(&caps) => return self.missing_watcher(),
             Ok((p, _)) => p,
             Err(e) => return e.value,
         };
@@ -720,7 +736,10 @@ fn hold(mut snap: Snapshot, path: PathBuf) -> ! {
                                 || req["attempt"] == pen.upgrade.attempt + 1) =>
                     {
                         match probe(Path::new(req["exe"].as_str().unwrap_or(""))) {
-                            Ok((_, false)) if pen.paused.is_some() => unpausable(),
+                            Ok((_, caps)) if pen.paused.is_some() && caps["pause"] != 1 => {
+                                unpausable()
+                            }
+                            Ok((_, caps)) if !pen.supports_watcher(&caps) => pen.missing_watcher(),
                             Ok((exe, _)) => {
                                 pen.upgrade.attempt += 1;
                                 pen.upgrade.target = Some(exe.clone());
@@ -784,17 +803,26 @@ mod tests {
         assert_eq!(legacy.schema, SCHEMA);
         assert!(legacy.pen.terminal_colors.is_none());
         assert!(legacy.pen.color_replies.is_empty());
+        assert!(legacy.pen.watcher_cursor.is_none());
         assert!(!legacy.pen.input[0].started);
 
         value["pen"]["terminal_colors"] = json!({"fg":"#4c4f69","bg":"#eff1f5"});
         value["pen"]["color_replies"] = json!(b"\x1b]10;rgb:4c4c/4f4f/6969\x07".as_slice());
         value["pen"]["input"][0]["started"] = json!(true);
+        value["pen"]["watcher_cursor"] =
+            json!({"current":{"sessionId":"s","stateDir":"/isolated"},"sessions":[{"seq":42}]});
         let snapshot: Snapshot = serde_json::from_value(value.clone()).unwrap();
         let mut resumed: Snapshot =
             serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
         assert_eq!(resumed.schema, SCHEMA);
         let restored = serde_json::to_value(&resumed).unwrap();
-        for key in ["terminal_colors", "color_replies", "input", "term"] {
+        for key in [
+            "terminal_colors",
+            "color_replies",
+            "input",
+            "term",
+            "watcher_cursor",
+        ] {
             assert_eq!(restored["pen"][key], value["pen"][key], "{key}");
         }
         assert_eq!(resumed.pen.term.feed(b"\x1b\\"), vec![(11, false)]);

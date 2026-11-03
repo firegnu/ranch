@@ -35,17 +35,22 @@ fn update(s: &mut Value, e: &Value) {
     }
     let previous = s["state"].clone();
     let ev = e["ev"].as_str().unwrap_or("");
-    if ev == "PermissionRequest" && e["tool_name"] == "AskUserQuestion" {
+    if ev == "PermissionRequest"
+        && (e["tool_name"] == "AskUserQuestion" || e.get("questions").is_some())
+    {
         s["questions"] = e["questions"].clone();
     } else if ev != "Notification" {
         s.as_object_mut().unwrap().remove("questions");
     }
-    if ev == "PermissionRequest" && e["tool_name"] == "Bash" {
+    if ev == "PermissionRequest" && (e["tool_name"] == "Bash" || e.get("command").is_some()) {
         s["command"] = e["command"].clone();
     } else if ev != "Notification" {
         s.as_object_mut().unwrap().remove("command");
     }
     s["last_event"] = e["ev"].clone();
+    if let Some(interaction) = e.get("interaction") {
+        s["interaction"] = interaction.clone();
+    }
     s["last_event_t"] = e["t"].clone();
     match ev {
         "SessionStart" => {

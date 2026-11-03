@@ -314,7 +314,7 @@ corral integration uninstall --agent <kind> [--dry-run] [--yes]
 
 R56b 实现、部署后生效；之前的 corral 不认识 canter，当未知程序处理。设计见 DESIGN §7「接入 canter」。下面全是兼容新增，没有不兼容的改动。
 
-- **开**：`corral start <名字> … -- canter …`，`kind` 为 `"canter"`；`--prompt`、`--cwd`、`--env`、`--label` 照旧，首句由 corral 放进 canter 的命令行。corral 自己加 `--session-file`、`--close-on-exit`，调用方不要再传这两个参数（传了报 `usage`）。
+- **开**：`corral start <名字> … -- canter …`，`kind` 为 `"canter"`；`--prompt`、`--cwd`、`--env`、`--label` 照旧，首句由 corral 放进 canter 的命令行。corral 自己加 `--session-file`、`--close-on-exit`；调用方自己传 `--session-file` 报 `usage`，自己传 `--close-on-exit` 则接受，corral 不再重复加。
 - **`status`、`ls`**：
   - `state` 可能是 `starting`、`working`、`idle`、`blocked`、`exiting`、`unknown`。还没进会话（刚启动或卡在 canter 的信任框上）是 `starting`。`unknown`：部署前旧 corral 开的 canter、pen 太旧、连不上 canter 服务端超过 20 秒。
   - `interrupted`、`questions`、`command` 照本文件「被人打断的一轮」「提问框」「原始命令」各节；canter 的 `command` 给 shell 批准框的命令原文，`questions` 给提问框的题目和选项，同样 16 KiB 截断。
