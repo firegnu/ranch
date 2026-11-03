@@ -88,3 +88,10 @@
 
 2026-11-03 复核补改：按主控采纳的 A，在事件流连上且 allow_heartbeat 为真时 contact 一次，坏帧后重连仍不刷新；按 B 仅在 CONTRACT 补明 agent 没在跑时 resume 报 not_found，paddock 不用动。
 假服务端新增首次心跳延迟 15 秒的模式，先复现安静会话切换后误报 unknown，再验证 status／wait 保持 idle；`cargo test -p corral-core --test canter` 11 通过、1 默认忽略（含坏帧回归），clippy、fmt 均通过，未跑全套，命令均在前台等完。
+
+## 交叉审查和复核（主控记）
+
+- 交叉审查 `ranch/review-r56b-1`（Claude Code opus[1m] / xhigh），意见全文在 `docs/任务/R56b-审查.md`。第一轮「改完再合并」：必须改 1 条（出字前 Esc 撤回 `turn.retracted` 被报成没打断，`reply` 给了上一轮的回复），主控另采纳建议改第 2～6 条，第 7、8 条不改（`/fork` 重算历史那条联调时看）。
+- 返工 `5f59625` 后复核（第 1 轮）「可以合并」，另带出建议改 A（安静事件流重连后误报 `unknown`）、B（停掉的 canter `resume` 报 `not_found` 没写进 CONTRACT），主控采纳，`820e03e` 改完；主控看 diff 并跑 `cargo test --test canter`（11 过、1 忽略），没再请审查者复核这两处。
+- 主控在 `5f59625` 上重跑全套：527 通过、0 失败、18 跳过。
+结果：返工 1 次
