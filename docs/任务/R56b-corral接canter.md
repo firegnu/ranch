@@ -67,3 +67,11 @@
 - **拿主意的地方**：方案和 CONTRACT 对用户传启动参数的处理原先冲突，已按主控 11-03 决定执行：用户自己传 `--session-file` 报 `usage`；自己传 `--close-on-exit` 接受，corral 不再重复添加。已修正 `docs/CONTRACT.md`「canter（R56）」对应句子，并用启动参数测试覆盖。没有其他待主控决定的事。
 - **没做的事**：未改 R56c 范围、canter 或 paddock 仓库；未碰用户真实会话／状态，未替用户记目录信任，未调用 DELETE，未加依赖，未打包、部署、合并或推送。真实测试只为临时目录通过公开 folderTrust 接口建立信任，测试结束收回自己启动的终端和服务端。主控审查、合并部署及用户在场的最终联合验收留给后续。
 - **踩过的坑**：corral 会重建登录环境的 PATH，假 canter 最初未被选中，测试改用隔离脚本的绝对路径。macOS Unix socket 在对端已关连接后再次设置读取超时会报 EINVAL，HTTP 客户端改为连接后一次设置超时，读取循环另检查总时限。真实 canter 提问框刚出现时立即按 Enter 未被处理，测试等待终端提示并留 600 毫秒再按键；产品的送话、按键路径没有为此改动。
+
+## 主控审查
+
+2026-11-03，ranch/main。
+- 实际开的是 `ranch/dev-r56b-1`，Codex gpt-6-astra / xhigh。开工时问了一处方案和 CONTRACT 的冲突（`--close-on-exit`），主控定照方案，对方已改正 CONTRACT。
+- 看了 diff：canter 的订阅、翻译、重连、收尾确认都在 `agents/canter.rs`；公共代码只加 `watcher()`、`unsupported()`、`validate_args()` 三个默认方法，`pen/watcher.rs` 起停线程，pen 在 `run()` 开头起线程、升级前收回（停不下就取消升级）、退出时取 `remaining_sessions`；`events.rs` 门槛改成「带了字段就留」，存 `interaction`；`hooks.rs` 只是把 `command()` 改成包内可见，钩子行为没变，部署时共用 helper 不用换。别家不出现 `unsupported`、`interaction`，没碰 R56c 的范围，没加依赖。
+- 主控重跑 `cargo test --all-targets`：516 通过、0 失败、18 跳过（多出的跳过是默认 `#[ignore]` 的真 canter 测试，对方说本机手动跑过）。
+- 交叉审查交 Claude Code，见 `docs/任务/R56b-审查.md`。
