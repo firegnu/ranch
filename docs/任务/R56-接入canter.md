@@ -82,3 +82,7 @@ paddock 拆两件：A 图标、New Agent 选 canter（默认 `canter --yolo`）�
 ## 结束（11-03）
 
 用户 11-03 定关掉这件活。第 1～10 条已做完、部署（`5f065af`）、联调通过；R56a、R56b、R56c 各自的收尾提交已在 main 上。留给以后、不算这件没做完的：上面「联调」一节的两件没测的；canter 的 `--yolo` 改成不套沙箱后，技能、`AGENT_USAGE.md`、CONTRACT、DESIGN 里「`--yolo` 时命令仍在 canter 自带沙箱里跑」那句要跟着改（用户 11-03：等 canter 改完再叫 ranch）。
+
+## 后续：`--yolo` 不套沙箱（11-03）
+
+canter P2-198 合并（canter `0df5703`）后，canter/main 经用户转告：带 `--yolo` 打开的会话不套 canter 自带沙箱，不管 config.json 怎么写；不带时按配置（默认开）。ranch/main 照此改了两份技能、`AGENT_USAGE.md`、CONTRACT、DESIGN 里那句。只改文字，对 paddock：不用动。

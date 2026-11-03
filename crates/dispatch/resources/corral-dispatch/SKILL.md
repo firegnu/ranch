@@ -240,7 +240,7 @@ model = "用户选定的模型"
   派给 agy 照上面的样子带 `--prompt`（agy 不带它就一直是 `starting`），不带 `--label`，`--` 后用读表 agy 的 `command`。
   派给 Kimi 同样带 `--prompt`，用 `kimi` 格的 `command`，把该项 `env` 每项各传一个 `--env`；内置值为 `KIMI_CODE_TRUST_WORKSPACE=1`，只对这次启动生效，不写 Kimi 的信任记录。内置命令为 `kimi --auto`，不加模型、强度，标签为空；`--auto` 不会打开提问框，需要提问的普通模式按 corral 技能启动。主控设了 `child-sandbox dev` 时 Kimi 照常继承，也可显式带 `--sandbox dev`；墙内查资料用自带搜索、读网页，不注入 Exa，墙内不能再派 agent。
 
-  派给 canter 同样带 `--prompt`，用 `canter` 格的 `command`，委派一律带 `--yolo`（内置命令 `canter --yolo`），不加模型、强度，标签为空。`--yolo` 是 Allow all，从不弹批准框，命令仍在 canter 自带沙箱里跑；这个沙箱由 canter 服务端配置，和 fence 是两回事。canter 不能套 fence 墙：带 `--sandbox` 或主控设了 `child-sandbox` 时，`corral start` 报 `unsupported_kind`，不要去掉墙重试，停下来告诉用户。
+  派给 canter 同样带 `--prompt`，用 `canter` 格的 `command`，委派一律带 `--yolo`（内置命令 `canter --yolo`），不加模型、强度，标签为空。`--yolo` 是 Allow all，从不弹批准框，这次打开的会话也不套 canter 自带沙箱，不管 canter 配置怎么写（不带 `--yolo` 时按配置，默认开）；这个沙箱和 fence 是两回事。canter 不能套 fence 墙：带 `--sandbox` 或主控设了 `child-sandbox` 时，`corral start` 报 `unsupported_kind`，不要去掉墙重试，停下来告诉用户。
 
 - 本技能开的 agent（干活的、交叉审查的）一律带 `--env CAIRN_DISABLE=1`，不用 cairn（工作接续记忆）：它们的进度写在任务文件里，cairn 留给用户直接对话的主控。没装 cairn 时这个变量不起作用，照写即可，不要删。
   Codex 的默认启动模板还会关闭这个会话的 Codex 记忆（不改全局配置），直接使用读表返回的完整命令。`~/.codex/memories/` 是跨项目的，会把别的项目、工作上的内容带进来，旧约定也会和任务文件打架。
