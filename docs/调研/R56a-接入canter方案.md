@@ -703,3 +703,9 @@ canter 主控说这一点必须由用户定。
 - **B 报失败**：`ok:false`、新的错误码、退出码非 0。
   - 好处：更显眼。
   - 代价：agent 其实已经没了，`corral ls` 里看不到它，调用方没法重试；也和 Kimi 的规矩不一致。
+
+## 用户 11-03 定的
+
+- 第 1 条：A，不记信任（用户选「不记，卡住时我去点」）。
+- 第 2 条：A，`ok:true` 加 `remaining_sessions`（用户选「算成功并列出没关的会话」）。
+- 另一条（主控审查时补问）：paddock 需求单第 5 条要 Integrations 页的 canter 一行「状态来源说明照 corral 报的内容显示」，和用户 10-14「不加 `state_source`」冲突。用户选「不加字段，显示 Built in」：canter 一行照第 8 节报 `hooks:"launch"`，不加状态来源字段。

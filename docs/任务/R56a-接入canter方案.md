@@ -173,3 +173,13 @@
 - `/v1/info` 的版本字段叫 `serverVersion`，和主控转述的 `version` 不一样。已写进方案第 12 节。
 - 框开着时 canter 每 2 秒重画一次，pony 现有的「比屏幕」核对对 canter 永远不成立。设计因此改成结构化核对。
 - 有一次误把假模型的 `/push` 请求发到了 canter 的 socket，回了 404，没有影响。
+
+## 主控审查
+
+2026-11-03，ranch/main。
+- 实际开的是 `ranch/dev-r56a-1`（`--unique` 补了后缀），Claude Code opus[1m] / xhigh。
+- 看了 diff：只动了方案和本文件末尾；`git diff --check` 通过。14 条和「要用户定的」都有，每条有推荐和依据（canter 文档行号、corral `文件:行`、实测编号）。实测用隔离 `HOME`、`CANTER_HOME` 和假模型，没碰 `~/.canter`、用户的服务端和别的 agent，临时目录已删。
+- paddock/main 的 5 个问题（R56 末尾）方案都答到了（第 7、8、11 节）。补问用户一条：paddock 需求单第 5 条要「状态来源说明」和 10-14 不加 `state_source` 冲突，用户定不加字段、显示 Built in。
+- 对方的取舍：线程写 v1 事件、换 pen 前收回线程、停只靠 `--close-on-exit` 加确认、`unsupported_kind` 新码、`hooks:"launch"`、pony 改结构化核对、拆两件，都同意。「要用户定的」两条用户都选了推荐（见方案末尾）。
+- 第 12 节要 canter 补文档的 3 条（`serverVersion`、子 agent 请求形状、`session.status error`）转给 canter/main，不挡实现。
+结果：一次过
