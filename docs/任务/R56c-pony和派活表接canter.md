@@ -60,3 +60,12 @@
 - 对 paddock 的影响：pony 公开格式不变，paddock 不用动；派活表兼容新增 canter 家和格子，现有调用不变，前端若要增加展示由 paddock 自己的任务接。canter 能力和错误码仍以 R56b 的既定 CONTRACT 为准。
 - 踩过的坑：没有。
 - 需要主控决定的事：没有。
+
+## 主控审查
+
+2026-11-03，ranch/main。
+- 实际开的是 `ranch/dev-r56c-1`，Codex gpt-6-astra / high。
+- 看了 diff：只动了 pony、`dispatch.toml`、两份技能、`AGENT_USAGE.md` 和相关测试、README，没碰 R56b 的范围。canter 走 Kimi 的结构化核对（`structured_dialog`），框上、干活时都只按一次 Esc（按两次仍只给 amp 和 Kimi 的框），要求 `interrupted`；子框或多框不按；标题去掉 `✓`、`✋` 后 `canter ·` 开头的不当摘要；派活表 `canter --yolo`、标签为空、只在点名时派；技能写明信任框照「卡在信任框」处理、不能套墙、自带沙箱和 fence 分开。
+- 主控重跑 `cargo test --all-targets`：504 通过、0 失败、17 跳过，与完成记录一致。
+- 对方没有要主控定的取舍。合并等 R56b 审完一起合（pony 依赖 R56b 报的 `interaction`、`unsupported`），真实联调在部署后。
+结果：一次过
