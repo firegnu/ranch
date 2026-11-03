@@ -63,3 +63,13 @@ canter 是用户自己写的 coding agent（Rust；一台机器一个常驻服�
 2. **实现**：按 R56a 定的拆法派（预计 corral 本体一件，碰要害、要交叉审查；pony 和派活表、技能一件，文件不重叠时可并行）。
 3. **与 paddock 的次序**：paddock 第 3 条（图标）和新建入口的界面不依赖 corral，可以先做；第 1 条的真正开、第 2 条、第 4 条（按能力显示）、第 5 条依赖 corral 能开 canter、报状态和能力。R56a 定下的公开约定交给 paddock/main 后，paddock 可以照约定先写；corral 实现合并、部署后 paddock 再接真东西验。
 4. **联调**：corral 部署后，用户在场和 canter/main、paddock/main 一起走主路径。
+
+## paddock/main 的问题（11-03，审 R56a 时逐条对照，定了照写字段名回给它）
+
+paddock 拆两件：A 图标、New Agent 选 canter（默认 `canter --yolo`）、Agent shell 接管，用假 corral 先做，已开工；B 暂停和沙箱按能力显示、Integrations 的 canter 一行，等接口定了再做。它问：
+
+1. 顺序：哪几条先装上？`corral start -- canter`（第 1 条）、`ls/status`（第 2 条）、`integration status` 列出 canter（第 8 条）大概什么时候能在本机用？
+2. 暂停能力：paddock 想在点之前就知道（禁用按钮），最好 `corral ls/status` 每个 agent 带能力字段（例如 `capabilities.pause=false`），或 `integration status` 按种类报。`corral pause` 对 canter 报的错误码和「老 corral 不会暂停」的 `unsupported` 分开（例如 `unsupported_kind`），paddock 现在把 `unsupported` 显示成 needs corral upgrade。
+3. fence：`fence profiles` 的 kinds 里不列 canter 就行吗（paddock 按它决定选择器给不给档案）？`corral start --sandbox <档案> -- canter` 报什么错误码？canter 自带沙箱有没有要 corral 报出来给 paddock 显示的字段？
+4. `integration status` 的 canter 一行：`hooks` 字段是什么值（现在只有 `launch`、`global`）？「状态来源」有没有字段说明（例如事件／快照订阅），还是 paddock 按 `hooks` 值自己写一句？有没有 `install` 段？
+5. `ls` 里 `kind` 是不是就是 `canter`？`--prompt` 对 canter 怎么放（canter 首句是位置参数）？
