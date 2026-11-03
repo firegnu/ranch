@@ -156,6 +156,18 @@ pen 解析到 OSC 10/11 的单色查询时，若此刻没有 writer（没有客�
   - 阶段 4（R48g2）：主 wire 只认本实例启动后出现的请求，按交互 id 跨轮保留未解决的提问和批准，工具结果及轮结束不清后台提问；后台标记按同一 toolCallId 的 AskUserQuestion 参数读取。公开状态反映主会话最早未解决的框，另给 `interaction:{kind,count,running}`：本实例主、子 agent 的未解决框总数和主轮是否仍在运行，供 pony 核对只有一个框、后台提问已空闲；缺字段时不猜。同类和不同类均先来先显示；子 wire 只计数、不提供主状态或内容，有子框或多框不远程按键。`command` 取 Bash 批准的 display.command 原文，`action` 只显示批准说明，`resolved` 记录最近一次框的答案／决定；新框保留上一结果，新的主框结果覆盖、新用户输入清除。只改读取方，wire cursor 升到 3，按实例启动时间重放，不改钩子或共用 helper。以上均为兼容新增，paddock 不用动。
   - 停止专用于 Kimi：首个 TERM 前记录实际子孙及进程出生标识，后续信号前重新核对，跟踪存活子孙继续派生的进程；即使 Kimi 先退出，pen 仍等子树退出或到时 KILL。最后一步 KILL 后最多再等子树 5 秒，残留 PID 写进 `pen.log` 和 `exit.json` 的 `remaining_pids` 后退出；R48e 起，`corral stop` 的 JSON 也带上同一实例的非空 `remaining_pids` 数组，仍为 `ok:true`、命令退出码不变，没有残留则输出逐字不变。`stopped_by` 为 `null` 表示这次没取到退出记录，不能据此把缺少 `remaining_pids` 当成没有残留；有残留时停止约需 8 秒（TERM 后 3 秒 KILL，再最多等 5 秒），调用方的 `--timeout` 要留够。Kimi 本身仍未退出时 `exit_code` 保持未知，清理也不再阻塞等待它。别家停止步骤和输出不变，不按进程名字找目标。对 paddock：兼容新增可选字段，现有调用不用改。
   - 来历：`docs/调研/R48-接入Kimi-Code.md`、`docs/调研/R48b-Kimi-Code补测.md`、`docs/任务/R48c-Kimi-Code基本接入.md`。
+- 接入 canter（R56，用户 11-03；方案 `docs/调研/R56a-接入canter方案.md`，需求和用户原话 `docs/任务/R56-接入canter.md`）：
+  - canter 是用户自己写的 coding agent，一台机器一个常驻服务端，终端界面是客户端。用户定：状态来自订阅 canter 公开的快照和事件流，不靠钩子；订阅和翻译放在 canter 自己的适配器文件里，公共代码只加一个通用挂点。canter 不反向依赖 corral，corral 只用 canter 公开的接口（`--help`、canter DESIGN P2-83 节、协议 README），不读 canter 状态目录里 `server.json` 以外的文件。
+  - 通用挂点：`Adapter` 加可选的 `watcher()`，声明这一家带一个盯状态的线程；pen 在 `run()` 开头起线程，换 pen 前、退出前收回。线程把翻译出的 v1 事件追加到 agent 的 `events` 文件（写法同钩子），状态机、回复、送话确认、`wait` 都走现有路径。别家不起线程，行为不变。
+  - 开：corral 在 canter 的参数前加 `--session-file <agent 目录>/canter-session.json --close-on-exit`，首句照默认放 `--` 后。线程读会话文件跟着会话换订阅，从 `<stateDir>/server.json` 找服务端，`GET /v1/info` 核对 `protocolVersion` 和 `features.managedClients`，订阅一律 `observe=true`（不算 canter 的客户端）。还没有会话文件（刚启动或卡在信任框）报 `starting`。corral 不替用户记 canter 的目录信任（用户 11-03 选「不记，卡住时我去点」）。
+  - 状态：空闲只看 `session.status`（一轮结束不等于空闲：目标续跑、后台叫醒会再开一轮）；回到 idle 时按最后一轮的结果写 `Stop`／`Interrupt`／`StopFailure`；`request.opened` 写 `PermissionRequest`，带 `command`、`questions`；子 agent 的框也算 blocked。`status` 另报 `interaction:{kind,count,running}`（同 Kimi）。`events.rs`、`cli.rs` 里只认 `AskUserQuestion`／`Bash`／`claude` 的门槛放宽成「带了字段就留」，别家结果不变。线程断开超过 20 秒或旧 pen 报 `unknown`。
+  - 停：只靠 `--close-on-exit`（HUP 3 秒、TERM 3 秒、KILL），不调 `DELETE`；agent 退出后 pen 最多再等 12 秒确认跟过的会话都 `closed`，没确认的写进 `exit.json` 和 `corral stop` 输出的 `remaining_sessions`，仍 `ok:true`（用户 11-03 选「算成功并列出没关的会话」，同 Kimi 的 `remaining_pids`）。不跟踪子孙：终端起的服务端是全用户共用的。
+  - 升级：换 pen 前收回线程（fork 时只能有一个线程），游标存进 pen 快照的新字段（SCHEMA 不变），新 pen 用 `after=游标` 续订，不丢、不重报；目标程序跟不了 canter 就拒绝升级。canter 服务端自己换版本（`closeReason: serverShutdown` 或断流）不算停止，重读 `server.json` 重连续订。
+  - 不支持：暂停、继续、显式或继承的 `--sandbox` 对 canter 报新错误码 `unsupported_kind`（退出码 1），和「旧 pen 要升级」的 `unsupported`（退出码 9）分开；CLI 和 pen 两头都拦。`status`、`ls`、`integration status` 的 canter 项带 `unsupported:["pause","sandbox"]`。canter 自带沙箱是它服务端的全局配置，JSON 里不报，只在技能和 CONTRACT 里和 fence 分开写一句。
+  - `integration status`：canter 一行 `hooks:"launch"`、技能位置 `codex`，不加状态来源字段（用户 11-03 选「不加字段，显示 Built in」，沿用 10-14 不加 `state_source`）。
+  - pony：canter 的框开着时每 2 秒重画，「两次画面一样才按」过不了，改用 Kimi 那套按 `interaction` 的结构化核对，拒绝、打断都只按一次 Esc；标题去掉状态符号后是 `canter · <目录>` 的不当摘要显示。
+  - 派活：分工表加 `canter` 一家和同名格子，`canter --yolo`，只在点名时派；不分档、不选模型。
+  - 实现：R56b corral 本体、R56c pony 和派活表、技能，见方案第 14 节。
 
 ## 8. sandbox（用户 10-18）
 

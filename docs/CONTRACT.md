@@ -310,6 +310,23 @@ corral integration uninstall --agent <kind> [--dry-run] [--yes]
   - `warnings`：`foreign` 时说明那里的东西不归 corral，没动它。
 - 做完后再调一次 `integration status` 刷新显示。
 
+## canter（R56）
+
+R56b 实现、部署后生效；之前的 corral 不认识 canter，当未知程序处理。设计见 DESIGN §7「接入 canter」。下面全是兼容新增，没有不兼容的改动。
+
+- **开**：`corral start <名字> … -- canter …`，`kind` 为 `"canter"`；`--prompt`、`--cwd`、`--env`、`--label` 照旧，首句由 corral 放进 canter 的命令行。corral 自己加 `--session-file`、`--close-on-exit`，调用方不要再传这两个参数（传了报 `usage`）。
+- **`status`、`ls`**：
+  - `state` 可能是 `starting`、`working`、`idle`、`blocked`、`exiting`、`unknown`。还没进会话（刚启动或卡在 canter 的信任框上）是 `starting`。`unknown`：部署前旧 corral 开的 canter、pen 太旧、连不上 canter 服务端超过 20 秒。
+  - `interrupted`、`questions`、`command` 照本文件「被人打断的一轮」「提问框」「原始命令」各节；canter 的 `command` 给 shell 批准框的命令原文，`questions` 给提问框的题目和选项，同样 16 KiB 截断。
+  - `interaction:{kind,count,running}`：含义同「Kimi 提问、批准与处理结果」一节；canter 不给 `resolved`、`action`。
+  - `unsupported:["pause","sandbox"]`：只有 canter 有这个字段，别家输出不变。前端据此事先不给 canter 显示暂停、不给选 fence 档案。
+  - `sandbox` 对 canter 恒为 `null`：这个字段只指 fence。canter 自带的沙箱是它服务端的全局配置，corral 不报；它和 fence 是两回事，`--yolo` 只是不弹批准框，命令仍在 canter 自带沙箱里跑。
+- **`pause`、`resume`**：对 canter 报 `{"ok":false,"error":"unsupported_kind","name":…,"message":…}`，退出码 1。和 `unsupported`（退出码 9，旧 pen 要 `corral upgrade`）是两回事，不要显示成「要升级」。
+- **`start --sandbox <档案>`，或从父实例继承了 child-sandbox 档案**：开 canter 报 `unsupported_kind`，退出码 1，不起 pen，不退成无墙。
+- **`stop`**：没确认 canter 服务端上的会话关掉时，输出多一个 `remaining_sessions:["s-…"]`，仍 `ok:true`、退出码 0；全关了就没有这个字段。停一次最多约 18 秒（HUP 3 秒、TERM 3 秒，再等会话关闭最多 12 秒），`--timeout` 要留够。
+- **`integration status`**：多一行 `{"kind":"canter","path":…,"version":…,"hooks":"launch","skills":[{"target":"codex",…}],"unsupported":["pause","sandbox"]}`，登记顺序在 kimi 之后；没有 `install` 段，不加状态来源字段。
+- **其余**：`reply`、`wait`、`send`、`keys`、`read`、`attach` 用法不变。
+
 ## sandbox 与 `fence`（R17b）
 
 这些都是兼容新增。paddock 当前用法不用改；P5-120 接入档案选择、卡片小锁、拒绝记录及 Settings 规则展示。前端通过 PATH 找 `fence`；远端先 `command -v fence`，再试 `~/.local/bin/fence`，检查 `--version` 的 `contract`。未安装时不提供 sandbox 选项。
