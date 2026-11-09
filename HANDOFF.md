@@ -49,6 +49,7 @@
 - `~/.cache` 是指向 HOME 外的符号链接时，墙里连临时目录都建不了（R20 审查；用户的不是链接）。
 - R18：旧运行的慢 `child-sandbox` 设定请求遇到同名重开，复核和写入之间还剩很小的窗口（CONTRACT 写明了）。
 - corral 对 Codex 在同一轮里会短暂报 idle，派活时提醒会提前到。
+- `send --steer`（R57b 审查）：插话等空隙时，接入窗口里终端自动发的回报（如切窗格时的焦点事件）也会让它放弃、留草稿，不会误按；在 paddock 里看着 agent 切窗格时会多留草稿。改法见 `docs/任务/R57b-审查.md` 第二轮复核第 1 条。pen 用系统时钟控制输入间隔，时钟往回调时排队的输入会停住（复核第 3 条，旧问题）。
 - 全套测试偶有 1 个失败、再跑就过：hook 协议测试等合成 agent 写参数文件超时（R17b 见过一次，没复现，原因未查明；最像 `protocol.rs` 的 `injected_hooks_use_the_namespace_entry_and_adapter_arguments_are_preserved`，R54 在它的等待处加了诊断，再失败时断言信息里有 status、read、pen.log，照这些查）。
 - agy 的已知限制见 DESIGN §7「接入 agy」。
 - Kimi（R48g2 审查，可以不改的）：Kimi 子 agent 的 wire 每次 `status` 都从头读（8 个 8 MB 时约 38 ms）；子框和主框同时开、子框先关后，主框不重发提醒，仍停在「回电脑处理」。Kimi 的按键和框的行为照 2.3.1 摸的，Kimi 升级后要重新核对（见 `docs/调研/R48g-Kimi提问和批准框.md`）。
