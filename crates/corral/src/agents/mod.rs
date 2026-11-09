@@ -74,6 +74,10 @@ pub(crate) trait Adapter: Sync {
     fn prompt(&self) -> bool {
         true
     }
+    /// Submit ordinary input during a running task, with confirmable input events.
+    fn steer_key(&self) -> Option<&'static [u8]> {
+        None
+    }
     /// Send the first prompt through the PTY once the editor is ready, instead of argv.
     fn prompt_via_terminal(&self) -> bool {
         false

@@ -65,10 +65,12 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 
 ## 退出码
 
+send 被拒绝时：对方正在干活、要修正当前任务，可加 `--steer` 插话（Claude Code、Codex、omp）；不加照旧等空闲，不能与 `--after` 同用。9 `unsupported_steer`／`unsupported` 就等空闲后普通 send；7 `draft_not_submitted` 是文字已写入但没有提交，让用户核对草稿，不重送、不补回车。
+
 | 退出码 | 标识 | 怎么办 |
 |---|---|---|
 | 2 | `not_found` | 对方已经不在了，需要的话重新 start |
-| 3 | `not_delivered` | 对方没收到。不要重试回车；运行 `corral status <名字>` 看状态，必要时请用户接入去看 |
+| 3 | `not_delivered` | 已写出但没确认收到。不要重送或重试回车；运行 `corral status <名字>` 看状态，必要时请用户接入去看 |
 | 4 | `timeout` | wait 还没等到，再运行一次 wait |
 | 6 | `sandbox` | 你在 Codex 沙箱里，corral 用不了。告诉用户不带沙箱重启你（例如 `codex --yolo`） |
 | 7 | `not_idle` | 对方还在忙，先 wait 再 send |

@@ -56,3 +56,13 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：先在 DESIGN §7 写入设计，再实现 `send --steer`。Claude Code、Codex、omp 在 working 时由适配器声明 Enter；idle 照送，原 send／after 路径不变。pen 在正文、提交键实际写出前复用状态计算核对，变化时留下草稿、返回 `draft_not_submitted`（7）及 written／submitted／confirmed／request_id，status 的最近发送记录可查。保留 paused（10）、not_idle（7）、human_active（8），未支持适配器用 `unsupported_steer`（9）区分；独立 `steer` 协议及能力查询拒绝旧 pen。补齐 CONTRACT、两份使用说明及对 paddock 的兼容新增说明；完成自查。
+- 验证了什么：新增 9 项合成测试，隔离 HOME／CORRAL_HOME，覆盖三家 working 的多行、Enter 和确认，idle（包括未支持 working 的 pi），blocked／starting／暂停／未支持各家及 force 不越权，30 秒人工操作及草稿合并，粘贴后 blocked／idle 不按 Enter，未确认不补发，旧 pen 无能力／能力查询后 bad_op 不 fallback，after 互斥，以及普通正文边界。RED 证据：有效 working fixture 下旧 CLI 报 unrecognized argument --steer；未加提交保护时，粘贴后 blocked 的测试错误地得到 confirmed:true；未加正文边界时 `/model` 被提交。对应实现后全绿；既有测试未改断言或超时。
+- 规定的检查：使用任务专属 CARGO_TARGET_DIR，`cargo test --all-targets` 一次，539 passed、0 failed（其余为既有显式 opt-in 测试或合成 agent 入口）；`cargo clippy --all-targets -- -D warnings` 一次通过；`cargo fmt --check` 一次通过。全套测试后仅把测试里的等价带换行 print 改为 println，再由 clippy 编译检查；运行时代码没有后续变更。命令均在前台等到结束，没有另加验证项目。
+- 真实实测：使用当前分支 debug/corral、独立临时 CORRAL_HOME 和各自临时 cwd，带 `role=test`、`CAIRN_DISABLE=1`；只启动 `ranch/test-r57b-claude`、`ranch/test-r57b-codex`、`ranch/test-r57b-omp`。三家均在 working／PreToolUse 的前台 sleep 45 期间发送多行修正，request_id 分别为 `r57b-live-claude`／`r57b-live-codex`／`r57b-live-omp`，confirmed:true、merged_with_draft:false，确认延迟 0.408／0.408／0.413 秒；之后各自 result.txt 为 STEER，reply 分别为 `R57B_CLAUDE_STEER`／`R57B_CODEX_STEER`／`R57B_OMP_STEER` 加末行 DONE。三家都已 corral stop 成功，隔离命名空间 ls 为空。未碰其他 agent。
+- 拿主意的地方：参数名选任务举例的 `--steer`，与 after 互斥；未支持家和旧 pen 都用退出码 9、不同 error 标识。按报告的普通正文边界，在 working 拒绝 slash／shell 前缀、控制字符和未开启括号粘贴的终端；idle 沿用旧正文规则。待写插话与 upgrade 互斥，保护信息不进入升级快照，避免旧 pen 忽略新增字段后裸按回车。保留输入事件与 turn_started 的现有含义，不推断原生执行轮或模型消费时点。用户已同意的提交前复查剩余竞态照实写入 DESIGN；本轮没有新增待主控决定事项。
+- 没做的事：pi 的追加 input 尚未进入当前归一化确认链，且扩展 handler 是否放行仍需可靠证据；Kimi Ctrl+S 没有当前确认链可用的输入回执，所以两家未开放，也未额外开真实会话。amp／canter／agy 未开放。没有改 pony、paddock、派活技能、HANDOFF；不改提醒，不增加轮次追踪，不部署、不 upgrade、不合并、不推送。paddock 现有调用无需修改，新插话界面另开任务。验证预算之外的升级并发专项、旧二进制完整互操作矩阵和菜单竞态穷举未另跑。
+- 踩过的坑：最初合成 SessionStart 少了 has_transcript，状态停在 starting；补齐有效事件后才取得目标缺陷的 RED，这次 fixture 失败不算 RED。合成程序使用 raw terminal 时 Ctrl+C 是普通字节，不能沿用 cat 的退出假设；补了合成程序的 Ctrl+C 退出处理，让 Codex 的既有 stop 步骤能结束它。真实三家实测没有失败重送或清草稿。

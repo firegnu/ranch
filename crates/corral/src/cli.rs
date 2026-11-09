@@ -107,6 +107,9 @@ pub(crate) struct Status {
 }
 pub(crate) fn status(name: &str) -> Result<Status> {
     let st = state::require(name, json!({"op":"status"}))?;
+    status_from_pen(name, st)
+}
+pub(crate) fn status_from_pen(name: &str, st: Value) -> Result<Status> {
     let d = state::dir(name)?;
     let m = state::read(d.join("meta.json"));
     let l = state::read(d.join("labels.json"));
@@ -263,9 +266,43 @@ fn deliver(
     timeout: f64,
     st: Status,
     request_id: &str,
+    steer: bool,
 ) -> Result<Value> {
     let t0 = now();
-    send_once(name, text, force, &st, request_id)?;
+    if steer {
+        if st.pen["capabilities"]["steer"] != 1 {
+            return Err(Error::new(
+                9,
+                "unsupported",
+                "this pen does not support --steer; wait for idle and use ordinary send",
+            )
+            .with("name", name));
+        }
+        let reply = state::request(
+            name,
+            json!({"op":"steer","instance":st.public["instance"],"request_id":request_id,"text":text,"force":force}),
+        )?;
+        if reply["ok"] != true {
+            let code = match reply["error"].as_str() {
+                Some("not_idle" | "draft_not_submitted") => 7,
+                Some("human_active") => 8,
+                Some("unsupported" | "unsupported_steer" | "bad_op") => 9,
+                Some("paused") => 10,
+                _ => 1,
+            };
+            let mut value = reply;
+            if value["error"] == "bad_op" {
+                value["error"] = json!("unsupported");
+                value["message"] = json!("this pen does not support --steer; not sending keys");
+            }
+            value["name"] = json!(name);
+            value["instance"] = st.public["instance"].clone();
+            value["request_id"] = json!(request_id);
+            return Err(Error { code, value });
+        }
+    } else {
+        send_once(name, text, force, &st, request_id)?;
+    }
     if st.snapshot.is_none() {
         return Ok(
             json!({"ok":true,"name":name,"instance":st.public["instance"],"request_id":request_id,"confirmed":false}),
@@ -468,7 +505,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "start" => Some(
             "NAME [--cwd DIR] [--unique] [--prompt TEXT] [--env KEY=VALUE] [--label KEY=VALUE] [--sandbox PROFILE | --no-sandbox] -- COMMAND [ARG ...]",
         ),
-        "send" => Some("NAME TEXT [--force] [--timeout SECONDS] [--after NAME] [--request-id ID]"),
+        "send" => Some(
+            "NAME TEXT [--force] [--steer | --after NAME] [--timeout SECONDS] [--request-id ID]",
+        ),
         "child-sandbox" => Some("NAME [PROFILE | --clear]"),
         "terminal-colors" => Some("[--fg COLOR --bg COLOR | --clear]"),
         "keys" => Some("NAME KEY [KEY ...]"),
@@ -624,7 +663,10 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             &["--unique", "--no-sandbox"],
             &["--cwd", "--prompt", "--env", "--label", "--sandbox"],
         ),
-        "send" => (&["--force"], &["--timeout", "--after", "--request-id"]),
+        "send" => (
+            &["--force", "--steer"],
+            &["--timeout", "--after", "--request-id"],
+        ),
         "wait" => (&[], &["--timeout", "--quiet"]),
         "stop" => (&[], &["--timeout"]),
         "read" => (&[], &["--bytes"]),
@@ -748,6 +790,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             json!({"ok":true,"name":name,"instance":reply["instance"],"paused":reply["paused"],"paused_at":reply["paused_at"]})
         }
         "send" => {
+            if parsed.has("--steer") && parsed.has("--after") {
+                return Err(usage("--steer and --after cannot be used together"));
+            }
             if let Some(after) = parsed.get("--after") {
                 if !parsed.has("--timeout") {
                     return Err(usage("--after needs an explicit --timeout"));
@@ -771,6 +816,7 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
                         .get("--request-id")
                         .map(str::to_owned)
                         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                    parsed.has("--steer"),
                 )?
             }
         }

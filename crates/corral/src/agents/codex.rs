@@ -9,6 +9,9 @@ impl Adapter for Codex {
     fn kind(&self) -> &'static str {
         "codex"
     }
+    fn steer_key(&self) -> Option<&'static [u8]> {
+        Some(b"\r")
+    }
     /// Hooks go in through `-c`. `--dangerously-bypass-hook-trust` is required: without it Codex
     /// asks to review the hooks at start, and trusting them writes their hashes into the user's
     /// `config.toml`. Codex's `Interrupt` hook is the reason the shared reader knows that event.
