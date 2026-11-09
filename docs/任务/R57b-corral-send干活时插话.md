@@ -69,3 +69,12 @@
 - 主控审查返工（2026-11-09）：针对 macOS 上 accept 出来的 socket 继承非阻塞模式、全套运行时 read_line 偶发 WouldBlock 的失败，在旧 pen 合成测试中显式恢复 accepted socket 的阻塞模式，功能代码、超时和断言不变；按要求仅单跑该测试一次通过，再跑一次 `cargo test --all-targets`，539 passed、0 failed，均在前台完成，无需主控另作决定。
 - 交叉审查后修订（2026-11-09）：按用户采纳的审查第 1–3 条及新增需求，将 `draft_not_submitted` 改为退出码 3（替代上文最初的 7），证据变化但状态仍可输入用 `state_changed`，7 保持「本次未写入、等空闲可重送」。提交前发现变化、起初和当前均为 working 且检查通过时，每 50 ms 复查，等连续 300 ms 无新事件后提交；从首次变化起最多额外等 3 秒，不因后续事件延长，超时留草稿，blocked 等不可输入状态立即放弃。`steer_status` 用 `catch_unwind(AssertUnwindSafe(..))` 包住状态计算，panic 按正文前 rejected／提交前 draft 返回，保住 pen 和 agent。DESIGN、CONTRACT、AGENT_USAGE、SKILL 已同步退出码、等待办法、用户接受的「留草稿少很多、等待期间弹框机会略多」取舍，以及下一次 send 会合并草稿、必须先让人核对或清掉的说明；paddock 现有调用不用动，插话入口仍由自己的任务接。新增单条 PostToolUse 后等空隙成功、连续事件到期留草稿、等待中 blocked 立即取消、真实损坏 cursor 引发的正文前／提交前解析 panic，以及原本 idle 的请求粘贴后变成 working 不转为插话等回归测试。目标测试先观察到旧退出码、缺少空隙等待、解析 panic 导致 pen 消失的失败后改到通过；自查还发现直接套用等待会让原本 idle 的 `/model` 在变为 working 后提交，补了失败测试并保留原来的拒绝边界。插话测试集 14 passed、0 failed（另 1 项合成 agent 入口 ignored）；随后 `cargo test --all-targets` 一次，544 passed、0 failed、19 ignored，`cargo clippy --all-targets -- -D warnings` 和 `cargo fmt --check` 各一次通过，命令均在前台完成。没有再开真实 agent，审查第 4、5 条不改，不改其他仓库、不部署、不合并、不推送；没有新增待主控决定事项。
 - 复核后修订（2026-11-09）：采纳复核第 1、2 条，等空隙期间发现后续非本次插话的输入块就留草稿、返回 draft_not_submitted（3）及 input_queued，保留后续块并继续写出；发现发起连接已断开则取消提交，recent_sends 记 draft/client_gone，按 fd 与连接序号共同核对；DESIGN、CONTRACT 各补充说明，paddock 现有调用不用动；新增两条合成测试，先分别复现 keys 等到 state_changed 超时和断连后仍 written，再跑一次插话测试文件，16 passed、0 failed，随后 cargo test --all-targets 一次，546 passed、0 failed、19 ignored，clippy -D warnings、fmt --check 各一次通过，命令均在前台完成；复核第 3、4 条未改，未开真实 agent、未部署／合并／推送，无新增踩坑或待主控决定事项。
+
+## 主控审查
+
+- 看了 diff：只动 `crates/corral/`（`cli.rs` 送话、`pen.rs`、新 `pen/steer.rs`、`pen/upgrade.rs`、三家适配器、技能说明、新测试 `tests/steer.rs`）和 DESIGN、CONTRACT；不加 `--steer` 的路径只多了 `steer: None` 和一处先判断再写的等价改写，现有测试一个没改。
+- 主控重跑全套时新测试 `steer_requires_an_explicit_pen_capability…` 在负载下失败（macOS accept 出的 socket 继承非阻塞），交回返工一次（`715a785`，只改测试）。
+- 交叉审查（ranch/review-r57b-1，Claude Code opus[1m] xhigh）三轮均为「可以合并」、必须改 0：首轮建议 1–3 和用户 11-09 新定的「等空隙再提交」在 `23098c0` 做完；复核建议 1、2（等待中有后续输入或调用方断开就不提交）由主控采纳，在 `e0c410c` 做完；第二轮复核建议 1（接入窗口的终端自动回报也会让等待中的插话留草稿，不会误按）不在本件改，记进 HANDOFF 已知问题。复核「pen 用系统时钟控制输入间隔」是旧问题，也不在本件改。
+- 测试：开发报全套 546 通过；审查在 `e0c410c` 跑全套 546 通过、0 失败；主控在 `23098c0` 跑过插话测试 14 项通过。三家真实 agent 插话实测在 `8a93438` 上做过，之后的改动只让插话更多放弃、不多按回车。
+- 首轮审查为估频率读了本机用户 agent 的事件日志（只读事件名和时间），已告知用户；复核起写明不读。
+结果：返工 1 次
