@@ -4,6 +4,41 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 前端读这里写的字段，遇到没写的字段要忽略，遇到不认识的取值（比如 `hooks`、`status` 的新值）要能显示、不报错。
 
+## `corral send NAME TEXT --steer`（R57b）
+
+显式向当前任务插话。idle 时照常送；working 时按适配器的提交方式送入，首批支持 Claude Code、Codex、omp（Enter）。pi、Kimi、amp、canter、agy 和未知程序暂不支持 working 插话。不加 `--steer` 的 send、`send --after` 的行为、字段和退出码不变；`--steer` 与 `--after` 同用报 usage（1）。
+
+`--force` 仍只跳过最近 30 秒真人输入检查，不能跳过状态、暂停、能力或提交前检查。`--timeout` 仍是写出后的输入确认等待（默认 15 秒），不含提交前最多额外 3 秒的空隙等待，不超时补发。working 时只送普通正文：首个非空白字符为 `/` 或 `!`、含换行／制表符之外的控制字符，报 usage（1）；终端未开启 bracketed paste 则报 unsupported（9）。idle 正文规则沿用普通 send。
+
+提交前证据变了、起初和当前都是 working 且仍可插话时，每 50 ms 复查，等连续 300 ms 未观察到新事件的空隙，再核对通过才提交；从第一次发现变化起最多额外等 3 秒，新事件不延长截止时间。证据字段不减少，正文不重写。转为 idle 或原本 idle 的请求变成 working 时，仍放弃并以 state_changed 为 reason；blocked／starting 等不可输入、暂停、真人输入或状态检查失败立即放弃，不等截止时间。正文前发现变化仍直接拒绝，不进入空隙等待。
+
+等空隙期间，后面排入非本次插话的输入块（keys、普通 send、接入窗口的输入等）就立即留草稿，返回 3 draft_not_submitted、reason 为 input_queued，后续块照常写出、不再等这次插话的 3 秒截止；发起插话的连接断开则取消提交，recent_sends 记 draft、reason 为 client_gone，可按 request_id 查询。
+
+| 退出码／error | 含义与调用方处理 |
+| --- | --- |
+| 0 | 沿用 `ok:true,name,instance,request_id,confirmed,merged_with_draft,latency`；confirmed 只证明匹配到输入事件，不代表模型已处理修正。已有草稿可能合并，不能重送。 |
+| 3 `not_delivered` | 已写出但没有匹配输入事件；带 request_id，不能推断对方没收到，不补发。 |
+| 3 `draft_not_submitted` | 正文已写入，但空隙等待到期、状态变化、暂停、真人输入或检查失败使提交取消；`written:true,submitted:false,confirmed:false`，带 request_id 和 reason。不能重送、不补回车；草稿会在下一次 send 时合并提交，必须先让人接入核对或清掉。 |
+| 7 `not_idle` | blocked、starting 等不可输入状态；本次未写入，等空闲可重送。 |
+| 7 `state_changed` | 正文前状态证据变化，但状态仍可输入；本次未写入，等空闲可重送。 |
+| 8 `human_active` | 最近 30 秒有人操作过；本次未写入。 |
+| 9 `unsupported_steer` | 适配器暂不支持 working 插话；等空闲后用普通 send，与 not_idle 分开。 |
+| 9 `unsupported` | pen 缺少插话能力，或 working 的终端没有 bracketed paste；本次未写入，等空闲后用普通 send。 |
+| 10 `paused` | 对方暂停中，本次未写入。 |
+| 1 `state_check_failed` | 正文前计算状态发生 panic，检查失败，本次未写入，pen 与 agent 保持运行；先核对状态读取问题。提交前发生时返回 3 `draft_not_submitted`，reason 为 state_check_failed。 |
+
+其他错误沿用既有含义。upgrade 期间插话报 upgrade_busy（1），未写入；待写插话尚未结束时 upgrade 也报 upgrade_busy，防止把缺少保护的输入交给旧 pen。正文的 PTY 写失败会取消后续提交；若返回 `written:null,submitted:false`，表示可能有部分正文写入，应核对草稿。连接断开或提交键本身写失败仍可能没有这份证据，不能据此重送。
+
+新版 `status.capabilities.steer:1` 表示 pen 支持这个操作，不代表每个适配器都支持 working 插话。`status.recent_sends` 仍只保留最近 10 条；插话提交前被挡的记录为 `state:"draft",written:true,submitted:false,reason:<原因>`，用 request_id 对应。入队后、正文前被挡为 `state:"rejected",written:false`，入队前拒绝不记发送记录；正文写失败被提交检查发现时 written 为 null。成功写出的记录仍为 written；这些记录不是模型消费回执，也不是幂等重发凭证。
+
+新 CLI 先查能力，再用独立 pen 操作 `steer`；能力缺失或请求遇到旧 pen 的 bad_op 都报 unsupported，不退回 send／keys。旧 CLI 对 `--steer` 报 usage（1）；旧 CLI／新 pen 的普通 send 保持原样。没有新事件格式、持久文件或 turn_started 语义变更；wait、reply、after 仍按现有轮次观察。
+
+7 只表示本次没写入，等空闲可重送；3 表示已写入，不能重送。reason 为 state_changed 表示证据变化（包括 working 一直有事件到等待截止），与不可输入的 not_idle 分开。
+
+正文前、提交前复查只缩小误按窗口：复查后弹框、钩子滞后、未识别菜单仍可能抢走提交键，见 DESIGN §7。旧做法在审查本机日志估计约 2%–12% 的插话窗口会遇到新事件，这不是改后概率；等空隙会让留草稿少很多，但等待期间弹框的机会略多一点，用户 11-09 已接受。连续插话逐条等返回；留下草稿后，下一次 send 会将它合并提交，必须先让人核对或清掉；确认未知时也不能重送。
+
+对 paddock：兼容新增；现有调用不用改，插话入口在 paddock 自己的任务接。pony 和 send --after 的提醒仍等接收者空闲，不因此自动插话。
+
 ## stop 与 ls 的退出记录（R51）
 
 各家的新版 `corral stop` 对 `stop.lock` 持共享锁（`LOCK_SH`），`corral ls` 清理前非阻塞取排他锁（`LOCK_EX`）；任一个 stop 仍持共享锁时，ls 不会删除退出记录。多个 stop 互不排队，拿到共享锁后各自立刻发停止请求；同时停同一个运行中实例的几个 stop 都返回 `ok:true`、退出码 0 和同一份退出记录。命令、参数、JSON 字段和退出码不变，等锁和等 pen 停下仍共用一个 `--timeout` 截止时间。

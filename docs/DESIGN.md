@@ -169,6 +169,19 @@ pen 解析到 OSC 10/11 的单色查询时，若此刻没有 writer（没有客�
   - 派活：分工表加 `canter` 一家和同名格子，`canter --yolo`，只在点名时派；不分档、不选模型。
   - 实现：R56b corral 本体、R56c pony 和派活表、技能，见方案第 14 节。
 
+### 干活时显式插话（R57b，用户 11-09）
+
+- 新增 `corral send NAME TEXT --steer`；不加参数的 send 和 `send --after` 完全沿用旧路径。`--steer` 与 `--after` 互斥，避免自动提醒变成当前任务的修正。idle 照常送；working 仅在适配器声明提交键、且现有输入事件足以确认时开放，首批 Claude Code、Codex、omp 都用 Enter。pi 的追加 input 尚未成为可确认的归一化输入，Kimi 的 Ctrl+S 没有可靠输入回执，暂不开；amp、canter、agy 也不开。
+- 暂停仍报 paused（10），blocked／starting 等仍报 not_idle（7）；working 的未支持适配器报 unsupported_steer（9），提示等 idle 后普通 send。最近 30 秒真人输入仍报 human_active（8），force 只跳过这一道。旧 pen 没有 `capabilities.steer:1` 时报 unsupported（9）；协议用独立 `op:steer`，即使能力查询后换成旧 pen 也只会 bad_op，不会退回 send／keys。旧 CLI 对新参数报 usage，新 pen 的旧 send 行为不变。
+- pen 沿用同一个状态计算，在写正文前和提交键实际写出前复查实例、暂停、真人输入，以及状态／状态开始时间／轮次／最近事件／主会话证据。正文前证据变化立即拒绝，状态仍可输入时用 state_changed（7），不可输入时仍用 not_idle（7）；7 只表示本次未写入，等空闲可重送。正文已写入后放弃提交用 draft_not_submitted（3），附 request_id、written:true、submitted:false、confirmed:false 和 reason；3 表示已写入，不能重送。最近发送记录保留 draft 状态供 status 查询。不清草稿、不补键、不自动重发；草稿会被下一次 send 合并提交，必须先让人接入核对或清掉。guard 只在本次 pen 内有效，有待写插话时拒绝 upgrade，有 upgrade 进行时拒绝插话，避免退回旧 pen 丢掉提交保护；快照格式不变。
+- 用户 11-09 采纳交叉审查后选择「等空隙再提交」：提交前证据变化、起初和当前都是 working 且适配器、暂停及真人输入检查都通过时，在现有事件循环中每 50 ms 复查，等待连续 300 ms 未观察到新事件的空隙；以新证据为基准再查通过才按提交键。从第一次发现变化开始，最多额外等待 3 秒（单调时钟计时，不随后续事件续期）；到期留下草稿，reason 为 state_changed。变成 idle 时不续等，reason 同为 state_changed；原本 idle 的请求也不借机转成 working 插话，因为它的正文没有经过 working 的限制。blocked／starting 等不可输入、暂停、真人输入或检查失败都立即放弃，保留各自 reason。等待不阻塞 pen 主循环，不放宽任何证据字段，也不重写正文。
+- 等空隙期间，若队列后面已有非本次插话的块（包括 keys、普通 send、接入窗口的输入），立即留草稿并返回 draft_not_submitted（3）、reason 为 input_queued，后续块照常写出；若发起插话的连接已断开（按 fd 和连接序号共同核对），同样取消提交，recent_sends 记 draft、reason 为 client_gone。
+- 旧的「一有新事件就留草稿」在本机审查日志估计会影响约 2%–12% 的插话窗口（不是此次改后发生率）；等短暂空隙会让留草稿少很多，但等待期间弹框的机会略多一点，用户 11-09 已接受。pen 内的 status_from_pen 调用用 catch_unwind(AssertUnwindSafe(..)) 保护；panic 转为 state_check_failed（1），正文前拒绝，已写入则按 draft_not_submitted（3）返回，不让状态解析的 panic 结束 pen 和 agent。
+- working 插话只接受普通正文：不解释 slash 命令或 shell 快捷模式，首个非空白字符为 `/` 或 `!`、含控制字符（换行和制表符除外）时拒绝 usage；未开启 bracketed paste 时拒绝 unsupported，避免正文中的换行被当成提交。idle 沿用普通 send 的正文规则。已有草稿仍可能一起提交，沿用 merged_with_draft；不能从终端证明草稿和补全焦点为空。连续插话逐次等待返回，缺回执或留下草稿时先人工核对，不重送。
+- 送达沿用输入事件摘要／合并正文匹配，默认等 15 秒；confirmed 只证明输入已被接受，不证明模型已处理，更不表示工具被打断或已发生的副作用撤回。turn_started 仍随 UserPromptSubmit 更新，wait／reply／after 不改成按消息或原生执行轮关联；不增加“已消费”的推断。未确认仍报 not_delivered（3），已写入的消息绝不补发。
+- hook、状态读取、终端绘制、PTY 处理不是原子事务；复查之后出现的框、滞后的事件、未识别菜单仍可能抢走提交键，不能给剩余窗口的毫秒上限或概率。用户 11-09 已接受这个剩余窗口。
+- 对 paddock：公开命令、能力及新错误为兼容新增，现有调用不用动；插话界面在 paddock 自己的任务接，不 fallback 到 keys。pony 和派活技能本轮不改。
+
 ## 8. sandbox（用户 10-18）
 
 用户 10-18：“先接 srt（但是要支持linux）。 另外默认委派出去的不要家srt围栏（默认保持现在）。还有架构设计上我希望还是类似插件式的（以后可以很方便的把sandbox剥离出来成为像cairn这样独立的服务）。”

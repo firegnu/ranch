@@ -10,6 +10,9 @@ impl Adapter for Omp {
     fn kind(&self) -> &'static str {
         "omp"
     }
+    fn steer_key(&self) -> Option<&'static [u8]> {
+        Some(b"\r")
+    }
     /// Like pi, loads its collector with `--extension`. omp's events share pi's origin but differ
     /// (no `agent_settled`, different approval events, sub-sessions), so it has its own collector.
     fn hook_args(&self, launch: &Launch) -> Result<Vec<String>> {

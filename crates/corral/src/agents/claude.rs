@@ -9,6 +9,9 @@ impl Adapter for Claude {
     fn kind(&self) -> &'static str {
         "claude"
     }
+    fn steer_key(&self) -> Option<&'static [u8]> {
+        Some(b"\r")
+    }
     /// Hooks go in through `--settings` and apply together with those in the user's own settings.
     fn hook_args(&self, launch: &Launch) -> Result<Vec<String>> {
         let mut hooks = json!({});

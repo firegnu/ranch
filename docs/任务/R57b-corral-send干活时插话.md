@@ -56,3 +56,25 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：先在 DESIGN §7 写入设计，再实现 `send --steer`。Claude Code、Codex、omp 在 working 时由适配器声明 Enter；idle 照送，原 send／after 路径不变。pen 在正文、提交键实际写出前复用状态计算核对，变化时留下草稿、返回 `draft_not_submitted`（7）及 written／submitted／confirmed／request_id，status 的最近发送记录可查。保留 paused（10）、not_idle（7）、human_active（8），未支持适配器用 `unsupported_steer`（9）区分；独立 `steer` 协议及能力查询拒绝旧 pen。补齐 CONTRACT、两份使用说明及对 paddock 的兼容新增说明；完成自查。
+- 验证了什么：新增 9 项合成测试，隔离 HOME／CORRAL_HOME，覆盖三家 working 的多行、Enter 和确认，idle（包括未支持 working 的 pi），blocked／starting／暂停／未支持各家及 force 不越权，30 秒人工操作及草稿合并，粘贴后 blocked／idle 不按 Enter，未确认不补发，旧 pen 无能力／能力查询后 bad_op 不 fallback，after 互斥，以及普通正文边界。RED 证据：有效 working fixture 下旧 CLI 报 unrecognized argument --steer；未加提交保护时，粘贴后 blocked 的测试错误地得到 confirmed:true；未加正文边界时 `/model` 被提交。对应实现后全绿；既有测试未改断言或超时。
+- 规定的检查：使用任务专属 CARGO_TARGET_DIR，`cargo test --all-targets` 一次，539 passed、0 failed（其余为既有显式 opt-in 测试或合成 agent 入口）；`cargo clippy --all-targets -- -D warnings` 一次通过；`cargo fmt --check` 一次通过。全套测试后仅把测试里的等价带换行 print 改为 println，再由 clippy 编译检查；运行时代码没有后续变更。命令均在前台等到结束，没有另加验证项目。
+- 真实实测：使用当前分支 debug/corral、独立临时 CORRAL_HOME 和各自临时 cwd，带 `role=test`、`CAIRN_DISABLE=1`；只启动 `ranch/test-r57b-claude`、`ranch/test-r57b-codex`、`ranch/test-r57b-omp`。三家均在 working／PreToolUse 的前台 sleep 45 期间发送多行修正，request_id 分别为 `r57b-live-claude`／`r57b-live-codex`／`r57b-live-omp`，confirmed:true、merged_with_draft:false，确认延迟 0.408／0.408／0.413 秒；之后各自 result.txt 为 STEER，reply 分别为 `R57B_CLAUDE_STEER`／`R57B_CODEX_STEER`／`R57B_OMP_STEER` 加末行 DONE。三家都已 corral stop 成功，隔离命名空间 ls 为空。未碰其他 agent。
+- 拿主意的地方：参数名选任务举例的 `--steer`，与 after 互斥；未支持家和旧 pen 都用退出码 9、不同 error 标识。按报告的普通正文边界，在 working 拒绝 slash／shell 前缀、控制字符和未开启括号粘贴的终端；idle 沿用旧正文规则。待写插话与 upgrade 互斥，保护信息不进入升级快照，避免旧 pen 忽略新增字段后裸按回车。保留输入事件与 turn_started 的现有含义，不推断原生执行轮或模型消费时点。用户已同意的提交前复查剩余竞态照实写入 DESIGN；本轮没有新增待主控决定事项。
+- 没做的事：pi 的追加 input 尚未进入当前归一化确认链，且扩展 handler 是否放行仍需可靠证据；Kimi Ctrl+S 没有当前确认链可用的输入回执，所以两家未开放，也未额外开真实会话。amp／canter／agy 未开放。没有改 pony、paddock、派活技能、HANDOFF；不改提醒，不增加轮次追踪，不部署、不 upgrade、不合并、不推送。paddock 现有调用无需修改，新插话界面另开任务。验证预算之外的升级并发专项、旧二进制完整互操作矩阵和菜单竞态穷举未另跑。
+- 踩过的坑：最初合成 SessionStart 少了 has_transcript，状态停在 starting；补齐有效事件后才取得目标缺陷的 RED，这次 fixture 失败不算 RED。合成程序使用 raw terminal 时 Ctrl+C 是普通字节，不能沿用 cat 的退出假设；补了合成程序的 Ctrl+C 退出处理，让 Codex 的既有 stop 步骤能结束它。真实三家实测没有失败重送或清草稿。
+- 主控审查返工（2026-11-09）：针对 macOS 上 accept 出来的 socket 继承非阻塞模式、全套运行时 read_line 偶发 WouldBlock 的失败，在旧 pen 合成测试中显式恢复 accepted socket 的阻塞模式，功能代码、超时和断言不变；按要求仅单跑该测试一次通过，再跑一次 `cargo test --all-targets`，539 passed、0 failed，均在前台完成，无需主控另作决定。
+- 交叉审查后修订（2026-11-09）：按用户采纳的审查第 1–3 条及新增需求，将 `draft_not_submitted` 改为退出码 3（替代上文最初的 7），证据变化但状态仍可输入用 `state_changed`，7 保持「本次未写入、等空闲可重送」。提交前发现变化、起初和当前均为 working 且检查通过时，每 50 ms 复查，等连续 300 ms 无新事件后提交；从首次变化起最多额外等 3 秒，不因后续事件延长，超时留草稿，blocked 等不可输入状态立即放弃。`steer_status` 用 `catch_unwind(AssertUnwindSafe(..))` 包住状态计算，panic 按正文前 rejected／提交前 draft 返回，保住 pen 和 agent。DESIGN、CONTRACT、AGENT_USAGE、SKILL 已同步退出码、等待办法、用户接受的「留草稿少很多、等待期间弹框机会略多」取舍，以及下一次 send 会合并草稿、必须先让人核对或清掉的说明；paddock 现有调用不用动，插话入口仍由自己的任务接。新增单条 PostToolUse 后等空隙成功、连续事件到期留草稿、等待中 blocked 立即取消、真实损坏 cursor 引发的正文前／提交前解析 panic，以及原本 idle 的请求粘贴后变成 working 不转为插话等回归测试。目标测试先观察到旧退出码、缺少空隙等待、解析 panic 导致 pen 消失的失败后改到通过；自查还发现直接套用等待会让原本 idle 的 `/model` 在变为 working 后提交，补了失败测试并保留原来的拒绝边界。插话测试集 14 passed、0 failed（另 1 项合成 agent 入口 ignored）；随后 `cargo test --all-targets` 一次，544 passed、0 failed、19 ignored，`cargo clippy --all-targets -- -D warnings` 和 `cargo fmt --check` 各一次通过，命令均在前台完成。没有再开真实 agent，审查第 4、5 条不改，不改其他仓库、不部署、不合并、不推送；没有新增待主控决定事项。
+- 复核后修订（2026-11-09）：采纳复核第 1、2 条，等空隙期间发现后续非本次插话的输入块就留草稿、返回 draft_not_submitted（3）及 input_queued，保留后续块并继续写出；发现发起连接已断开则取消提交，recent_sends 记 draft/client_gone，按 fd 与连接序号共同核对；DESIGN、CONTRACT 各补充说明，paddock 现有调用不用动；新增两条合成测试，先分别复现 keys 等到 state_changed 超时和断连后仍 written，再跑一次插话测试文件，16 passed、0 failed，随后 cargo test --all-targets 一次，546 passed、0 failed、19 ignored，clippy -D warnings、fmt --check 各一次通过，命令均在前台完成；复核第 3、4 条未改，未开真实 agent、未部署／合并／推送，无新增踩坑或待主控决定事项。
+
+## 主控审查
+
+- 看了 diff：只动 `crates/corral/`（`cli.rs` 送话、`pen.rs`、新 `pen/steer.rs`、`pen/upgrade.rs`、三家适配器、技能说明、新测试 `tests/steer.rs`）和 DESIGN、CONTRACT；不加 `--steer` 的路径只多了 `steer: None` 和一处先判断再写的等价改写，现有测试一个没改。
+- 主控重跑全套时新测试 `steer_requires_an_explicit_pen_capability…` 在负载下失败（macOS accept 出的 socket 继承非阻塞），交回返工一次（`715a785`，只改测试）。
+- 交叉审查（ranch/review-r57b-1，Claude Code opus[1m] xhigh）三轮均为「可以合并」、必须改 0：首轮建议 1–3 和用户 11-09 新定的「等空隙再提交」在 `23098c0` 做完；复核建议 1、2（等待中有后续输入或调用方断开就不提交）由主控采纳，在 `e0c410c` 做完；第二轮复核建议 1（接入窗口的终端自动回报也会让等待中的插话留草稿，不会误按）不在本件改，记进 HANDOFF 已知问题。复核「pen 用系统时钟控制输入间隔」是旧问题，也不在本件改。
+- 测试：开发报全套 546 通过；审查在 `e0c410c` 跑全套 546 通过、0 失败；主控在 `23098c0` 跑过插话测试 14 项通过。三家真实 agent 插话实测在 `8a93438` 上做过，之后的改动只让插话更多放弃、不多按回车。
+- 首轮审查为估频率读了本机用户 agent 的事件日志（只读事件名和时间），已告知用户；复核起写明不读。
+结果：返工 1 次

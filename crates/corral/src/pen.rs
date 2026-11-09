@@ -3,6 +3,7 @@ use crate::{Error, Result, now, state};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+mod steer;
 pub(crate) mod upgrade;
 pub(crate) mod watcher;
 use std::{
@@ -360,6 +361,9 @@ struct Chunk {
     failed: bool,
     #[serde(default)]
     started: bool,
+    // Never handed to another pen: upgrade is excluded while guarded input is queued.
+    #[serde(skip)]
+    steer: Option<steer::Guard>,
 }
 #[derive(Serialize, Deserialize)]
 struct Pen {
@@ -512,6 +516,7 @@ impl Pen {
                     request_id: None,
                     failed: false,
                     started: false,
+                    steer: None,
                 });
             }
         }
@@ -534,6 +539,7 @@ impl Pen {
                         request_id: None,
                         failed: false,
                         started: false,
+                        steer: None,
                     });
                 }
                 self.stopped_by = json!("keys");
@@ -570,7 +576,7 @@ impl Pen {
         status["exe"] = json!(crate::executable().ok());
         status["custody"] = json!(self.custody);
         status["capabilities"] =
-            json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1});
+            json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1,"steer":1});
         status["upgrade"] = self.upgrade.public();
         if let Some(watcher) = &self.watcher {
             status["watcher"] = watcher.status();
@@ -653,6 +659,7 @@ impl Pen {
                     request_id: None,
                     failed: false,
                     started: false,
+                    steer: None,
                 });
             } else if typ == b'r' && bytes.len() == 4 {
                 let rows = u16::from_be_bytes(bytes[..2].try_into().unwrap()).max(1);
@@ -739,6 +746,10 @@ impl Pen {
                 self.resume();
                 json!({"ok":true,"instance":self.instance,"paused":false,"paused_at":null})
             }
+            Some("steer") => match self.steer(fd, &req) {
+                Ok(()) => return,
+                Err(e) => e.value,
+            },
             Some("send" | "keys") if self.paused.is_some() => {
                 json!({"ok":false,"error":"paused","message":"the agent is paused; resume it first"})
             }
@@ -761,6 +772,7 @@ impl Pen {
                             request_id: req["request_id"].as_str().map(str::to_owned),
                             failed: false,
                             started: false,
+                            steer: None,
                         });
                     }
                     Some(out)
@@ -1054,10 +1066,13 @@ impl Pen {
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                             Err(_) => self.color_replies.clear(),
                         }
-                    } else if item.revents & libc::POLLOUT != 0
-                        && now() >= self.next_input
-                        && let Some(c) = self.input.front_mut()
-                    {
+                    } else if item.revents & libc::POLLOUT != 0 && now() >= self.next_input {
+                        if self.check_steer() {
+                            continue;
+                        }
+                        let Some(c) = self.input.front_mut() else {
+                            continue;
+                        };
                         match self.master.write(c.bytes.make_contiguous()) {
                             Ok(n) => {
                                 c.started |= n > 0;

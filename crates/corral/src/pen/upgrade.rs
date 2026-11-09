@@ -324,6 +324,9 @@ impl Pen {
         Ok(())
     }
     pub(super) fn prepare_upgrade(&mut self, req: &Value) -> Value {
+        if self.input.iter().any(|c| c.steer.is_some()) {
+            return json!({"ok":false,"error":"upgrade_busy","message":"a guarded send is pending; wait for its result"});
+        }
         if self.custody != Custody::Owner
             || !self.upgrade.state.is_empty()
             || self.upgrade.backup_pid.is_some()
