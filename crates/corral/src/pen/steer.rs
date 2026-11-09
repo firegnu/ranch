@@ -185,6 +185,29 @@ impl Pen {
                 "write_failed",
                 "PTY write failed; not submitting",
             ))
+        } else if guard.gap.is_some()
+            && self
+                .input
+                .iter()
+                .skip(1)
+                .any(|c| c.steer.as_ref().is_none_or(|g| g.client != guard.client))
+        {
+            Some(Error::new(
+                1,
+                "input_queued",
+                "other input is queued; not submitting",
+            ))
+        } else if guard.gap.is_some()
+            && self
+                .clients
+                .get(&guard.client.0)
+                .is_none_or(|c| c.order != guard.client.1)
+        {
+            Some(Error::new(
+                1,
+                "client_gone",
+                "the requesting client disconnected; not submitting",
+            ))
         } else {
             match self.steer_status(guard.force) {
                 Err(e) => Some(e),

@@ -215,10 +215,11 @@ fn steer_synthetic_agent() {
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 event("PermissionRequest", json!({"tool_name":"AskUserQuestion"}));
-            } else if mode == "busy_on_paste" {
+            } else if matches!(mode.as_str(), "busy_on_paste" | "briefly_busy_on_paste") {
                 println!("BUSY");
                 std::io::stdout().flush().unwrap();
-                let deadline = Instant::now() + Duration::from_secs(5);
+                let deadline = Instant::now()
+                    + Duration::from_secs(if mode == "busy_on_paste" { 5 } else { 2 });
                 while Instant::now() < deadline {
                     event("PostToolUse", json!({"tool_name":"Bash"}));
                     std::thread::sleep(Duration::from_millis(20));
@@ -375,6 +376,84 @@ fn steer_keeps_the_draft_when_working_events_never_leave_a_quiet_gap() {
     let status = lab.json(&["status", "lab/main"]);
     assert_eq!(status["recent_sends"][0]["state"], "draft");
     assert_eq!(status["recent_sends"][0]["reason"], "state_changed");
+}
+
+#[test]
+fn steer_gap_cancels_for_queued_input_and_releases_the_following_blocks() {
+    let lab = Lab::new();
+    lab.start("claude", "busy_on_paste");
+    let sending = lab
+        .cmd()
+        .args(["send", "lab/main", "draft before queued input", "--steer"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    lab.until(|| lab.read().contains("BUSY"));
+    // The normal 300 ms paste delay has elapsed; tool events keep the gap open.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        lab.request(json!({"op":"status"}))["recent_sends"][0]["state"],
+        "accepted"
+    );
+    let before = Instant::now();
+    lab.json(&["keys", "lab/main", "text:z", "text:y"]);
+    let elapsed = before.elapsed();
+    let out = sending.wait_with_output().unwrap();
+    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(3), "{result}");
+    assert_eq!(result["error"], "draft_not_submitted");
+    assert_eq!(result["reason"], "input_queued");
+    assert_eq!(result["written"], true);
+    assert_eq!(result["submitted"], false);
+    assert_eq!(result["confirmed"], false);
+    assert!(elapsed < Duration::from_secs(2), "keys waited {elapsed:?}");
+    lab.until(|| lab.read().contains("RX:79"));
+    let screen = lab.read();
+    assert!(screen.contains("EVENTS_DONE"));
+    assert!(screen.contains("RX:7a\nRX:79"), "{screen}");
+    assert!(!screen.contains("RX:0d"));
+    let status = lab.request(json!({"op":"status"}));
+    assert_eq!(status["recent_sends"][0]["state"], "draft");
+    assert_eq!(status["recent_sends"][0]["reason"], "input_queued");
+}
+
+#[test]
+fn steer_gap_cancels_when_the_requesting_client_disconnects() {
+    let lab = Lab::new();
+    lab.start("claude", "briefly_busy_on_paste");
+    let mut sending = lab
+        .cmd()
+        .args([
+            "send",
+            "lab/main",
+            "draft from disconnected client",
+            "--steer",
+            "--request-id",
+            "gone-test",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    lab.until(|| lab.read().contains("BUSY"));
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(sending.try_wait().unwrap().is_none());
+    sending.kill().unwrap();
+    sending.wait().unwrap();
+    lab.until(|| lab.request(json!({"op":"status"}))["recent_sends"][0]["state"] != "accepted");
+    let status = lab.request(json!({"op":"status"}));
+    let record = &status["recent_sends"][0];
+    assert_eq!(record["request_id"], "gone-test");
+    assert_eq!(record["state"], "draft", "{record}");
+    assert_eq!(record["reason"], "client_gone");
+    assert_eq!(record["written"], true);
+    assert_eq!(record["submitted"], false);
+    lab.until(|| lab.read().contains("EVENTS_DONE"));
+    // A later byte drains the PTY: no submit key was left pending after the gap.
+    lab.json(&["keys", "lab/main", "text:z"]);
+    lab.until(|| lab.read().contains("RX:7a"));
+    assert!(!lab.read().contains("RX:0d"));
 }
 
 #[test]

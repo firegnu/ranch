@@ -12,6 +12,8 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 提交前证据变了、起初和当前都是 working 且仍可插话时，每 50 ms 复查，等连续 300 ms 未观察到新事件的空隙，再核对通过才提交；从第一次发现变化起最多额外等 3 秒，新事件不延长截止时间。证据字段不减少，正文不重写。转为 idle 或原本 idle 的请求变成 working 时，仍放弃并以 state_changed 为 reason；blocked／starting 等不可输入、暂停、真人输入或状态检查失败立即放弃，不等截止时间。正文前发现变化仍直接拒绝，不进入空隙等待。
 
+等空隙期间，后面排入非本次插话的输入块（keys、普通 send、接入窗口的输入等）就立即留草稿，返回 3 draft_not_submitted、reason 为 input_queued，后续块照常写出、不再等这次插话的 3 秒截止；发起插话的连接断开则取消提交，recent_sends 记 draft、reason 为 client_gone，可按 request_id 查询。
+
 | 退出码／error | 含义与调用方处理 |
 | --- | --- |
 | 0 | 沿用 `ok:true,name,instance,request_id,confirmed,merged_with_draft,latency`；confirmed 只证明匹配到输入事件，不代表模型已处理修正。已有草稿可能合并，不能重送。 |
