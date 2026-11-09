@@ -363,6 +363,8 @@ fn steer_requires_an_explicit_pen_capability_and_never_falls_back_after_bad_op()
                             Err(e) => panic!("{e}"),
                         }
                     };
+                    // macOS inherits the listener's nonblocking mode on accepted sockets.
+                    socket.set_nonblocking(false).unwrap();
                     socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
                     let mut line = String::new();
                     std::io::BufReader::new(&socket).read_line(&mut line).unwrap();

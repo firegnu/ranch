@@ -66,3 +66,4 @@
 - 拿主意的地方：参数名选任务举例的 `--steer`，与 after 互斥；未支持家和旧 pen 都用退出码 9、不同 error 标识。按报告的普通正文边界，在 working 拒绝 slash／shell 前缀、控制字符和未开启括号粘贴的终端；idle 沿用旧正文规则。待写插话与 upgrade 互斥，保护信息不进入升级快照，避免旧 pen 忽略新增字段后裸按回车。保留输入事件与 turn_started 的现有含义，不推断原生执行轮或模型消费时点。用户已同意的提交前复查剩余竞态照实写入 DESIGN；本轮没有新增待主控决定事项。
 - 没做的事：pi 的追加 input 尚未进入当前归一化确认链，且扩展 handler 是否放行仍需可靠证据；Kimi Ctrl+S 没有当前确认链可用的输入回执，所以两家未开放，也未额外开真实会话。amp／canter／agy 未开放。没有改 pony、paddock、派活技能、HANDOFF；不改提醒，不增加轮次追踪，不部署、不 upgrade、不合并、不推送。paddock 现有调用无需修改，新插话界面另开任务。验证预算之外的升级并发专项、旧二进制完整互操作矩阵和菜单竞态穷举未另跑。
 - 踩过的坑：最初合成 SessionStart 少了 has_transcript，状态停在 starting；补齐有效事件后才取得目标缺陷的 RED，这次 fixture 失败不算 RED。合成程序使用 raw terminal 时 Ctrl+C 是普通字节，不能沿用 cat 的退出假设；补了合成程序的 Ctrl+C 退出处理，让 Codex 的既有 stop 步骤能结束它。真实三家实测没有失败重送或清草稿。
+- 主控审查返工（2026-11-09）：针对 macOS 上 accept 出来的 socket 继承非阻塞模式、全套运行时 read_line 偶发 WouldBlock 的失败，在旧 pen 合成测试中显式恢复 accepted socket 的阻塞模式，功能代码、超时和断言不变；按要求仅单跑该测试一次通过，再跑一次 `cargo test --all-targets`，539 passed、0 failed，均在前台完成，无需主控另作决定。
