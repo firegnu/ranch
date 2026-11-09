@@ -2,6 +2,19 @@
 use super::{Chunk, Mode, Pen};
 use crate::{Error, Result, agents, cli, events, now};
 use serde_json::{Value, json};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    time::{Duration, Instant},
+};
+
+const QUIET_GAP: Duration = Duration::from_millis(300);
+const GAP_WAIT_LIMIT: Duration = Duration::from_secs(3);
+
+#[derive(Clone)]
+struct Gap {
+    deadline: Instant,
+    quiet_since: Instant,
+}
 
 #[derive(Clone)]
 pub(super) struct Guard {
@@ -9,6 +22,8 @@ pub(super) struct Guard {
     evidence: Value,
     force: bool,
     submit: bool,
+    working: bool,
+    gap: Option<Gap>,
 }
 
 fn evidence(st: &cli::Status) -> Value {
@@ -35,7 +50,16 @@ impl Pen {
                 "the agent is paused; resume it first",
             ));
         }
-        let st = cli::status_from_pen(self.metadata["name"].as_str().unwrap_or(""), self.status())?;
+        let st = catch_unwind(AssertUnwindSafe(|| {
+            cli::status_from_pen(self.metadata["name"].as_str().unwrap_or(""), self.status())
+        }))
+        .map_err(|_| {
+            Error::new(
+                1,
+                "state_check_failed",
+                "status calculation panicked; input withheld",
+            )
+        })??;
         match st.public["state"].as_str() {
             Some("idle") => {}
             Some("working")
@@ -136,6 +160,8 @@ impl Pen {
                     evidence: evidence(&st),
                     force: req["force"] == true,
                     submit: reply.is_some(),
+                    working: st.public["state"] == "working",
+                    gap: None,
                 }),
             });
         }
@@ -145,11 +171,12 @@ impl Pen {
 
     /// Runs immediately before the first byte of either guarded block is written.
     /// A cancelled submission leaves the editor alone and discards only this request's blocks.
+    /// Returns true when writing is withheld, either to wait for a gap or to cancel.
     pub(super) fn check_steer(&mut self) -> bool {
         let Some(chunk) = self.input.front().filter(|c| !c.started) else {
             return false;
         };
-        let Some(guard) = chunk.steer.clone() else {
+        let Some(mut guard) = chunk.steer.clone() else {
             return false;
         };
         let failure = if chunk.failed {
@@ -161,11 +188,46 @@ impl Pen {
         } else {
             match self.steer_status(guard.force) {
                 Err(e) => Some(e),
-                Ok(st) if evidence(&st) != guard.evidence => Some(
-                    Error::new(7, "not_idle", "state evidence changed before writing input")
-                        .with("state", st.public["state"].clone()),
-                ),
-                Ok(_) => None,
+                Ok(st) => {
+                    let current = evidence(&st);
+                    let changed = current != guard.evidence;
+                    if guard.submit
+                        && guard.working
+                        && st.public["state"] == "working"
+                        && (changed || guard.gap.is_some())
+                    {
+                        let at = Instant::now();
+                        let gap = guard.gap.get_or_insert(Gap {
+                            deadline: at + GAP_WAIT_LIMIT,
+                            quiet_since: at,
+                        });
+                        if changed {
+                            guard.evidence = current;
+                            gap.quiet_since = at;
+                        }
+                        if at < gap.deadline {
+                            if at.duration_since(gap.quiet_since) >= QUIET_GAP {
+                                return false;
+                            }
+                            // Keep servicing clients and terminal output while input waits.
+                            self.next_input = now() + 0.05;
+                            self.input.front_mut().unwrap().steer = Some(guard);
+                            return true;
+                        }
+                    }
+                    if changed || guard.gap.is_some() {
+                        Some(
+                            Error::new(
+                                7,
+                                "state_changed",
+                                "state evidence changed before writing input",
+                            )
+                            .with("state", st.public["state"].clone()),
+                        )
+                    } else {
+                        None
+                    }
+                }
             }
         };
         let Some(error) = failure else { return false };

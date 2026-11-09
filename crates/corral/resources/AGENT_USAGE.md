@@ -68,13 +68,14 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 
 ## send 被拒绝时
 
-对方正在干活、要修正当前任务时，可用 `corral send <名字> "<修正>" --steer` 插话（Claude Code、Codex、omp）；不加参数照旧等空闲，不能与 `--after` 同用。不支持插话报 9 `unsupported_steer`／`unsupported`，等空闲后普通 send；7 `draft_not_submitted` 表示文字已写入但没有提交，让人核对草稿，不重送、不补回车。
+对方正在干活、要修正当前任务时，可用 `corral send <名字> "<修正>" --steer` 插话（Claude Code、Codex、omp）；不加参数照旧等空闲，不能与 `--after` 同用。不支持插话报 9 `unsupported_steer`／`unsupported`，等空闲后普通 send。提交前仍 working 但来了新事件时，最多额外等 3 秒，等到连续 300 ms 没有新事件再复查提交；变成 blocked 等状态立即放弃。3 `draft_not_submitted` 表示文字已写入但没有提交，不重送、不补回车；下一次 send 会将这份草稿合并提交，必须先让人接入核对或清掉。
 
 | 退出码 | 原因 | 怎么办 |
 |---|---|---|
-| 7 `not_idle` | agent 还在忙或还没启动好 | 先 `wait` 再 `send` |
+| 7 `not_idle`／`state_changed` | 状态不允许发送，或正文前证据变化；本次没写入 | 等空闲再 `send`，可重送本次正文 |
 | 8 `human_active` | 人刚在接入窗口里操作过 | 过一会儿再试；确定要打断人才加 `--force` |
 | 3 `not_delivered` | 已写出，但没有确认 agent 收到（屏幕上可能是菜单或对话框） | 不要重送或重试回车；`corral status` 看状态，必要时让人接入去看 |
+| 3 `draft_not_submitted` | 已写入但没有提交，reason 说明原因；仍 working 但一直有新事件时为 `state_changed` | 不重送、不补回车；下一次 send 会合并这份草稿，先让人接入核对或清掉 |
 | 10 `paused` | agent 被人暂停了 | 不要自己 `resume`，告诉人；人恢复它之后再送 |
 
 送成功时如果 `merged_with_draft` 是 `true`，说明输入框里原来有人留下没提交的文字，你的话接在它后面一起提交了；agent 收到了，**不要重送**，在意的话让人接入去看。

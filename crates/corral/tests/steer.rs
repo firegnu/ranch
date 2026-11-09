@@ -8,8 +8,8 @@ use std::{
         fs::PermissionsExt,
         net::{UnixListener, UnixStream},
     },
-    path::PathBuf,
-    process::{Command, Output},
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
     time::{Duration, Instant},
 };
 
@@ -99,6 +99,19 @@ impl Lab {
         self.until(|| self.json(&["status", "lab/main"])["last_human_input"].is_number());
         stream
     }
+    fn request(&self, request: Value) -> Value {
+        use std::io::BufRead;
+        let mut stream = UnixStream::connect(self.root.path().join("pens/lab/main/sock")).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        writeln!(stream, "{request}").unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(&stream)
+            .read_line(&mut line)
+            .unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
 }
 impl Drop for Lab {
     fn drop(&mut self) {
@@ -123,6 +136,27 @@ fn event(ev: &str, extra: Value) {
     writeln!(file, "{value}").unwrap();
 }
 
+// Deliberately malformed cached raw input: exercise a real status-parser panic,
+// not a test-only panic hook in the runtime.
+fn corrupt_status_cursor(events: &Path) {
+    let path = events.with_file_name("cursor");
+    let mut cursor: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    cursor["raw"] = json!({"main":{"inputs":null}});
+    let temp = events.with_file_name("panic-cursor.tmp");
+    fs::write(&temp, serde_json::to_vec(&cursor).unwrap()).unwrap();
+    fs::rename(temp, path).unwrap();
+    let mut file = fs::OpenOptions::new().append(true).open(events).unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "v":2,"inst":cursor["inst"],"session_id":"main","adapter":"omp","has_ui":true,
+            "ev":"input","t":1.0,"event":{"text":"synthetic panic","streamingBehavior":"steer"},
+        })
+    )
+    .unwrap();
+}
+
 #[test]
 #[ignore = "synthetic agent launched by this test binary"]
 fn steer_synthetic_agent() {
@@ -140,7 +174,7 @@ fn steer_synthetic_agent() {
             "SessionStart",
             json!({"cwd":std::env::current_dir().unwrap(), "has_transcript":true}),
         );
-        if mode != "idle" {
+        if !matches!(mode.as_str(), "idle" | "idle_to_working_on_paste") {
             event("UserPromptSubmit", json!({"prompt":"base task"}));
         }
         if mode == "blocked" {
@@ -168,6 +202,28 @@ fn steer_synthetic_agent() {
                 event("PermissionRequest", json!({"tool_name":"AskUserQuestion"}));
             } else if mode == "idle_on_paste" {
                 event("Stop", json!({"last_assistant_message":"done"}));
+            } else if mode == "tool_on_paste" {
+                event("PostToolUse", json!({"tool_name":"Bash"}));
+            } else if mode == "idle_to_working_on_paste" {
+                event("UserPromptSubmit", json!({"prompt":"a different task"}));
+            } else if mode == "panic_on_paste" {
+                corrupt_status_cursor(Path::new(&std::env::var("CORRAL_EVENTS").unwrap()));
+            } else if mode == "block_during_gap" {
+                let deadline = Instant::now() + Duration::from_secs(1);
+                while Instant::now() < deadline {
+                    event("PostToolUse", json!({"tool_name":"Bash"}));
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                event("PermissionRequest", json!({"tool_name":"AskUserQuestion"}));
+            } else if mode == "busy_on_paste" {
+                println!("BUSY");
+                std::io::stdout().flush().unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < deadline {
+                    event("PostToolUse", json!({"tool_name":"Bash"}));
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                println!("EVENTS_DONE");
             }
         }
         if byte[0] == b'\r' {
@@ -220,8 +276,16 @@ fn steer_keeps_the_draft_without_enter_when_state_changes_after_paste() {
             "draft-test",
         ]);
         let result: Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(out.status.code(), Some(7), "{result}");
+        assert_eq!(out.status.code(), Some(3), "{result}");
         assert_eq!(result["error"], "draft_not_submitted");
+        assert_eq!(
+            result["reason"],
+            if mode == "block_on_paste" {
+                "not_idle"
+            } else {
+                "state_changed"
+            }
+        );
         assert_eq!(result["written"], true);
         assert_eq!(result["submitted"], false);
         assert_eq!(result["confirmed"], false);
@@ -230,6 +294,187 @@ fn steer_keeps_the_draft_without_enter_when_state_changes_after_paste() {
         let status = lab.json(&["status", "lab/main"]);
         assert_eq!(status["recent_sends"][0]["state"], "draft");
         assert_eq!(status["recent_sends"][0]["submitted"], false);
+    }
+}
+
+#[test]
+fn steer_waits_for_a_quiet_gap_after_a_working_tool_event() {
+    let lab = Lab::new();
+    lab.start("claude", "tool_on_paste");
+    let before = Instant::now();
+    let sent = lab.json(&[
+        "send",
+        "lab/main",
+        "correct the task",
+        "--steer",
+        "--timeout",
+        "3",
+    ]);
+    assert_eq!(sent["confirmed"], true);
+    assert!(!sent["request_id"].as_str().unwrap().is_empty());
+    assert!(
+        before.elapsed() >= Duration::from_millis(550),
+        "submitted without a quiet gap"
+    );
+    assert_eq!(lab.read().matches("RX:0d").count(), 1);
+    assert_eq!(
+        lab.json(&["status", "lab/main"])["last_input_source"],
+        "send"
+    );
+}
+
+#[test]
+fn steer_does_not_retry_an_idle_submission_as_working_input() {
+    let lab = Lab::new();
+    lab.start("claude", "idle_to_working_on_paste");
+    assert_eq!(lab.json(&["status", "lab/main"])["state"], "idle");
+    let result = lab.reject(
+        &["send", "lab/main", "/model", "--steer"],
+        3,
+        "draft_not_submitted",
+    );
+    assert_eq!(result["reason"], "state_changed");
+    assert_eq!(result["state"], "working");
+    assert!(!lab.read().contains("RX:0d"));
+}
+
+#[test]
+fn steer_keeps_the_draft_when_working_events_never_leave_a_quiet_gap() {
+    let lab = Lab::new();
+    lab.start("claude", "busy_on_paste");
+    let before = Instant::now();
+    let mut sending = lab
+        .cmd()
+        .args(["send", "lab/main", "draft during tools", "--steer"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    lab.until(|| lab.read().contains("BUSY"));
+    // Status remains serviceable during the wait; the submit block is still pending.
+    assert_eq!(
+        lab.request(json!({"op":"status"}))["recent_sends"][0]["state"],
+        "accepted"
+    );
+    assert!(sending.try_wait().unwrap().is_none());
+    let out = sending.wait_with_output().unwrap();
+    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(3), "{result}");
+    assert_eq!(result["error"], "draft_not_submitted");
+    assert!(
+        before.elapsed() >= Duration::from_secs(3),
+        "did not wait for the gap deadline"
+    );
+    assert_eq!(result["reason"], "state_changed");
+    assert_eq!(result["state"], "working");
+    assert_eq!(result["written"], true);
+    assert_eq!(result["submitted"], false);
+    assert_eq!(result["confirmed"], false);
+    lab.until(|| lab.read().contains("EVENTS_DONE"));
+    assert!(!lab.read().contains("RX:0d"));
+    let status = lab.json(&["status", "lab/main"]);
+    assert_eq!(status["recent_sends"][0]["state"], "draft");
+    assert_eq!(status["recent_sends"][0]["reason"], "state_changed");
+}
+
+#[test]
+fn steer_stops_waiting_as_soon_as_the_gap_becomes_blocked() {
+    let lab = Lab::new();
+    lab.start("claude", "block_during_gap");
+    let before = Instant::now();
+    let result = lab.reject(
+        &["send", "lab/main", "draft before a question", "--steer"],
+        3,
+        "draft_not_submitted",
+    );
+    assert_eq!(result["reason"], "not_idle");
+    assert_eq!(result["state"], "blocked");
+    assert!(
+        before.elapsed() < Duration::from_secs(3),
+        "waited for the deadline after becoming blocked"
+    );
+    assert!(!lab.read().contains("RX:0d"));
+}
+
+#[test]
+fn steer_status_panic_rejects_before_text_and_keeps_the_draft_before_submit() {
+    for before_text in [true, false] {
+        let lab = Lab::new();
+        lab.start(
+            "claude",
+            if before_text {
+                "working"
+            } else {
+                "panic_on_paste"
+            },
+        );
+        let initial = lab.json(&["status", "lab/main"]);
+        if before_text {
+            // Hold the body in the input queue until corruption is in place.
+            assert_eq!(
+                lab.request(json!({"op":"keys","chunks":[{"data":"","delay":10.0}]}))["ok"],
+                true
+            );
+        }
+        let sending = lab
+            .cmd()
+            .args([
+                "send",
+                "lab/main",
+                "guard the parser",
+                "--steer",
+                "--request-id",
+                "panic-test",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        if before_text {
+            lab.until(|| {
+                lab.request(json!({"op":"status"}))["recent_sends"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["request_id"] == "panic-test")
+            });
+            corrupt_status_cursor(&lab.root.path().join("pens/lab/main/events"));
+        }
+        let out = sending.wait_with_output().unwrap();
+        let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(if before_text { 1 } else { 3 }),
+            "{result}"
+        );
+        assert_eq!(
+            result["error"],
+            if before_text {
+                "state_check_failed"
+            } else {
+                "draft_not_submitted"
+            }
+        );
+        if !before_text {
+            assert_eq!(result["reason"], "state_check_failed");
+        }
+        assert_eq!(result["written"], !before_text);
+        assert_eq!(result["submitted"], false);
+        assert_eq!(result["confirmed"], false);
+        let status = lab.request(json!({"op":"status"}));
+        assert_eq!(status["instance"], initial["instance"]);
+        assert_eq!(status["agent_pid"], initial["agent_pid"]);
+        assert_eq!(
+            status["recent_sends"][0]["state"],
+            if before_text { "rejected" } else { "draft" }
+        );
+        assert!(!lab.read().contains("RX:0d"));
+        if before_text {
+            assert!(!lab.read().contains("RX:"));
+        }
+        // The same pen and synthetic agent still accept unrelated protocol operations.
+        lab.json(&["keys", "lab/main", "text:z"]);
+        lab.until(|| lab.read().contains("RX:7a"));
     }
 }
 

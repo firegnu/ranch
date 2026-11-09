@@ -284,7 +284,8 @@ fn deliver(
         )?;
         if reply["ok"] != true {
             let code = match reply["error"].as_str() {
-                Some("not_idle" | "draft_not_submitted") => 7,
+                Some("draft_not_submitted") => 3,
+                Some("not_idle" | "state_changed") => 7,
                 Some("human_active") => 8,
                 Some("unsupported" | "unsupported_steer" | "bad_op") => 9,
                 Some("paused") => 10,
