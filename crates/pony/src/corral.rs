@@ -57,9 +57,44 @@ pub struct Interaction {
     pub kind: Option<String>,
     pub count: usize,
     pub running: bool,
+    pub request: Option<Request>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Request {
+    pub id: String,
+    pub kind: String,
+    pub tool: Option<String>,
+    pub file: Option<PermissionCommand>,
+    pub plan: Option<PermissionCommand>,
+    #[serde(default)]
+    pub available_decisions: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Answer {
+    Option(String),
+    Text(String),
+    AllowOnce,
+    ApprovePlan,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Answered {
+    pub already_resolved: bool,
 }
 
 impl Status {
+    pub fn canter_request(&self) -> Option<&Request> {
+        if self.kind.as_deref() != Some("canter") || self.state != "blocked" {
+            return None;
+        }
+        let interaction = self.interaction.as_ref()?;
+        let request = interaction.request.as_ref()?;
+        (interaction.count > 0 && interaction.kind.is_some() && !request.id.is_empty())
+            .then_some(request)
+    }
+
     pub fn kimi_dialog(&self) -> bool {
         self.kind.as_deref() == Some("kimi") && self.structured_dialog()
     }
@@ -136,6 +171,20 @@ pub enum QuestionKey {
 }
 
 pub trait Corral {
+    fn resolve_request(
+        &mut self,
+        _name: &str,
+        _instance: &str,
+        _request: &str,
+        _answer: &Answer,
+    ) -> Result<Answered> {
+        Err(Failure {
+            exit: Some(9),
+            code: "unsupported".into(),
+            message: "answer API unavailable".into(),
+            interrupted: false,
+        })
+    }
     fn list(&mut self) -> Result<Vec<Agent>>;
     fn status(&mut self, name: &str) -> Result<Status>;
     fn reply(&mut self, name: &str) -> Result<Reply>;
@@ -221,6 +270,22 @@ fn decode<T: serde::de::DeserializeOwned>(exit: Option<i32>, bytes: &[u8]) -> Re
 }
 
 impl Corral for Process {
+    fn resolve_request(
+        &mut self,
+        name: &str,
+        instance: &str,
+        request: &str,
+        answer: &Answer,
+    ) -> Result<Answered> {
+        let mut args = vec!["answer", name, "--instance", instance, "--request", request];
+        match answer {
+            Answer::Option(text) => args.extend(["--option", text]),
+            Answer::Text(text) => args.extend(["--text", text]),
+            Answer::AllowOnce => args.push("--allow-once"),
+            Answer::ApprovePlan => args.push("--approve-plan"),
+        }
+        self.call(&args)
+    }
     fn list(&mut self) -> Result<Vec<Agent>> {
         #[derive(Deserialize)]
         struct Listing {

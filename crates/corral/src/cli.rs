@@ -517,6 +517,9 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
         "send" => Some(
             "NAME TEXT [--force] [--steer | --after NAME] [--timeout SECONDS] [--request-id ID]",
         ),
+        "answer" => Some(
+            "NAME --instance INSTANCE --request ID (--option LABEL | --text TEXT | --allow-once | --approve-plan)",
+        ),
         "child-sandbox" => Some("NAME [PROFILE | --clear]"),
         "terminal-colors" => Some("[--fg COLOR --bg COLOR | --clear]"),
         "keys" => Some("NAME KEY [KEY ...]"),
@@ -676,6 +679,10 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
             &["--force", "--steer"],
             &["--timeout", "--after", "--request-id"],
         ),
+        "answer" => (
+            &["--allow-once", "--approve-plan"],
+            &["--instance", "--request", "--option", "--text"],
+        ),
         "wait" => (&[], &["--timeout", "--quiet"]),
         "stop" => (&[], &["--timeout"]),
         "read" => (&[], &["--bytes"]),
@@ -705,6 +712,70 @@ pub fn run(args: &[String]) -> Result<Option<Value>> {
     let name = &parsed.words[0];
     state::validate(name)?;
     let value = match op {
+        "answer" => {
+            let instance = parsed
+                .get("--instance")
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| usage("answer requires --instance"))?;
+            let request = parsed
+                .get("--request")
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| usage("answer requires --request"))?;
+            let options: Vec<_> = ["--option", "--text", "--allow-once", "--approve-plan"]
+                .into_iter()
+                .filter(|s| parsed.has(s))
+                .collect();
+            if options.len() != 1 {
+                return Err(usage("answer requires exactly one answer option"));
+            }
+            let answer = json!({"type":options[0].trim_start_matches('-').replace('-', "_"),"text":parsed.get(options[0])});
+            let st = status(name)?;
+            if st.pen["capabilities"]["answer"] != 1 {
+                return Err(Error::new(
+                    9,
+                    "unsupported",
+                    "this pen has no answer API; no keys sent",
+                )
+                .with("written", false)
+                .with("submitted", false)
+                .with("confirmed", false));
+            }
+            let mut reply = state::request(
+                name,
+                json!({"op":"answer","instance":instance,"request_id":request,"answer":answer}),
+            )
+            .map_err(|e| {
+                Error::new(
+                    3,
+                    "not_delivered",
+                    format!(
+                        "answer receipt unknown: {}; do not retry",
+                        e.value["message"]
+                    ),
+                )
+                .with("written", Value::Null)
+                .with("submitted", Value::Null)
+                .with("confirmed", false)
+            })?;
+            reply["name"] = json!(name);
+            reply["instance"] = json!(instance);
+            reply["request_id"] = json!(request);
+            if reply["ok"] != true {
+                let code = match reply["error"].as_str() {
+                    Some("not_delivered") => 3,
+                    Some("answer_failed" | "request_changed" | "answer_busy" | "restarted") => 7,
+                    Some("human_active") => 8,
+                    Some("unsupported" | "bad_op") => 9,
+                    Some("paused") => 10,
+                    _ => 1,
+                };
+                if reply["error"] == "bad_op" {
+                    reply["error"] = json!("unsupported");
+                }
+                return Err(Error { code, value: reply });
+            }
+            reply
+        }
         "start" => {
             if parsed.has("--sandbox") && parsed.has("--no-sandbox") {
                 return Err(usage("--sandbox and --no-sandbox cannot be used together"));

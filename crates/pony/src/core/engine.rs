@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod approvals;
 mod buttons;
+mod canter;
 mod kimi;
 mod questions;
 use buttons::ButtonOffer;
@@ -608,6 +609,12 @@ impl Engine {
             }
             Err(e) => return Err(corral_error(e)),
         };
+        if let Some(q) = known.as_ref().and_then(|t| t.question.as_ref())
+            && q.api_status.is_some()
+            && (!q.handled || status.state != "idle")
+        {
+            return self.canter_text_answer(&address, q, &m, corral, offline, at);
+        }
         if let Some(q) = known.as_ref().and_then(|t| t.question.as_ref())
             && q.questions.as_ref().is_some_and(|qs| qs.background)
             && (!q.handled
@@ -1760,8 +1767,14 @@ impl Engine {
             let blocked = self.previous.get(&agent.name).is_some_and(|p| {
                 p.instance == status.instance && p.state == "blocked" && status.state == "blocked"
             });
-            if blocked && watch.blocked != Some(status.state_started.unwrap_or(0.)) {
+            let request_changed = status.kind.as_deref() == Some("canter")
+                && status.canter_request().map(|r| &r.id)
+                    != watch.status.canter_request().map(|r| &r.id);
+            if blocked
+                && (watch.blocked != Some(status.state_started.unwrap_or(0.)) || request_changed)
+            {
                 let question = is_question(&status).then(|| QuestionContext {
+                    api_status: (status.kind.as_deref() == Some("canter")).then(|| status.clone()),
                     instance: status.instance.clone(),
                     state_started: status.state_started,
                     handled: false,
@@ -2026,7 +2039,7 @@ impl Engine {
             }
             let mut text = text.to_owned();
             if status.state == "blocked"
-                && matches!(status.kind.as_deref(), Some("claude" | "kimi"))
+                && matches!(status.kind.as_deref(), Some("claude" | "kimi" | "canter"))
                 && !is_question(status)
             {
                 if let Some(offer) = &mut offer {
@@ -2037,7 +2050,7 @@ impl Engine {
                 {
                     text = needs_you_screen(status, offer.screen.as_deref())
                         .replace("要允许：回电脑处理", "要允许：点批准按钮并确认");
-                } else if status.kind.as_deref() != Some("kimi") {
+                } else if !matches!(status.kind.as_deref(), Some("kimi" | "canter")) {
                     text.push_str("\n认不出框的样子，没给按钮（允许）；要允许请回电脑处理。");
                 }
             }
@@ -2278,14 +2291,18 @@ fn human_active(status: &Status, at: f64) -> bool {
 }
 
 fn is_question(status: &Status) -> bool {
-    (status.kind.as_deref() == Some("claude") || status.kimi_dialog())
-        && status.last_tool.as_deref() == Some("AskUserQuestion")
-        && status.questions.is_some()
+    (status.kind.as_deref() == Some("canter")
+        && status.last_tool.as_deref() == Some("ask_user")
+        && status.questions.is_some())
+        || (status.kind.as_deref() == Some("claude") || status.kimi_dialog())
+            && status.last_tool.as_deref() == Some("AskUserQuestion")
+            && status.questions.is_some()
 }
 
 fn displayed_questions(status: &Status) -> Option<&Questions> {
-    if matches!(status.kind.as_deref(), Some("claude" | "kimi"))
-        && status.last_tool.as_deref() == Some("AskUserQuestion")
+    if (status.kind.as_deref() == Some("canter") && status.last_tool.as_deref() == Some("ask_user"))
+        || matches!(status.kind.as_deref(), Some("claude" | "kimi"))
+            && status.last_tool.as_deref() == Some("AskUserQuestion")
     {
         status.questions.as_ref()
     } else {
@@ -2322,6 +2339,7 @@ fn summary_title(status: &Status) -> Option<String> {
 
 fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
     let screen = if displayed_questions(status).is_some()
+        || status.canter_request().is_some()
         || (status.kind.as_deref() == Some("kimi") && status.interaction.is_some())
     {
         None
@@ -2333,6 +2351,7 @@ fn needs_you(status: &Status, corral: &mut dyn Corral) -> String {
 
 fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
     if matches!(status.kind.as_deref(), Some("kimi" | "canter"))
+        && status.canter_request().is_none()
         && status
             .interaction
             .as_ref()
@@ -2348,6 +2367,33 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
     } else {
         "要拒绝：在这个线程回『停』；要允许：回电脑处理。在这里回别的话，等它处理完再送。"
     };
+    if let Some(request) = status.canter_request()
+        && request.kind != "userInput"
+    {
+        let detail = request
+            .plan
+            .as_ref()
+            .or(request.file.as_ref())
+            .or(status.command.as_ref());
+        let content = detail.map_or("内容无法核对".into(), |d| {
+            let fence = "`"
+                .repeat((d.text.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1).max(3));
+            format!(
+                "{fence}\n{}\n{fence}{}",
+                d.text,
+                if d.truncated {
+                    "\n内容不完整，请回电脑看"
+                } else {
+                    ""
+                }
+            )
+        });
+        return format!(
+            "⚠ {} 要批准（{}）\n{content}\n{footer}",
+            status.name,
+            request.tool.as_deref().unwrap_or(&request.kind)
+        );
+    }
     if let Some(questions) = displayed_questions(status) {
         let mut text = format!("⚠ {} 在问你（{} 道题）", status.name, questions.items.len());
         if questions.background {
@@ -2378,6 +2424,15 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
         }
         if questions.truncated {
             text.push_str("\n题目不完整，请回电脑看");
+        }
+        if status.kind.as_deref() == Some("canter") {
+            return if status.canter_request().is_some() && !questions.truncated {
+                format!(
+                    "{text}\n在这个线程写一句话回答，会直接填进提问框；要停止这一轮，回『停』。"
+                )
+            } else {
+                format!("{text}\n无法核对 canter 的框，没按；请回电脑处理。")
+            };
         }
         if status.kind.as_deref() == Some("kimi") && !status.kimi_dialog() {
             return format!("{text}\n请回电脑回答；这里的回复会等它处理完再送。");

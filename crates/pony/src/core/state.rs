@@ -33,6 +33,8 @@ pub struct Thread {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct QuestionContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_status: Option<Status>,
     pub instance: String,
     pub state_started: Option<f64>,
     pub handled: bool,

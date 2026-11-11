@@ -63,6 +63,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 - `status.interrupted` 是布尔值：已识别最近这一轮被打断为 `true`，状态仍是 `idle`；新输入开始下一轮就回到 `false`。没有可靠中断事件的 agent 不能据此排除打断，仍要核实回复。
 - 已实测可识别：Codex、amp、加载新采集器的 pi（旧 pi 需要重开；amp 要连续两次 Esc）。Claude Code 从对话记录末尾识别晚于最近一次输入的明确打断标记；调用方和提醒进程需用新版，且该 CORRAL_HOME 的 `.runtime/helper` 要经新版 `corral upgrade` 等方式切到能记录路径的版本；单纯切换 CLI 或重开不够，记录读不到或格式不认识时仍认不出。omp 在一轮最终 `agent_end` 的最后一条 assistant 消息同时带 `stopReason: "aborted"`、`errorMessage: "Interrupted by user"`、`errorId` 的 UserInterrupt 位（67108864）时识别为打断；调用方和提醒进程用新版即可，采集器不用换、omp 不用重开。只取消命令后模型继续正常结束不算打断，其他中止和 `willContinue` 照旧。agy 未报中断钩子的路径仍有识别限制，不能仅凭 `interrupted: false` 或旧回复判断完成。
 - canter 按一次 Esc，corral 从 canter 的事件认出被打断；等到 `idle` 且 `interrupted:true` 才确认这一轮停下。
+- 经用户明确授权的 canter 回答可用 `corral answer NAME --instance INSTANCE --request ID`，再加 `--option LABEL`、`--text TEXT`、`--allow-once` 或 `--approve-plan` 之一。编号来自 `status.interaction.request`；只答主会话最前面的框，按公开 API 回答，不按键。text 只收单行；allow-once 只支持 shell／write／edit 的普通单次批准，计划只用 implement + alwaysAsk。0 的 `already_resolved:true` 表示已在别处处理；7 表示未答上，3 `not_delivered` 表示结果不明、不能重答，9 表示不支持、回电脑处理。不要替用户自行批准或回答，完整约定见 CONTRACT。
 - `idle` 只表示这一轮结束，agent 之后可能自己再开一轮。拿到 `reply` 后如果 `last_input_source` 是 `agent`，说明这一轮是它自己开的。
 - `wait` 默认最多等 600 秒，可用 `--timeout` 改；超时退出码 4。你的 shell 工具如果有超时（常见是两分钟），就用 `--timeout 90` 反复调用，直到返回结果。状态一直是 `starting`，说明它启动时卡在对话框里，让人接入去看。
 

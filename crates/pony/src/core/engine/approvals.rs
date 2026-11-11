@@ -225,11 +225,12 @@ pub(super) fn stale(old: &Status, status: &Status) -> Option<&'static str> {
 }
 
 pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<ApprovalButton>> {
-    if !matches!(status.kind.as_deref(), Some("claude" | "kimi"))
+    if !matches!(status.kind.as_deref(), Some("claude" | "kimi" | "canter"))
         || status.state != "blocked"
         || status.paused
         || status.state_started.is_none()
-        || (status.kind.as_deref() != Some("kimi") && status.last_output.is_none())
+        || (!matches!(status.kind.as_deref(), Some("kimi" | "canter"))
+            && status.last_output.is_none())
         || status.name.chars().count() + "允许  这一次？".chars().count() > 100
         || status
             .last_human_input
@@ -237,7 +238,9 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
     {
         return Ok(None);
     }
-    let Some(prompt) = (if status.kind.as_deref() == Some("kimi") {
+    let Some(prompt) = (if status.kind.as_deref() == Some("canter") {
+        canter_prompt(status)
+    } else if status.kind.as_deref() == Some("kimi") {
         kimi_prompt(status)
     } else {
         screen.and_then(|s| recognize(status, s))
@@ -245,7 +248,9 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
         return Ok(None);
     };
     let length = prompt.command.chars().count();
-    let note = if status.last_tool.as_deref() != Some("Bash") {
+    let note = if status.last_tool.as_deref() != Some("Bash")
+        && status.kind.as_deref() != Some("canter")
+    {
         "\n读屏会吞掉空格，看不清请回电脑".into()
     } else if length > 200 {
         format!("\n未显示全，共 {length} 字；看不全请回电脑")
@@ -279,6 +284,34 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
 
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn canter_prompt(status: &Status) -> Option<Prompt> {
+    let request = status.canter_request()?;
+    let (detail, label) = match request.kind.as_str() {
+        "approval" if request.available_decisions.iter().any(|d| d == "accept") => {
+            let detail = match request.tool.as_deref()? {
+                "shell" => status.command.as_ref()?,
+                "write" | "edit" => request.file.as_ref()?,
+                _ => return None,
+            };
+            (detail, "允许这一次")
+        }
+        "planApproval" => (request.plan.as_ref()?, "批准，之后的操作仍逐个问"),
+        _ => return None,
+    };
+    if detail.truncated
+        || detail.text.trim().is_empty()
+        || detail.text.chars().count() > 1000
+        || !readable_command(&detail.text)
+    {
+        return None;
+    }
+    Some(Prompt {
+        option: 0,
+        command: detail.text.clone(),
+        label,
+    })
 }
 
 fn kimi_prompt(status: &Status) -> Option<Prompt> {

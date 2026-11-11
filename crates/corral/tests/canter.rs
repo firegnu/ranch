@@ -459,7 +459,7 @@ fn fake_connection(mut stream: UnixStream, state: Arc<Mutex<FakeState>>, stop: A
     }
     let path = line.split_whitespace().nth(1).unwrap_or("").to_owned();
     state.lock().unwrap().requests.push(path.clone());
-    if path.ends_with("/input") {
+    if path.ends_with("/input") || path.contains("/requests/") {
         use std::io::Read;
         assert_eq!(line.split_whitespace().next(), Some("POST"));
         let mut length = 0;
@@ -625,6 +625,274 @@ impl Lab {
             std::thread::sleep(Duration::from_millis(25));
         }
     }
+}
+
+#[test]
+fn answer_option_uses_the_request_api_without_terminal_input() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "answer.sock");
+    lab.working(&server);
+    server.emit("s1", "request.opened", json!({"request":{"id":"r/1","createdAt":1,"kind":{
+        "type":"userInput","question":"Color?","options":[{"label":"Blue","description":"cool"}]}}}));
+    let status = lab.wait_state("blocked");
+    server.state.lock().unwrap().input_reply =
+        Some((200, json!({"eventSeq":3,"alreadyResolved":false})));
+    let before = lab.out(&["read", NAME]).stdout;
+    let out = lab.out(&[
+        "answer",
+        NAME,
+        "--instance",
+        status["instance"].as_str().unwrap(),
+        "--request",
+        "r/1",
+        "--option",
+        "Blue",
+    ]);
+    let after = lab.out(&["read", NAME]).stdout;
+    server.close_all();
+    lab.json(&["stop", NAME]);
+    let receipt: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{receipt}");
+    assert_eq!(receipt["already_resolved"], false);
+    assert_eq!(receipt["confirmed"], true);
+    assert_eq!(before, after);
+    let state = server.state.lock().unwrap();
+    assert_eq!(
+        state.inputs,
+        vec![json!({"answer":{"type":"option","label":"Blue"},"clientName":"corral"})]
+    );
+    assert!(
+        state
+            .requests
+            .iter()
+            .any(|p| p == "/v1/sessions/s1/requests/r%2F1")
+    );
+}
+
+#[test]
+fn answer_text_allow_once_and_plan_send_only_the_requested_safe_decision() {
+    for (kind, flags, expected) in [
+        (
+            json!({"type":"userInput","question":"Name?","options":[]}),
+            vec!["--text", "A short answer"],
+            json!({"answer":{"type":"text","text":"A short answer"},"clientName":"corral"}),
+        ),
+        (
+            json!({"type":"approval","tool":"shell","arguments":{"command":"pwd"},"availableDecisions":["accept","decline"]}),
+            vec!["--allow-once"],
+            json!({"decision":"accept","clientName":"corral"}),
+        ),
+        (
+            json!({"type":"approval","tool":"edit","arguments":{"path":"notes.txt"},"availableDecisions":["accept"]}),
+            vec!["--allow-once"],
+            json!({"decision":"accept","clientName":"corral"}),
+        ),
+        (
+            json!({"type":"planApproval","plan":"Read notes and summarize."}),
+            vec!["--approve-plan"],
+            json!({"plan":{"decision":"implement","approvalPolicy":"alwaysAsk"},"clientName":"corral"}),
+        ),
+    ] {
+        let lab = Lab::new();
+        let server = FakeServer::new(&lab, "answer.sock");
+        lab.working(&server);
+        server.emit(
+            "s1",
+            "request.opened",
+            json!({"request":{"id":"r1","createdAt":1,"kind":kind}}),
+        );
+        let status = lab.wait_state("blocked");
+        server.state.lock().unwrap().input_reply =
+            Some((200, json!({"eventSeq":3,"alreadyResolved":false})));
+        let mut args = vec![
+            "answer",
+            NAME,
+            "--instance",
+            status["instance"].as_str().unwrap(),
+            "--request",
+            "r1",
+        ];
+        args.extend(flags);
+        let out = lab.out(&args);
+        server.close_all();
+        lab.json(&["stop", NAME]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert_eq!(server.state.lock().unwrap().inputs, [expected]);
+    }
+}
+
+#[test]
+fn answer_receipts_distinguish_already_resolved_rejection_and_uncertainty() {
+    for (case, reply, code) in [
+        (
+            "resolved",
+            Some((200, json!({"eventSeq":4,"alreadyResolved":true}))),
+            0,
+        ),
+        (
+            "rejected",
+            Some((
+                400,
+                json!({"code":"invalid_request","message":"invalid answer"}),
+            )),
+            7,
+        ),
+        (
+            "internal",
+            Some((500, json!({"code":"internal","message":"failure"}))),
+            3,
+        ),
+        ("invalid", Some((200, json!({"eventSeq":4}))), 3),
+        ("disconnect", None, 3),
+        ("timeout", None, 3),
+    ] {
+        let lab = Lab::new();
+        let server = FakeServer::new(&lab, "answer.sock");
+        lab.working(&server);
+        server.emit("s1", "request.opened", json!({"request":{"id":"r1","createdAt":1,"kind":{"type":"userInput","question":"Name?","options":[]}}}));
+        let status = lab.wait_state("blocked");
+        {
+            let mut state = server.state.lock().unwrap();
+            state.input_reply = reply;
+            state.hold_input = case == "timeout";
+        }
+        let out = std::thread::scope(|scope| {
+            let request = scope.spawn(|| {
+                lab.out(&[
+                    "answer",
+                    NAME,
+                    "--instance",
+                    status["instance"].as_str().unwrap(),
+                    "--request",
+                    "r1",
+                    "--text",
+                    "hello",
+                ])
+            });
+            eventually(|| !server.state.lock().unwrap().inputs.is_empty());
+            if case == "timeout" {
+                assert_eq!(lab.status()["state"], "blocked");
+                assert_eq!(
+                    lab.request(json!({"op":"upgrade","exe":lab.path("unused")}))["error"],
+                    "upgrade_busy"
+                );
+                assert!(!request.is_finished());
+            }
+            request.join().unwrap()
+        });
+        server.state.lock().unwrap().hold_input = false;
+        server.close_all();
+        lab.json(&["stop", NAME]);
+        let receipt: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(code), "{case}: {receipt}");
+        assert_eq!(
+            server.state.lock().unwrap().inputs.len(),
+            1,
+            "no automatic retry"
+        );
+        if code == 0 {
+            assert_eq!(receipt["already_resolved"], true);
+        } else {
+            assert_eq!(
+                receipt["error"],
+                if code == 7 {
+                    "answer_failed"
+                } else {
+                    "not_delivered"
+                }
+            );
+            assert_eq!(
+                receipt["written"],
+                if code == 7 { json!(false) } else { Value::Null }
+            );
+            assert_eq!(receipt["confirmed"], false);
+        }
+    }
+}
+
+#[test]
+fn answer_rechecks_front_instance_session_and_refuses_unsafe_decisions() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "answer.sock");
+    lab.working(&server);
+    server.emit("s1", "request.opened", json!({"request":{"id":"r1","createdAt":1,"kind":{"type":"sandboxApproval","tool":"shell","availableDecisions":["accept"]}}}));
+    let status = lab.wait_state("blocked");
+    let instance = status["instance"].as_str().unwrap();
+    for (instance, id, flag, value, expected) in [
+        ("old-instance", "r1", "--allow-once", None, 7),
+        (instance, "different", "--allow-once", None, 7),
+        (instance, "r1", "--allow-once", None, 7),
+        (instance, "r1", "--approve-plan", None, 7),
+        (instance, "r1", "--text", Some("first\nsecond"), 7),
+    ] {
+        let mut args = vec![
+            "answer",
+            NAME,
+            "--instance",
+            instance,
+            "--request",
+            id,
+            flag,
+        ];
+        args.extend(value);
+        assert_eq!(lab.out(&args).status.code(), Some(expected));
+    }
+    assert!(server.state.lock().unwrap().inputs.is_empty());
+    let mut attached = UnixStream::connect(lab.path("pens").join(NAME).join("sock")).unwrap();
+    attached
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    writeln!(attached, "{}", json!({"op":"attach","rows":40,"cols":120})).unwrap();
+    let mut ack = String::new();
+    BufReader::new(&attached).read_line(&mut ack).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&ack).unwrap()["ok"], true);
+    attached.write_all(b"i\0\0\0\x01h").unwrap();
+    eventually(|| lab.status()["last_human_input"].is_number());
+    let blocked = lab.out(&[
+        "answer",
+        NAME,
+        "--instance",
+        instance,
+        "--request",
+        "r1",
+        "--allow-once",
+    ]);
+    assert_eq!(blocked.status.code(), Some(8));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&blocked.stdout).unwrap()["error"],
+        "human_active"
+    );
+    assert!(server.state.lock().unwrap().inputs.is_empty());
+    drop(attached);
+    server.close_all();
+    lab.json(&["stop", NAME]);
+}
+
+#[test]
+fn answer_status_identifies_the_front_request_and_approval_details() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "answer.sock");
+    lab.working(&server);
+    server.emit(
+        "s1",
+        "request.opened",
+        json!({"request":{"id":"r1","createdAt":1,"kind":{
+        "type":"approval","tool":"write","arguments":{"path":"notes.txt","content":"hello"},
+        "availableDecisions":["accept","acceptForSession","decline"]}}}),
+    );
+    let status = lab.wait_state("blocked");
+    server.close_all();
+    lab.json(&["stop", NAME]);
+    assert_eq!(
+        status["interaction"]["request"],
+        json!({"id":"r1","kind":"approval","tool":"write",
+        "file":{"text":"notes.txt","truncated":false},"available_decisions":["accept","acceptForSession","decline"]})
+    );
 }
 
 #[test]

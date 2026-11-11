@@ -115,6 +115,7 @@ impl Engine {
             || status.kind.as_deref() == Some("agy")
             || (status.state == "blocked"
                 && matches!(status.kind.as_deref(), Some("kimi" | "canter"))
+                && status.canter_request().is_none()
                 && !status.structured_dialog())
             || !matches!(status.state.as_str(), "working" | "blocked")
         {
@@ -187,7 +188,11 @@ impl Engine {
         let Some(config) = self.configs.iter().find(|c| c.kind == kind) else {
             return Ok(());
         };
-        if approval
+        if (approval
+            || button
+                .content
+                .as_ref()
+                .is_some_and(|c| c.status.kind.as_deref() == Some("canter") && c.form.is_some()))
             && button.content.as_ref().is_some_and(|content| {
                 !config.channels.iter().any(|channel| {
                     channel.id == address.channel
@@ -250,6 +255,10 @@ impl Engine {
                 false,
             );
         };
+        if content.status.kind.as_deref() == Some("canter") && (approval || content.form.is_some())
+        {
+            return self.canter_button_action(i, action, corral, at);
+        }
         if approval {
             return self.approval_action(i, action, corral, at);
         }
@@ -422,6 +431,11 @@ fn refusal(button: &ButtonMessage, reason: &str) -> String {
 pub(super) fn stale(button: &ButtonMessage, status: &Status) -> Option<&'static str> {
     let content = button.content.as_ref()?;
     let old = &content.status;
+    if old.kind.as_deref() == Some("canter")
+        && (content.form.is_some() || content.approval.is_some())
+    {
+        return canter::stale(old, status);
+    }
     if content.approval.is_some() {
         return approvals::stale(old, status);
     }

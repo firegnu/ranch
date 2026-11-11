@@ -357,7 +357,7 @@ R56b 实现、部署后生效；之前的 corral 不认识 canter，当未知程
 - **`status`、`ls`**：
   - `state` 可能是 `starting`、`working`、`idle`、`blocked`、`exiting`、`unknown`。还没进会话（刚启动或卡在 canter 的信任框上）是 `starting`。`unknown`：部署前旧 corral 开的 canter、pen 太旧、连不上 canter 服务端超过 20 秒。
   - `interrupted`、`questions`、`command` 照本文件「被人打断的一轮」「提问框」「原始命令」各节；canter 的 `command` 给 shell 批准框的命令原文，`questions` 给提问框的题目和选项，同样 16 KiB 截断。
-  - `interaction:{kind,count,running}`：含义同「Kimi 提问、批准与处理结果」一节；canter 不给 `resolved`、`action`。
+  - `interaction:{kind,count,running}`：含义同「Kimi 提问、批准与处理结果」一节；canter 不给 `resolved`、`action`。R58 兼容新增可选 `interaction.request`，见下节。
   - `unsupported:["pause","sandbox"]`：只有 canter 有这个字段，别家输出不变。前端据此事先不给 canter 显示暂停、不给选 fence 档案。
   - `sandbox` 对 canter 恒为 `null`：这个字段只指 fence。canter 自带的沙箱 corral 不报；它和 fence 是两回事。带 `--yolo` 打开的会话不套自带沙箱，不管 canter 配置怎么写；不带时按配置（默认开）（canter P2-198）。
 - **`pause`、`resume`**：对 canter 报 `{"ok":false,"error":"unsupported_kind","name":…,"message":…}`，退出码 1。例外：pen 报 `paused:true` 时允许 `resume`，用于恢复旧版 corral 已经暂停的 canter；agent 没在跑时 `resume` 报 `not_found`。和 `unsupported`（退出码 9，旧 pen 要 `corral upgrade`）是两回事，不要显示成「要升级」。
@@ -366,6 +366,41 @@ R56b 实现、部署后生效；之前的 corral 不认识 canter，当未知程
 - **`upgrade`**：换到跟不了 canter 的程序时报 `incompatible`、退出码 9；`--all` 时该错误列在对应的 `results` 项里。
 - **`integration status`**：多一行 `{"kind":"canter","path":…,"version":…,"hooks":"launch","skills":[{"target":"codex",…}],"unsupported":["pause","sandbox"]}`，登记顺序在 kimi 之后；没有 `install` 段，不加状态来源字段。
 - **其余**：`reply`、`wait`、`send`、`keys`、`read`、`attach` 用法不变。
+
+### canter 最前面的请求与 `corral answer`（R58）
+
+`status` 的 `interaction.request` 仅提供主会话最早未解决的请求；多个主框仍只给第一个，存在任何子 agent 请求时省略。没框、旧 pen 或状态无法核对时不提供，不可推断为已回答。其他家的字段不变。
+
+```json
+{"interaction":{"kind":"approval","count":1,"running":true,"request":{"id":"r-123","kind":"approval","tool":"write","file":{"text":"notes.txt","truncated":false},"available_decisions":["accept","acceptForSession","decline"]}}}
+```
+
+- `id` 是 canter 原请求编号；`kind` 保留 `userInput`、`approval`、`sandboxApproval`、`planApproval` 等原类型。
+- `approval`／`sandboxApproval` 带 `tool`、`available_decisions`（保留服务端原决定，不代表 pony 支持全部决定）；write／edit 带 `file:{text,truncated}`，是 arguments.path 原文。shell 命令仍在顶层 `command`，提问题目仍在 `questions`。
+- `planApproval` 带 `plan:{text,truncated}`，保存计划正文。file、plan 各按原始 command 同样的紧凑 JSON 16 KiB 限制截断。pony 不会批准被截断、空白、超过 1000 字或不满足 R47c 可读性限制的命令／文件／计划。
+
+新命令：
+
+```text
+corral answer NAME --instance INSTANCE --request ID --option LABEL
+corral answer NAME --instance INSTANCE --request ID --text TEXT
+corral answer NAME --instance INSTANCE --request ID --allow-once
+corral answer NAME --instance INSTANCE --request ID --approve-plan
+```
+
+四种回答恰选一种。只支持 canter 的公开回答接口，不往终端按键、不调用普通 send。实例必须匹配，原请求必须仍是可核对的最前面一个，暂停、最近 30 秒人工输入、另一回答或升级进行中均拒绝。会话从 corral 的公开 `canter-session.json` 读取并核对主会话，服务端从其中 stateDir 的 `server.json` 发现；只读这两个公开文件。向 `POST /v1/sessions/{会话}/requests/{请求}` 送 `clientName:"corral"`。
+
+- `--option` 送 `answer:{type:"option",label:LABEL}`；`--text` 送 `answer:{type:"text",text:TEXT}`，非空白且不能含 CR/LF，原文不改写。
+- `--allow-once` 仅对普通 approval、工具 shell／write／edit、available_decisions 含 accept 生效，送 `decision:"accept"`；不支持 sandboxApproval、MCP 或其他工具，不支持持久放行。
+- `--approve-plan` 仅对 planApproval，送 `plan:{decision:"implement",approvalPolicy:"alwaysAsk"}`；不提供清空上下文或继续计划。
+- 成功退出 **0**：`{ok:true,name,instance,request_id,written:true,submitted:true,confirmed:true,already_resolved:false}`。already_resolved 为 true 表示已被别处处理，服务端没有再次作答，仍退出 0；只证明请求已处理，不代表模型已消费答案。
+- 明确没答上退出 **7**：`answer_failed`（发现／连接／首次写失败，或带 code/message 的完整 HTTP 4xx 拒绝）、`request_changed`（框或主会话换了）、`restarted`（实例变了）、`answer_busy`。发送前拒绝及 answer_failed 带 `written:false,submitted:false,confirmed:false`；restarted 来自既有实例保护，可能不带这三个字段。
+- 开始写后超时、断开、5xx、损坏回执或 CLI 丢失 pen 回执退出 **3** `not_delivered`：`written:null,submitted:null,confirmed:false`，结果不明，**不能重答**。
+- 不支持的 agent、旧 pen、没有可核对的公开会话／请求退出 **9** `unsupported`；近期人工输入 **8** `human_active`，暂停 **10** `paused`，参数错 **1** `usage`。这些都不回退按键。
+
+请求线程的连接最多等 500 ms，发送和读取回执共用 2 秒截止；pen 保持响应，线程未收回时拒绝升级。corral 不自动重试；pony 在发送前存盘消费记号，连点／重启不重答，already_resolved 或框消失时撤按钮并说明已在别处答过。线程多行答案明确未送，请改一行；文字原样发送，原提醒仅展示前 200 字，全文在用户原线程消息里。拒绝／打断仍沿用 R56c 的一次 Esc 和单框核对。
+
+对 paddock：命令和字段均为兼容新增，现有调用不用动；若要使用回答接口，paddock 在自己的任务接。新旧 corral 可继续读同一批 agent；旧 CLI 不认识 answer，新 CLI 遇到旧 pen 报 9。部署 pony 前须使它调用新版 corral，并由用户安排目标 canter 的 pen 升级；不涉及钩子或共用 helper。
 
 ## sandbox 与 `fence`（R17b）
 

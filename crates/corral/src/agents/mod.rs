@@ -48,6 +48,8 @@ static ADAPTERS: &[&dyn Adapter] = &[
 
 /// Agent directory, expected main session and input text. Called off the pen loop.
 pub(crate) type SteerApi = fn(&Path, &str, &str) -> Result<Value>;
+/// Agent directory, expected main session, current request and answer. Runs off the pen loop.
+pub(crate) type AnswerApi = fn(&Path, &str, &Value, &Value) -> Result<Value>;
 
 pub(crate) trait Adapter: Sync {
     /// The program's file name that selects this adapter; also recorded as the agent's `kind`.
@@ -83,6 +85,9 @@ pub(crate) trait Adapter: Sync {
     }
     /// Deliver working input through a public API, returning an acceptance receipt.
     fn steer_api(&self) -> Option<SteerApi> {
+        None
+    }
+    fn answer_api(&self) -> Option<AnswerApi> {
         None
     }
     /// Send the first prompt through the PTY once the editor is ready, instead of argv.
