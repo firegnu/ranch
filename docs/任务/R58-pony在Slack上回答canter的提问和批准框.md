@@ -104,7 +104,7 @@
 
 ## 完成记录
 
-2026-11-11，ranch/dev-r58。本轮实现已提交，**尚未满足做完条件：真 canter 卡在目录信任框，四轮实测未执行，等待主控安排用户处理后继续**。
+2026-11-11，ranch/dev-r58。首次实现提交为 `47b2c32`；当时真 canter 卡在目录信任框，四轮实测未执行。用户处理信任后的实测和再次全量检查见下面的追加记录。
 
 - **做了什么**：canter 的 `interaction.request` 提供主会话最前面请求的编号、类型、工具、文件、available_decisions 和计划正文；有子框时不给可回答请求。新增通用可选 `answer_api` 与 `corral answer` 命令，pen 核对实例、前框、人工输入并通过有时限线程调用，canter 协议和公开文件读取全在 canter.rs。明确区分成功、alreadyResolved、明确拒绝和结果不明，无按键回退和自动重试。pony 增加 canter 选项／单行文字回答、shell/write/edit 单次批准、implement + alwaysAsk 计划批准；沿用聊天控件和确认框，chats 未改。发送前持久化消费记号，回答后撤控件；核对换框、人工输入、实例、频道，连点／重启不重答。连续 blocked 的前框编号变化也会发下一框提醒。CONTRACT、DESIGN、pony README 和 AGENT_USAGE 已同步。
 - **验证了什么**：先分别复现状态没有请求字段、CLI 没有 answer、尚不支持文字／批准／计划回答、pony 没有选项／文字入口／批准按钮，再实现到通过；后续针对测试还先复现了连续 blocked 漏下一框提醒、旧线程换绑后仍答原仓库，均已修复。corral 假服务端针对测试 5 项通过，含四种回答、alreadyResolved、4xx、断连／超时／5xx／无效回执、请求及实例不符、禁止沙箱批准、真人输入、响应期间 pen 可用且禁止升级。pony canter 针对测试最终 10 项通过，含文字原样／多行拒绝、允许与拒绝连点、发送前落盘、重启、换绑、已在别处答过、拒绝／未知结果、安全批准范围和缺字段降级；隔离假 corral 命令协议 2 项通过。全部合成测试只用隔离状态和假服务，不碰真实 Slack。
@@ -115,4 +115,24 @@
 - **对 paddock 的影响**：公开约定仅兼容新增 interaction.request、answer 命令和能力；现有调用不用动，前端若要回答在自己的任务接。旧 CLI 不认识命令，新 CLI 遇旧 pen 返回不支持；新 pony 遇旧字段或入口回电脑处理，无按键回退。不改 hook 或共用 helper。
 - **踩过的坑**：通用 state_started 只在状态变化时更新，不能用于区分连续 blocked 的 canter 请求，现以请求编号辅助提醒去重。线程原有路由只核对原仓库仍在任一频道绑定，新回答入口另核对当前频道仍属原仓库。首次全量出现上述升级就绪超时，定向复跑未复现。持久化测试最初误以为磁盘 buttons 在顶层，实际包在 state 中，修正测试读法后验证发送前已落盘；这次测试夹具错误未当作功能 RED 证据。
 
-需要主控处理：请用户自行处理测试 agent 的目录信任框，再交回继续剩余四轮实测。当前不应合并或声称 R58 已全部验收。
+首次记录的待处理事项：由用户处理测试 agent 的目录信任框后继续四轮实测；此项已在下面的追加记录中解决。
+
+### 用户处理目录信任后继续实测
+
+2026-11-11，用户明确告知目录信任已处理，并授权继续四轮真 canter 实测和完整再跑一次 `cargo test --all-targets --no-fail-fast`。
+
+- **做了什么**：沿用原测试 agent `ranch/test-r58-dialogs`、原实例、独立临时 CORRAL_HOME 和临时 cwd，没有新开真实 agent；使用本分支编出的 corral，canter 0.1.0 / 031d834。没有指定模型或强度，公开会话快照显示服务端配置为 `deepseek/deepseek-flash` / high，权限 `alwaysAsk`，自带沙箱仍开着。用户保持 attach；回答均经 `corral answer`，未按键答题。
+
+| 轮次 | 实测动作 | 观察到的结果 |
+| --- | --- | --- |
+| 1：选项 | 原启动 prompt 已令 ask_user 提问 `R58 color?`，给 Red / Blue；对当前请求用 `--option Blue` | 回执 `confirmed:true,already_resolved:false`；框消失，公开快照的 userInput.answer 为 option / Blue；模型回复 `R58 option: Blue`，会话 idle |
+| 2：文字 | ask_user 提问 `R58 short answer?`，对当前请求用 `--text 'R58 自写一句话'` | 成功回执；快照原样保存 text / `R58 自写一句话`；模型回复 `R58 text: R58 自写一句话`，会话 idle |
+| 3：命令允许 | 在测试临时工作目录运行 `printf R58_ALLOWED > r58-allowed.txt`；核对普通 approval、tool=shell、available_decisions 含 accept，再用 `--allow-once` | 成功回执；命令项目 completed、exitCode=0；文件内容为 `R58_ALLOWED`，模型回复 `R58 command allowed`；权限仍为 alwaysAsk |
+| 4：计划批准 | 仅通过公开 PATCH 接口把这份测试会话的 planMode 设为 true；submit_plan 的无害计划只要求回复一句话、不执行命令或改文件；用 `--approve-plan` | 成功回执；planProposal.answer 精确为 `decision:implement,approvalPolicy:alwaysAsk`，项目 completed；模型回复 `R58 plan approved. No commands, no file changes, no sub-agents.`；计划模式退出，权限仍为 alwaysAsk |
+
+- **验证和清理**：四个请求均由带 `clientName:"corral"` 的本分支回答入口成功解决，真实 canter 接受 corral 作答，不需要修改 canter。最终公开快照恰有 **4 个 turn**，全部 completed，没有待答请求。测试 agent 已 `corral stop`，返回 exit_code=0、stopped_by=SIGHUP，无 remaining_sessions；隔离 `corral ls` 为空，公开会话状态确认 closed。原始快照和测试日志仅留临时验证目录，不进仓库。
+- **再次全量检查**：按用户本轮要求，在前台完整运行 `CARGO_TARGET_DIR=$HOME/Developer/personal_projs/ranch-worktrees/.target/r58 cargo test --all-targets --no-fail-fast`，退出码 0；29 个测试目标汇总为 **564 passed、0 failed、19 ignored**。其中升级测试 17 项全部通过，本次没有再出现新 pen 就绪超时；首次超时原因仍未确定，前面的失败记录保留。完整日志在 `/tmp/r58-validation.MSlF7n/tests-final.log`。本轮只改完成记录，未重复运行上轮已通过的 clippy、fmt；提交前 `git diff --check` 通过。
+- **拿主意和踩坑**：第二轮首次 send 被 human_active（8）拒绝，确认距 last_human_input 已超过 30 秒后才正常送出；未用 force，未重送结果不明的请求，被拒那次没有增加 turn。除这次已有保护生效外，四轮没有协议或实现问题。计划模式只改测试会话，不改服务端配置、模型或全局权限。
+- **没做的事及影响**：本轮没有改实现，只补实测记录；未碰真实 Slack、用户 pony 或其他 agent，未部署、合并、推送。对 paddock 仍为兼容新增，现有调用不用动；真实 Slack 验收仍由主控部署后与用户一起做。
+
+本任务要求的实现与验证已完成，没有待主控决定的实现问题；交主控审查。
