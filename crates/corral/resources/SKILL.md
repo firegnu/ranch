@@ -65,7 +65,7 @@ corral send "$CORRAL_NAME" "<提醒的话>" --after <名字> --timeout 3600
 
 ## 退出码
 
-send 被拒绝时：对方正在干活、要修正当前任务，可加 `--steer` 插话（Claude Code、Codex、omp）；不加照旧等空闲，不能与 `--after` 同用。9 `unsupported_steer`／`unsupported` 就等空闲后普通 send。提交前仍 working 但来了新事件时，最多额外等 3 秒，等连续 300 ms 没有新事件再复查提交；blocked 等状态立即放弃。3 `draft_not_submitted` 是文字已写入但没有提交，不重送、不补回车；下一次 send 会合并这份草稿，必须先让用户接入核对或清掉。
+send 被拒绝时：对方正在干活、要修正当前任务，可加 `--steer` 插话（Claude Code、Codex、omp、canter）；不加照旧等空闲，不能与 `--after` 同用。9 `unsupported_steer`／`unsupported` 就等空闲后普通 send。canter 干活时走公开接口，保留输入框草稿；成功的 `queued_for_next_turn:true` 表示排到下一轮，false 表示插进当前轮；7 `steer_failed` 是没写入，3 `not_delivered` 是回执未知、不能重送。其他家的终端提交前仍 working 但来了新事件时，最多额外等 3 秒，等连续 300 ms 没有新事件再复查提交；blocked 等状态立即放弃。3 `draft_not_submitted` 是文字已写入但没有提交，不重送、不补回车；下一次 send 会合并这份草稿，必须先让用户接入核对或清掉。
 
 | 退出码 | 标识 | 怎么办 |
 |---|---|---|

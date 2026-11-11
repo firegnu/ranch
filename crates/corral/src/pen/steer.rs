@@ -4,11 +4,18 @@ use crate::{Error, Result, agents, cli, events, now};
 use serde_json::{Value, json};
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
 const QUIET_GAP: Duration = Duration::from_millis(300);
 const GAP_WAIT_LIMIT: Duration = Duration::from_secs(3);
+
+pub(super) struct ApiRequest {
+    client: (i32, u64),
+    request_id: Option<String>,
+    thread: JoinHandle<Result<Value>>,
+}
 
 #[derive(Clone)]
 struct Gap {
@@ -64,7 +71,7 @@ impl Pen {
             Some("idle") => {}
             Some("working")
                 if agents::find(self.metadata["kind"].as_str().unwrap_or(""))
-                    .is_some_and(|a| a.steer_key().is_some()) => {}
+                    .is_some_and(|a| a.steer_key().is_some() || a.steer_api().is_some()) => {}
             Some("working" | "unknown") => {
                 return Err(Error::new(
                     9,
@@ -115,6 +122,53 @@ impl Pen {
                     "usage",
                     "working input must be ordinary text, without command prefixes or control keys",
                 ));
+            }
+            if let Some(api) = agents::find(self.metadata["kind"].as_str().unwrap_or(""))
+                .and_then(|a| a.steer_api())
+            {
+                if req["api_receipt"] != true {
+                    return Err(Error::new(
+                        9,
+                        "unsupported_steer",
+                        "this client cannot read API receipts; wait for idle and use ordinary send",
+                    )
+                    .with("written", false)
+                    .with("submitted", false)
+                    .with("confirmed", false));
+                }
+                let dir = self.dir.clone();
+                let session = st
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s["main_session"].as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                let input = text.to_owned();
+                let accepted_at = now();
+                let thread = thread::Builder::new()
+                    .name("steer".into())
+                    .spawn(move || api(&dir, &session, &input))
+                    .map_err(|e| {
+                        Error::new(
+                            7,
+                            "steer_failed",
+                            format!("could not start input request: {e}"),
+                        )
+                        .with("written", false)
+                        .with("submitted", false)
+                        .with("confirmed", false)
+                    })?;
+                self.api_steers.push(ApiRequest {
+                    client: (fd, self.clients[&fd].order),
+                    request_id: req["request_id"].as_str().map(str::to_owned),
+                    thread,
+                });
+                self.recent.push(json!({"t":accepted_at,"digest":events::digest(text),"request_id":req["request_id"],"state":"accepted"}));
+                if self.recent.len() > 10 {
+                    self.recent.remove(0);
+                }
+                self.clients.get_mut(&fd).unwrap().mode = Mode::Waiting;
+                return Ok(());
             }
             if !self.term.paste() {
                 return Err(Error::new(
@@ -167,6 +221,55 @@ impl Pen {
         }
         self.clients.get_mut(&fd).unwrap().mode = Mode::Waiting;
         Ok(())
+    }
+
+    pub(super) fn finish_api_steers(&mut self) {
+        let mut i = 0;
+        while i < self.api_steers.len() {
+            if !self.api_steers[i].thread.is_finished() {
+                i += 1;
+                continue;
+            }
+            let pending = self.api_steers.remove(i);
+            let mut result = match pending.thread.join() {
+                Ok(Ok(receipt)) => receipt,
+                Ok(Err(error)) => error.value,
+                Err(_) => {
+                    json!({"ok":false,"error":"not_delivered","message":"input request panicked; receipt unknown, do not resend","written":null,"submitted":null,"confirmed":false})
+                }
+            };
+            result["request_id"] = json!(pending.request_id);
+            if let Some(id) = &pending.request_id
+                && let Some(record) = self
+                    .recent
+                    .iter_mut()
+                    .rev()
+                    .find(|r| r["request_id"] == *id)
+            {
+                record["state"] = json!(if result["ok"] == true {
+                    "written"
+                } else if result["written"] == false {
+                    "rejected"
+                } else {
+                    "unknown"
+                });
+                for key in ["written", "submitted", "confirmed", "queued_for_next_turn"] {
+                    if let Some(value) = result.get(key) {
+                        record[key] = value.clone();
+                    }
+                }
+                if result["ok"] != true {
+                    record["reason"] = result["error"].clone();
+                }
+            }
+            if let Some(client) = self
+                .clients
+                .get_mut(&pending.client.0)
+                .filter(|c| c.order == pending.client.1)
+            {
+                client.reply(result);
+            }
+        }
     }
 
     /// Runs immediately before the first byte of either guarded block is written.

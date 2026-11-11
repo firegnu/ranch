@@ -355,6 +355,10 @@ struct FakeState {
     events: BTreeMap<String, Vec<Value>>,
     requests: Vec<String>,
     delayed_heartbeat: bool,
+    input_reply: Option<(u16, Value)>,
+    disconnect_input: bool,
+    hold_input: bool,
+    inputs: Vec<Value>,
 }
 struct FakeServer {
     state: Arc<Mutex<FakeState>>,
@@ -455,7 +459,41 @@ fn fake_connection(mut stream: UnixStream, state: Arc<Mutex<FakeState>>, stop: A
     }
     let path = line.split_whitespace().nth(1).unwrap_or("").to_owned();
     state.lock().unwrap().requests.push(path.clone());
-    if path.starts_with("/v1/events?") {
+    if path.ends_with("/input") {
+        use std::io::Read;
+        assert_eq!(line.split_whitespace().next(), Some("POST"));
+        let mut length = 0;
+        loop {
+            line.clear();
+            assert!(reader.read_line(&mut line).unwrap() > 0);
+            if line == "\r\n" {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse::<usize>().unwrap();
+            }
+        }
+        let mut bytes = vec![0; length];
+        reader.read_exact(&mut bytes).unwrap();
+        let reply = {
+            let mut state = state.lock().unwrap();
+            state.inputs.push(serde_json::from_slice(&bytes).unwrap());
+            if state.disconnect_input {
+                return;
+            }
+            state.input_reply.clone()
+        };
+        while state.lock().unwrap().hold_input && !stop.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let Some((status, body)) = reply else { return };
+        let body = body.to_string();
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status} Reply\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+    } else if path.starts_with("/v1/events?") {
         assert!(
             path.contains("observe=true"),
             "observer must never own a canter lease"
@@ -546,6 +584,18 @@ fn fake_connection(mut stream: UnixStream, state: Arc<Mutex<FakeState>>, stop: A
     }
 }
 impl Lab {
+    fn working(&self, server: &FakeServer) {
+        self.start(&["--", "canter"]);
+        server.session("s1", millis() as f64 / 1000. + 0.001);
+        self.publish("s1");
+        self.wait_state("idle");
+        server.emit(
+            "s1",
+            "turn.started",
+            json!({"turn":{"id":"t1","input":[{"type":"text","text":"base task"}]}}),
+        );
+        self.wait_state("working");
+    }
     fn publish(&self, id: &str) {
         let path = self.path("pens").join(NAME).join("canter-session.json");
         let temp = path.with_extension("tmp");
@@ -574,6 +624,187 @@ impl Lab {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
+    }
+}
+
+#[test]
+fn steer_working_canter_confirms_the_api_receipt_and_preserves_the_draft() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "steer.sock");
+    lab.working(&server);
+    server.state.lock().unwrap().input_reply = Some((200, json!({"eventSeq":2,"turnId":"t1"})));
+    // R57b clients cannot interpret an API receipt; reject before sending on their behalf.
+    let legacy = lab.request(json!({"op":"steer","text":"old CLI","request_id":"legacy"}));
+    assert_eq!(legacy["error"], "unsupported_steer", "{legacy}");
+    assert!(server.state.lock().unwrap().inputs.is_empty());
+    lab.json(&["keys", NAME, "text:unsent draft"]);
+    let before = lab.out(&["read", NAME]).stdout;
+    let text = "改一下当前任务\n保留草稿";
+    let out = lab.out(&["send", NAME, text, "--steer", "--request-id", "api-receipt"]);
+    let after = lab.out(&["read", NAME]).stdout;
+    let status = lab.status();
+    server.close_all();
+    lab.json(&["stop", NAME]);
+    let sent: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{sent}");
+    assert_eq!(sent["confirmed"], true);
+    assert_eq!(sent["merged_with_draft"], false);
+    assert_eq!(sent["queued_for_next_turn"], false);
+    assert_eq!(sent["request_id"], "api-receipt");
+    assert_eq!(before, after, "API steering must not write to the terminal");
+    let state = server.state.lock().unwrap();
+    assert_eq!(
+        state.inputs,
+        vec![json!({"input":[{"type":"text","text":text}],"mode":"steer","clientName":"corral"})]
+    );
+    assert!(state.requests.iter().any(|p| p == "/v1/sessions/s1/input"));
+    let record = status["recent_sends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["request_id"] == "api-receipt")
+        .unwrap();
+    assert_eq!(record["state"], "written");
+    assert_eq!(record["confirmed"], true);
+    assert_eq!(record["queued_for_next_turn"], false);
+}
+
+#[test]
+fn steer_working_canter_reports_next_turn_queueing_as_success() {
+    for receipt in [json!({"eventSeq":2,"turnId":null}), json!({"eventSeq":2})] {
+        let lab = Lab::new();
+        let server = FakeServer::new(&lab, "queue.sock");
+        lab.working(&server);
+        server.state.lock().unwrap().input_reply = Some((200, receipt));
+        let out = lab.out(&[
+            "send",
+            NAME,
+            "after compaction",
+            "--steer",
+            "--timeout",
+            "0",
+        ]);
+        server.close_all();
+        lab.json(&["stop", NAME]);
+        let sent: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(0), "{sent}");
+        assert_eq!(sent["confirmed"], true);
+        assert_eq!(sent["queued_for_next_turn"], true);
+        assert_eq!(sent["merged_with_draft"], false);
+        assert_eq!(server.state.lock().unwrap().inputs.len(), 1);
+    }
+}
+
+#[test]
+fn steer_working_canter_distinguishes_unsent_or_rejected_input() {
+    for failure in ["discovery", "connect", "rejected"] {
+        let lab = Lab::new();
+        let server = FakeServer::new(&lab, "reject.sock");
+        lab.working(&server);
+        let registration = fs::read(lab.path("canter-home/server.json")).unwrap();
+        match failure {
+            "discovery" => fs::write(lab.path("canter-home/server.json"), "{").unwrap(),
+            "connect" => fs::write(
+                lab.path("canter-home/server.json"),
+                json!({"socketPath":lab.path("missing.sock")}).to_string(),
+            )
+            .unwrap(),
+            _ => {
+                server.state.lock().unwrap().input_reply = Some((
+                    409,
+                    json!({"code":"session_closed","message":"session closed"}),
+                ))
+            }
+        }
+        let out = lab.out(&[
+            "send",
+            NAME,
+            "not accepted",
+            "--steer",
+            "--request-id",
+            "api-rejected",
+        ]);
+        fs::write(lab.path("canter-home/server.json"), registration).unwrap();
+        let status = lab.status();
+        server.close_all();
+        lab.json(&["stop", NAME]);
+        let sent: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(7), "{failure}: {sent}");
+        assert_eq!(sent["error"], "steer_failed");
+        assert_eq!(sent["written"], false);
+        assert_eq!(sent["submitted"], false);
+        assert_eq!(sent["confirmed"], false);
+        assert_eq!(sent["request_id"], "api-rejected");
+        assert_eq!(status["recent_sends"][0]["state"], "rejected");
+        assert_eq!(status["recent_sends"][0]["written"], false);
+        assert_eq!(
+            server.state.lock().unwrap().inputs.len(),
+            usize::from(failure == "rejected")
+        );
+    }
+}
+
+#[test]
+fn steer_working_canter_never_retries_an_unknown_receipt_and_keeps_pen_responsive() {
+    for failure in ["disconnect", "timeout", "invalid", "internal"] {
+        let lab = Lab::new();
+        let server = FakeServer::new(&lab, "unknown.sock");
+        lab.working(&server);
+        {
+            let mut state = server.state.lock().unwrap();
+            state.disconnect_input = failure == "disconnect";
+            state.hold_input = failure == "timeout";
+            if failure == "invalid" {
+                state.input_reply = Some((200, json!({"unexpected":true})));
+            }
+            if failure == "internal" {
+                state.input_reply =
+                    Some((500, json!({"code":"internal","message":"internal error"})));
+            }
+        }
+        let out = std::thread::scope(|scope| {
+            let sending = scope.spawn(|| {
+                lab.out(&[
+                    "send",
+                    NAME,
+                    "only once",
+                    "--steer",
+                    "--request-id",
+                    "api-unknown",
+                ])
+            });
+            eventually(|| !server.state.lock().unwrap().inputs.is_empty());
+            if failure == "timeout" {
+                assert_eq!(lab.status()["recent_sends"][0]["state"], "accepted");
+                assert_eq!(
+                    lab.request(json!({"op":"upgrade","exe":lab.path("unused")}))["error"],
+                    "upgrade_busy"
+                );
+                lab.json(&["keys", NAME, "text:still responsive"]);
+                assert!(
+                    !sending.is_finished(),
+                    "pen waited for the API receipt before serving other requests"
+                );
+            }
+            sending.join().unwrap()
+        });
+        let status = lab.status();
+        server.state.lock().unwrap().hold_input = false;
+        server.close_all();
+        lab.json(&["stop", NAME]);
+        let sent: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(out.status.code(), Some(3), "{failure}: {sent}");
+        assert_eq!(sent["error"], "not_delivered");
+        assert_eq!(sent.get("written"), Some(&Value::Null));
+        assert_eq!(sent.get("submitted"), Some(&Value::Null));
+        assert_eq!(sent["confirmed"], false);
+        assert_eq!(sent["request_id"], "api-unknown");
+        assert_eq!(status["recent_sends"][0]["state"], "unknown");
+        assert_eq!(
+            server.state.lock().unwrap().inputs.len(),
+            1,
+            "must never retry"
+        );
     }
 }
 

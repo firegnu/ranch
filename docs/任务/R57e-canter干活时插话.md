@@ -60,3 +60,15 @@
 ## 做完
 
 在本文件末尾追加「## 完成记录」（在你的分支里提交）：做了什么、验证了什么、拿主意的地方、没做的事、踩过的坑，各几句话。踩过的坑指试了不行、换了办法的，工具或环境的行为和预想不一样的；没有就写「没有」，不要凑。回复里只写这几样，加上有没有要主控决定的事。命令都在前台跑完，全部做完后，回复最后一行写 DONE。
+
+## 完成记录
+
+- 做了什么：先更新 DESIGN 和 CONTRACT，再在 Adapter 增加可选公开接口发送挂点。working canter 的插话从公开会话文件、server.json 找目标，由有截止时间的线程发送 input POST，pen 主循环收已完成的结果；成功直接凭 API 回执确认，草稿不变，等回执期间不挡 status、keys，upgrade 仍互斥。idle、普通 send、after 和其他适配器沿用旧路径；两份 corral 使用说明补上 canter。只改任务允许的文件。
+- 验证了什么：先加当前轮接收用例，确认旧实现以 9 unsupported_steer 失败；实现后四条合成服务端用例覆盖当前轮、下一轮（null／缺省 turnId）、发现／连接失败和 409 拒绝、断开／超时／损坏回执／500，并检查终端草稿不变、不重发、主循环可响应和升级互斥。旧 CLI 不识别 API 回执的兼容用例也先失败再通过。最后相关测试为 canter 的 4 条、原 steer 的 16 条通过，1 条合成程序入口按原样 ignored；末次补充 500 分类后单独复跑对应未知回执用例通过。原测试断言和超时均未放宽。
+- 全套检查：`cargo test --all-targets` 按要求只跑一次，在原 steer 用例失败后停止（没有公开会话文件的合成 canter，从原来的 9 变成了 7）；已恢复该情况下的 9，并在上述相关测试里确认原用例通过。该次全套未完成，后续 target 未执行，没有声称全套通过，也没有自行重跑。`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 各一次通过；之后只补了 5xx 的保守分类与对应测试、文档，已运行 cargo fmt 和该直接相关测试。建议主控合并前补跑完整检查。
+- 真实实测：只开一次 `ranch/test-r57e-steer`，独立临时 CORRAL_HOME 和临时 cwd，`role=test`、`CAIRN_DISABLE=1`，未带 `--yolo`。信任框按 down enter 选 Open restricted；Always ask 的 `/bin/sleep 30` 只选 Allow once。命令执行中 send --steer 回 `confirmed:true,queued_for_next_turn:false`（latency 0.009 秒）；公开会话快照只有一轮，shell 完成后同一轮出现插话用户消息，最终回复从原要求的 ORIGINAL_DONE 改为 R57E_STEERED_DONE。已 corral stop，退出 0，没有 remaining_sessions；未接触其他 agent。
+- 拿主意的地方：按任务授权选 `clientName:"corral"`、`queued_for_next_turn`；未写入／明确 4xx 拒绝用 7 steer_failed，开始写出后结果不明（含 5xx）用 3 not_delivered，禁止重送。为兼容 R57b CLI，在 steer 请求加 api_receipt:true；旧 CLI 对新 pen 的 working canter 仍在发送前报 9，新 CLI 对旧 pen 也仍报 9。无持久格式变更，paddock 不用动。没有需主控再定的实现方案；主控需决定是否补跑这次被“一次”限制留下的全套检查。
+- 没做的事：未改 canter、pony、paddock、派活技能和 HANDOFF；未升级任何真实 agent，未合并、推送、打包或部署。没有需要 canter 仓库配合的改动。
+- 踩过的坑：原 steer 的合成 canter 只发状态事件，没有公开会话文件，开放适配器后会走到发现失败而改变原退出码，已恢复原来的拒绝。R57b CLI 会忽略 API 成功回执、继续等归一化输入事件，所以增加显式回执识别声明，在旧 CLI 下拒绝发送。真实 canter 配置为 Always ask，sleep 也会弹单次批准框；确认只允许这一次后继续，未改变权限模式。
+
+临时目录已清理。工具拒绝了带 `-f` 的删除命令，改用不带强制选项的 `rm -r -- <本次临时目录>` 后成功；测试 agent 在删除前已停止。

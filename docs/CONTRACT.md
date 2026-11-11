@@ -6,7 +6,11 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 ## `corral send NAME TEXT --steer`（R57b）
 
-显式向当前任务插话。idle 时照常送；working 时按适配器的提交方式送入，首批支持 Claude Code、Codex、omp（Enter）。pi、Kimi、amp、canter、agy 和未知程序暂不支持 working 插话。不加 `--steer` 的 send、`send --after` 的行为、字段和退出码不变；`--steer` 与 `--after` 同用报 usage（1）。
+显式向当前任务插话。idle 时照常送；working 时按适配器的提交方式送入，支持 Claude Code、Codex、omp（Enter），R57e 起支持 canter（公开 input 接口）。pi、Kimi、amp、agy 和未知程序暂不支持 working 插话。不加 `--steer` 的 send、`send --after` 的行为、字段和退出码不变；`--steer` 与 `--after` 同用报 usage（1）。
+
+canter working 的 `--steer` 不往终端打字，未发送的草稿原样保留。成功沿用 `ok:true,name,instance,request_id,confirmed,merged_with_draft,latency`，其中 `confirmed:true` 只证明 canter 已接收，`merged_with_draft:false`；新增布尔字段 `queued_for_next_turn`：false 表示回执带 turnId、目标是当前轮，true 表示 turnId 缺省或为空、canter 改成下一轮排队，两者都退出 0。回执不代表模型已经消费；不等 input.removed、不补发。发现文件、连接或首次写入失败，或 canter 明确拒绝，报 7 `steer_failed`、`written:false,submitted:false,confirmed:false`，可等空闲重送；请求开始写出后超时、断开或回执无效，报 3 `not_delivered`、`written:null,submitted:null,confirmed:false`，带 request_id，可能已被接收，不能重送。recent_sends 分别记 `state:"written"`／`"rejected"`／`"unknown"`，并保留上述结果字段（成功还带 queued_for_next_turn），不作为幂等重发凭证。等待回执不阻塞 pen；连接最多等 500 ms，发送和回执共用 2 秒截止，不受 `--timeout` 的事件确认等待控制。旧 pen 管着的 canter 仍报 9。canter idle 的 `--steer` 和其他适配器继续按下面的终端路径处理。
+
+canter 的“明确拒绝”指完整的 4xx 错误回执；5xx 内部错误不能证明没有接收，按上述 3 `not_delivered` 处理。
 
 `--force` 仍只跳过最近 30 秒真人输入检查，不能跳过状态、暂停、能力或提交前检查。`--timeout` 仍是写出后的输入确认等待（默认 15 秒），不含提交前最多额外 3 秒的空隙等待，不超时补发。working 时只送普通正文：首个非空白字符为 `/` 或 `!`、含换行／制表符之外的控制字符，报 usage（1）；终端未开启 bracketed paste 则报 unsupported（9）。idle 正文规则沿用普通 send。
 
@@ -31,13 +35,13 @@ corral 的基础约定（命令、参数、JSON 输出、退出码、`~/.corral`
 
 新版 `status.capabilities.steer:1` 表示 pen 支持这个操作，不代表每个适配器都支持 working 插话。`status.recent_sends` 仍只保留最近 10 条；插话提交前被挡的记录为 `state:"draft",written:true,submitted:false,reason:<原因>`，用 request_id 对应。入队后、正文前被挡为 `state:"rejected",written:false`，入队前拒绝不记发送记录；正文写失败被提交检查发现时 written 为 null。成功写出的记录仍为 written；这些记录不是模型消费回执，也不是幂等重发凭证。
 
-新 CLI 先查能力，再用独立 pen 操作 `steer`；能力缺失或请求遇到旧 pen 的 bad_op 都报 unsupported，不退回 send／keys。旧 CLI 对 `--steer` 报 usage（1）；旧 CLI／新 pen 的普通 send 保持原样。没有新事件格式、持久文件或 turn_started 语义变更；wait、reply、after 仍按现有轮次观察。
+新 CLI 先查能力，再用独立 pen 操作 `steer`；能力缺失或请求遇到旧 pen 的 bad_op 都报 unsupported，不退回 send／keys。R57b 之前的 CLI 对 `--steer` 报 usage（1）；R57e 的 CLI 额外带 `api_receipt:true`，R57b 的 CLI 不带，新 pen 对它的 working canter 插话在发送前报 9 `unsupported_steer`。没有公开会话文件的 canter 也仍报 9 `unsupported_steer`，本次未写入。旧 CLI／新 pen 的普通 send 保持原样。没有新事件格式、持久文件或 turn_started 语义变更；wait、reply、after 仍按现有轮次观察。
 
 7 只表示本次没写入，等空闲可重送；3 表示已写入，不能重送。reason 为 state_changed 表示证据变化（包括 working 一直有事件到等待截止），与不可输入的 not_idle 分开。
 
 正文前、提交前复查只缩小误按窗口：复查后弹框、钩子滞后、未识别菜单仍可能抢走提交键，见 DESIGN §7。旧做法在审查本机日志估计约 2%–12% 的插话窗口会遇到新事件，这不是改后概率；等空隙会让留草稿少很多，但等待期间弹框的机会略多一点，用户 11-09 已接受。连续插话逐条等返回；留下草稿后，下一次 send 会将它合并提交，必须先让人核对或清掉；确认未知时也不能重送。
 
-对 paddock：兼容新增；现有调用不用改，插话入口在 paddock 自己的任务接。pony 和 send --after 的提醒仍等接收者空闲，不因此自动插话。
+对 paddock：兼容新增；现有调用不用改，插话入口在 paddock 自己的任务接。R57e 沿用 capabilities.steer:1，现有插话入口即可给 canter 送话；queued_for_next_turn 可由 paddock 后续展示。pony 和 send --after 的提醒仍等接收者空闲，不因此自动插话。
 
 ## stop 与 ls 的退出记录（R51）
 
