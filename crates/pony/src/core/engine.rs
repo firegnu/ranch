@@ -2387,23 +2387,26 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
             .as_ref()
             .or(request.file.as_ref())
             .or(status.command.as_ref());
-        let detail = file_change
+        let content = file_change
             .as_ref()
-            .map(|(text, _)| (text.as_str(), false))
-            .or_else(|| detail.map(|d| (d.text.as_str(), d.truncated)));
-        let content = detail.map_or("内容无法核对".into(), |(text, truncated)| {
-            let fence =
-                "`".repeat((text.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1).max(3));
-            format!(
-                "{fence}\n{}\n{fence}{}",
-                text,
-                if truncated {
-                    "\n内容不完整，请回电脑看"
-                } else {
-                    ""
-                }
-            )
-        });
+            .map(|(text, _)| text.clone())
+            .unwrap_or_else(|| {
+                detail.map_or("内容无法核对".into(), |detail| {
+                    let text = &detail.text;
+                    let fence = "`".repeat(
+                        (text.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1).max(3),
+                    );
+                    format!(
+                        "{fence}\n{}\n{fence}{}",
+                        text,
+                        if detail.truncated {
+                            "\n内容不完整，请回电脑看"
+                        } else {
+                            ""
+                        }
+                    )
+                })
+            });
         let reason = file_change
             .as_ref()
             .and_then(|(_, reason)| *reason)

@@ -294,49 +294,114 @@ pub(super) fn canter_file_change(status: &Status) -> Option<(String, Option<&'st
         _ => return None,
     };
     let file = request.file.as_ref();
-    let text = format!(
-        "路径：{}\n{label}：\n{}",
-        file.map_or("无法核对", |f| f.text.as_str()),
-        change.map_or("无法核对", |c| if c.text.is_empty() {
-            "（空内容）"
+    let multiline_path = file.is_some_and(|f| {
+        f.text
+            .contains(['\r', '\n', '\t', '\u{0085}', '\u{2028}', '\u{2029}'])
+    });
+    let path = file.map_or("路径（无法核对）".into(), |f| {
+        let path = if multiline_path {
+            f.text.escape_debug().to_string()
         } else {
-            &c.text
-        }),
-    );
-    let reason = match (file, change) {
-        (Some(file), Some(change)) if !file.text.trim().is_empty() => {
-            if file.truncated || change.truncated {
-                Some("内容不完整，没给允许按钮；请回电脑处理")
-            } else if file.text.chars().count() + change.text.chars().count() > 1000 {
-                Some("路径加改动内容超过 1000 字，没给允许按钮；请回电脑处理")
-            } else if !readable_text(&text) {
-                Some("路径或改动内容含不可读字符，没给允许按钮；请回电脑处理")
-            } else if request.tool.as_deref() == Some("edit") {
-                let edits = serde_json::from_str::<serde_json::Value>(&change.text).ok();
-                match edits.as_ref().and_then(|v| v.as_array()) {
-                    Some(edits)
-                        if !edits.is_empty()
-                            && edits.iter().all(|e| {
-                                e["oldText"].as_str().is_some_and(|s| !s.is_empty())
-                                    && e["newText"].is_string()
-                            }) =>
-                    {
-                        (!edits.iter().all(|e| {
-                            ["oldText", "newText"]
-                                .iter()
-                                .all(|key| readable_text(e[key].as_str().unwrap()))
-                        }))
-                        .then_some("改动内容含不可读字符，没给允许按钮；请回电脑处理")
-                    }
-                    _ => Some("改动内容无法核对，没给允许按钮；请回电脑处理"),
-                }
+            f.text.clone()
+        };
+        let ticks = "`".repeat(path.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1);
+        let padding = if path.starts_with(['`', ' ']) || path.ends_with(['`', ' ']) {
+            " "
+        } else {
+            ""
+        };
+        format!(
+            "路径{}：{ticks}{padding}{path}{padding}{ticks}",
+            if multiline_path {
+                "（转义显示）"
             } else {
-                None
+                ""
             }
+        )
+    });
+    let content = change.map_or(format!("{label}（无法核对）"), |c| {
+        let header = format!("{label}（{} 字）", c.text.chars().count());
+        if c.text.is_empty() {
+            header
+        } else {
+            let fence = "`".repeat(
+                (c.text
+                    .split(|ch| ch != '`')
+                    .map(str::len)
+                    .max()
+                    .unwrap_or(0)
+                    + 1)
+                .max(3),
+            );
+            format!("{header}\n{fence}\n{}\n{fence}", c.text)
         }
-        _ => Some("路径或改动内容无法核对，没给允许按钮；请回电脑处理"),
+    });
+    let text = format!("{path}\n{content}");
+    let reason = if multiline_path {
+        Some("路径必须是单行，不能含换行或制表符，没给允许按钮；请回电脑处理")
+    } else {
+        match (file, change) {
+            (Some(file), Some(change)) if !file.text.trim().is_empty() => {
+                if file.truncated || change.truncated {
+                    Some("内容不完整，没给允许按钮；请回电脑处理")
+                } else if file.text.chars().count() + change.text.chars().count() > 1000 {
+                    Some("路径加改动内容超过 1000 字，没给允许按钮；请回电脑处理")
+                } else if !readable_text(&text) {
+                    Some("路径或改动内容含不可读字符，没给允许按钮；请回电脑处理")
+                } else if request.tool.as_deref() == Some("edit") {
+                    let edits = serde_json::from_str::<serde_json::Value>(&change.text).ok();
+                    match edits.as_ref().and_then(|v| v.as_array()) {
+                        Some(edits)
+                            if !edits.is_empty()
+                                && edits.iter().all(|e| {
+                                    e["oldText"].as_str().is_some_and(|s| !s.is_empty())
+                                        && e["newText"].is_string()
+                                }) =>
+                        {
+                            if !edits.iter().all(|e| {
+                                ["oldText", "newText"]
+                                    .iter()
+                                    .all(|key| readable_text(e[key].as_str().unwrap()))
+                            }) {
+                                Some("改动内容含不可读字符，没给允许按钮；请回电脑处理")
+                            } else {
+                                (!edits.iter().all(|e| readable_file_whitespace(e["newText"].as_str().unwrap())))
+                                .then_some("改动内容的连续空行或非缩进空白过长，没给允许按钮；请回电脑处理")
+                            }
+                        }
+                        _ => Some("改动内容无法核对，没给允许按钮；请回电脑处理"),
+                    }
+                } else {
+                    (!readable_file_whitespace(&change.text))
+                        .then_some("改动内容的连续空行或非缩进空白过长，没给允许按钮；请回电脑处理")
+                }
+            }
+            _ => Some("路径或改动内容无法核对，没给允许按钮；请回电脑处理"),
+        }
     };
     Some((text, reason))
+}
+
+fn readable_file_whitespace(text: &str) -> bool {
+    let mut blank_lines = 0;
+    for line in text.split_terminator(['\n', '\u{2028}', '\u{2029}']) {
+        let body = line.trim_start_matches(char::is_whitespace);
+        if body.is_empty() {
+            blank_lines += 1;
+            if blank_lines > 2 {
+                return false;
+            }
+        } else {
+            blank_lines = 0;
+            if body
+                .split(|c: char| !c.is_whitespace())
+                .any(|run| run.chars().count() > 4)
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn canter_prompt(status: &Status) -> Option<Prompt> {

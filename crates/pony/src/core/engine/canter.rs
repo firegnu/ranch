@@ -245,6 +245,7 @@ impl Engine {
             Err(e) => {
                 self.log.push(format!("corral {}", safe_code(&e.code)));
                 match e.code.as_str() {
+                    "state_check_failed" => UNVERIFIABLE,
                     "request_changed" => "已经在别处答过，或已换了一个框，没再答",
                     "unsupported" | "bad_op" | "usage" => {
                         "无法核对 canter 的框，没按；请回电脑处理"

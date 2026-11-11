@@ -153,3 +153,14 @@
 - **验证了什么**：七条建议新增 8 条针对测试（第 7 条 corral、pony 各一条），均先看到目标行为缺失再改到通过；第 1、3 条均保留明确失败复现。直接相关回归：pony core **179 passed**（含原 Claude Code、Kimi 流程）；最后补上换框竞态后，重跑 pony canter 子集 **16 passed**；pony lib **46 passed**；corral canter 集成 **22 passed、1 ignored**，steer 集成 **16 passed、1 ignored**，canter 单元 **11 passed**，这些回归均 0 failed。`cargo clippy --all-targets -- -D warnings` 只跑一次，通过；`cargo fmt` 只跑一次，完成格式化；`git diff --check` 通过。Cargo 全程用 `.target/r58`，所有命令前台跑完；未重跑全套。回归日志在 `/tmp/r58-review-validation.MEXCcr/`，不进仓库。
 - **踩过的坑**：损坏 cursor 的测试最初从 CLI 发起，会先触发 CLI 自己的状态预检，没到 pen 的 answer；改为直接走公开 pen 协议才复现并验证本条要保护的入口。线程测试补上合成首轮结束后，才验证第二条消息发送。这些夹具问题不当成功能 RED 证据。
 - **没做的事**：本轮未跑全套、未开真实 agent、未碰真实 Slack 或 pony 服务，未部署、合并、推送。没有待主控决定的实现问题。
+
+### 复核后修改
+
+2026-11-11，按主控采纳的复核意见第 1–3 条修改；「可以不改」三条保持原样。
+
+- **路径与内容分开**：write/edit 路径含 CR、LF、Tab、U+0085、U+2028、U+2029 时，只给拒绝并说明路径必须单行；这类无效路径转义显示。路径独立一行，用行内代码放在内容代码块外；代码块只显示实际内容，真空内容写「写入内容（0 字）」，缺字段说明也放块外，不再和字面的「（空内容）」混同。新增测试先复现带换行的路径仍有允许按钮，再覆盖六种字符、write/edit、正常路径、空／字面内容和缺字段。
+- **文件内容空白门槛**：write 内容及 edit 解码后的 newText 连续空行超过 2 行，或去掉每行行首缩进后仍有超过 4 个连续空白，只给拒绝并说明。空白行计入连续空行，LF、U+2028、U+2029 都按行边界处理；正常空格／Tab 缩进保留。新增测试先复现三行空行仍允许，再覆盖 2／3 行、4／5 个空白、长串空白、Unicode 行分隔和正常缩进；oldText 不加这条限制，计划与 shell 保持既有规则。
+- **状态核对失败的说法**：state_check_failed 单独映射到「无法核对 canter 的框，没答；请回电脑处理」；CONTRACT 写明退出码 1，状态算不出、回答未发出。既有回执测试增加该错误码，先确认原来错误地显示结果不明，再验证修正提示、连点和重启都不重答。
+- **验证了什么**：两条新增测试及扩展的回执用例均先确认目标缺陷，再修到通过。最终 `cargo test -p pony --test core canter_` **18 passed**、`approval_` **28 passed**、`needs_you_` **7 passed**，均 0 failed、0 ignored（筛选组之间有重叠）；覆盖 canter 的新行为及 Claude Code、Kimi 的直接相关批准／显示回归。`cargo clippy --all-targets -- -D warnings`、`cargo fmt` 各只跑一次，均退出 0；`git diff --check` 通过。全部 Cargo 命令用 `.target/r58`，命令均前台跑完，没有重跑全套。日志只留 `/tmp/r58-recheck-validation.Ini6S7/`，不进仓库。
+- **拿主意与踩坑**：沿用已有确认框的前 200 字与未显示全提示，路径和内容使用同一份分隔后的正文。edit 的 600 个换行经 JSON 转义已先超过 1000 字门槛，测试夹具改用仍低于该门槛的 200 个换行，专门验证新增空白规则；write 仍测 600 个换行，未改上限或放宽断言。
+- **文档、范围及影响**：DESIGN、CONTRACT、pony README 已同步。本轮只改 pony 内部核对、显示和提示，公开命令及字段不变，paddock 不用动。未改复核「可以不改」三条，未接 apply_patch，未跑全套，未开真实 agent，未碰真实 Slack 或 pony 服务，未部署、合并、推送。没有待主控决定的事。

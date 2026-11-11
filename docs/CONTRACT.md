@@ -398,6 +398,7 @@ corral answer NAME --instance INSTANCE --request ID --approve-plan
 - 明确没答上退出 **7**：`answer_failed`（发现／连接／首次写失败，或带 code/message 的完整 HTTP 4xx 拒绝）、`request_changed`（框或主会话换了）、`restarted`（实例变了）、`answer_busy`。发送前拒绝及 answer_failed 带 `written:false,submitted:false,confirmed:false`；restarted 来自既有实例保护，可能不带这三个字段。
 - 开始写后超时、断开、5xx、损坏回执或 CLI 丢失 pen 回执退出 **3** `not_delivered`：`written:null,submitted:null,confirmed:false`，结果不明，**不能重答**。
 - 不支持的 agent、旧 pen、没有可核对的公开会话／请求退出 **9** `unsupported`；近期人工输入 **8** `human_active`，暂停 **10** `paused`，参数错 **1** `usage`。这些都不回退按键。
+- 退出 **1** 的 `state_check_failed` 表示 pen 算不出状态、回答没有发出，带 `written:false,submitted:false,confirmed:false`；pony 说明「无法核对 canter 的框，没答；请回电脑处理」，不报结果不明。
 
 请求线程的连接最多等 500 ms，发送和读取回执共用 2 秒截止；pen 保持响应，线程未收回时拒绝升级。corral 不自动重试；pony 在发送前存盘消费记号，连点／重启不重答，already_resolved 或框消失时撤按钮并说明已在别处答过。线程多行答案明确未送，请改一行；文字原样发送，原提醒仅展示前 200 字，全文在用户原线程消息里。拒绝／打断仍沿用 R56c 的一次 Esc 和单框核对。
 
