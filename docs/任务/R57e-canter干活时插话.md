@@ -72,3 +72,12 @@
 - 踩过的坑：原 steer 的合成 canter 只发状态事件，没有公开会话文件，开放适配器后会走到发现失败而改变原退出码，已恢复原来的拒绝。R57b CLI 会忽略 API 成功回执、继续等归一化输入事件，所以增加显式回执识别声明，在旧 CLI 下拒绝发送。真实 canter 配置为 Always ask，sleep 也会弹单次批准框；确认只允许这一次后继续，未改变权限模式。
 
 临时目录已清理。工具拒绝了带 `-f` 的删除命令，改用不带强制选项的 `rm -r -- <本次临时目录>` 后成功；测试 agent 在删除前已停止。
+
+## 主控审查
+
+- 2026-11-11，ranch/main 审查 `3ac117e`。开发 agent 实际名字是 `ranch/dev-r57e-1`（开的时候带了 `--unique`）。
+- 「怎么算做完」逐条达到：canter working 时 `--steer` 走公开 input 接口，四种结果（当前轮、下一轮 `queued_for_next_turn`、没写入 7 `steer_failed`、回执未知 3 `not_delivered`）都有合成服务端测试；不碰输入框草稿；别家插话、普通 send、`send --after` 不变；真实测试 canter 插话确认并照做。「不要做」一件没做。
+- 主控在分支上重跑 `cargo test --all-targets`：550 通过、0 失败、19 忽略（补上开发时被「一次」限制没跑完的全套）；`cargo clippy --all-targets -- -D warnings`、`cargo fmt --check` 通过。
+- 取舍逐条表态：`clientName:"corral"`、`queued_for_next_turn`、4xx 算明确拒绝（7）、5xx 和写出后断开算回执未知（3）、`api_receipt:true` 挡住 R57b CLI，均同意。
+- 建议改（不返工）：检查时 working、请求到达前那一轮刚结束时，canter 用这句话开新一轮，回执带新轮 turnId，报 `queued_for_next_turn:false`；话照样送到。
+- 结果：一次过
