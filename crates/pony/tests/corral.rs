@@ -84,6 +84,37 @@ fn exercise_protocol_in_child() {
         assert!(process.answer_question("repo/kimi", &keys).is_err());
     }
     assert_eq!(fs::read(root.join("calls")).unwrap(), before);
+    fs::write(
+        &response,
+        r#"{"ok":true,"already_resolved":false,"confirmed":true}"#,
+    )
+    .unwrap();
+    for (answer, tail) in [
+        (
+            pony::corral::Answer::Option("Blue".into()),
+            "8:--option4:Blue",
+        ),
+        (
+            pony::corral::Answer::Text("hello".into()),
+            "6:--text5:hello",
+        ),
+        (pony::corral::Answer::AllowOnce, "12:--allow-once"),
+        (pony::corral::Answer::ApprovePlan, "14:--approve-plan"),
+    ] {
+        assert!(
+            !process
+                .resolve_request("repo/canter", "i1", "r1", &answer)
+                .unwrap()
+                .already_resolved
+        );
+        assert!(
+            fs::read_to_string(root.join("calls"))
+                .unwrap()
+                .contains(&format!(
+                    "6:answer11:repo/canter10:--instance2:i19:--request2:r1{tail}\n"
+                ))
+        );
+    }
     assert!(
         fs::read_to_string(root.join("calls"))
             .unwrap()

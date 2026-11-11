@@ -225,11 +225,12 @@ pub(super) fn stale(old: &Status, status: &Status) -> Option<&'static str> {
 }
 
 pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<ApprovalButton>> {
-    if !matches!(status.kind.as_deref(), Some("claude" | "kimi"))
+    if !matches!(status.kind.as_deref(), Some("claude" | "kimi" | "canter"))
         || status.state != "blocked"
         || status.paused
         || status.state_started.is_none()
-        || (status.kind.as_deref() != Some("kimi") && status.last_output.is_none())
+        || (!matches!(status.kind.as_deref(), Some("kimi" | "canter"))
+            && status.last_output.is_none())
         || status.name.chars().count() + "允许  这一次？".chars().count() > 100
         || status
             .last_human_input
@@ -237,7 +238,9 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
     {
         return Ok(None);
     }
-    let Some(prompt) = (if status.kind.as_deref() == Some("kimi") {
+    let Some(prompt) = (if status.kind.as_deref() == Some("canter") {
+        canter_prompt(status)
+    } else if status.kind.as_deref() == Some("kimi") {
         kimi_prompt(status)
     } else {
         screen.and_then(|s| recognize(status, s))
@@ -245,7 +248,9 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
         return Ok(None);
     };
     let length = prompt.command.chars().count();
-    let note = if status.last_tool.as_deref() != Some("Bash") {
+    let note = if status.last_tool.as_deref() != Some("Bash")
+        && status.kind.as_deref() != Some("canter")
+    {
         "\n读屏会吞掉空格，看不清请回电脑".into()
     } else if length > 200 {
         format!("\n未显示全，共 {length} 字；看不全请回电脑")
@@ -279,6 +284,169 @@ pub(super) fn offer(status: &Status, screen: Option<&str>) -> Result<Option<Appr
 
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+pub(super) fn canter_file_change(status: &Status) -> Option<(String, Option<&'static str>)> {
+    let request = status.canter_request()?;
+    let (change, label) = match request.tool.as_deref()? {
+        "write" => (request.content.as_ref(), "写入内容"),
+        "edit" => (request.edits.as_ref(), "替换内容（oldText → newText）"),
+        _ => return None,
+    };
+    let file = request.file.as_ref();
+    let multiline_path = file.is_some_and(|f| {
+        f.text
+            .contains(['\r', '\n', '\t', '\u{0085}', '\u{2028}', '\u{2029}'])
+    });
+    let path = file.map_or("路径（无法核对）".into(), |f| {
+        let path = if multiline_path {
+            f.text.escape_debug().to_string()
+        } else {
+            f.text.clone()
+        };
+        let ticks = "`".repeat(path.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1);
+        let padding = if path.starts_with(['`', ' ']) || path.ends_with(['`', ' ']) {
+            " "
+        } else {
+            ""
+        };
+        format!(
+            "路径{}：{ticks}{padding}{path}{padding}{ticks}",
+            if multiline_path {
+                "（转义显示）"
+            } else {
+                ""
+            }
+        )
+    });
+    let content = change.map_or(format!("{label}（无法核对）"), |c| {
+        let header = format!("{label}（{} 字）", c.text.chars().count());
+        if c.text.is_empty() {
+            header
+        } else {
+            let fence = "`".repeat(
+                (c.text
+                    .split(|ch| ch != '`')
+                    .map(str::len)
+                    .max()
+                    .unwrap_or(0)
+                    + 1)
+                .max(3),
+            );
+            format!("{header}\n{fence}\n{}\n{fence}", c.text)
+        }
+    });
+    let text = format!("{path}\n{content}");
+    let reason = if multiline_path {
+        Some("路径必须是单行，不能含换行或制表符，没给允许按钮；请回电脑处理")
+    } else {
+        match (file, change) {
+            (Some(file), Some(change)) if !file.text.trim().is_empty() => {
+                if file.truncated || change.truncated {
+                    Some("内容不完整，没给允许按钮；请回电脑处理")
+                } else if file.text.chars().count() + change.text.chars().count() > 1000 {
+                    Some("路径加改动内容超过 1000 字，没给允许按钮；请回电脑处理")
+                } else if !readable_text(&text) {
+                    Some("路径或改动内容含不可读字符，没给允许按钮；请回电脑处理")
+                } else if !readable_command(&file.text) {
+                    Some("路径的连续空白超过 4 个，没给允许按钮；请回电脑处理")
+                } else if request.tool.as_deref() == Some("edit") {
+                    let edits = serde_json::from_str::<serde_json::Value>(&change.text).ok();
+                    match edits.as_ref().and_then(|v| v.as_array()) {
+                        Some(edits)
+                            if !edits.is_empty()
+                                && edits.iter().all(|e| {
+                                    e["oldText"].as_str().is_some_and(|s| !s.is_empty())
+                                        && e["newText"].is_string()
+                                }) =>
+                        {
+                            if !edits.iter().all(|e| {
+                                ["oldText", "newText"]
+                                    .iter()
+                                    .all(|key| readable_text(e[key].as_str().unwrap()))
+                            }) {
+                                Some("改动内容含不可读字符，没给允许按钮；请回电脑处理")
+                            } else {
+                                edits.iter().find_map(|e| {
+                                    file_whitespace_reason(e["newText"].as_str().unwrap())
+                                })
+                            }
+                        }
+                        _ => Some("改动内容无法核对，没给允许按钮；请回电脑处理"),
+                    }
+                } else {
+                    file_whitespace_reason(&change.text)
+                }
+            }
+            _ => Some("路径或改动内容无法核对，没给允许按钮；请回电脑处理"),
+        }
+    };
+    Some((text, reason))
+}
+
+fn file_whitespace_reason(text: &str) -> Option<&'static str> {
+    let mut blank_lines = 0;
+    for line in text.split_terminator(['\n', '\u{2028}', '\u{2029}']) {
+        let indent: usize = line
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .map(|c| if c == '\t' { 4 } else { 1 })
+            .sum();
+        if indent > 32 {
+            return Some(
+                "改动内容的行首缩进超过 32 个空格（Tab 按 4 个算），没给允许按钮；请回电脑处理",
+            );
+        }
+        let body = line.trim_start_matches(char::is_whitespace);
+        blank_lines = if body.is_empty() { blank_lines + 1 } else { 0 };
+        if blank_lines > 2
+            || body
+                .split(|c: char| !c.is_whitespace())
+                .any(|run| run.chars().count() > 4)
+        {
+            return Some("改动内容的连续空行或非缩进空白过长，没给允许按钮；请回电脑处理");
+        }
+    }
+    None
+}
+
+fn canter_prompt(status: &Status) -> Option<Prompt> {
+    let request = status.canter_request()?;
+    let (detail, label) = match request.kind.as_str() {
+        "approval" if request.available_decisions.iter().any(|d| d == "accept") => {
+            let detail = match request.tool.as_deref()? {
+                "shell" => status.command.as_ref()?,
+                "write" | "edit" => {
+                    let (text, reason) = canter_file_change(status)?;
+                    return reason.is_none().then_some(Prompt {
+                        option: 0,
+                        command: text,
+                        label: "允许这一次",
+                    });
+                }
+                _ => return None,
+            };
+            (detail, "允许这一次")
+        }
+        "planApproval" => (request.plan.as_ref()?, "批准，之后的操作仍逐个问"),
+        _ => return None,
+    };
+    if detail.truncated
+        || detail.text.trim().is_empty()
+        || detail.text.chars().count() > 1000
+        || if request.kind == "planApproval" {
+            !readable_text(&detail.text)
+        } else {
+            !readable_command(&detail.text)
+        }
+    {
+        return None;
+    }
+    Some(Prompt {
+        option: 0,
+        command: detail.text.clone(),
+        label,
+    })
 }
 
 fn kimi_prompt(status: &Status) -> Option<Prompt> {
@@ -340,6 +508,10 @@ fn readable_command(text: &str) -> bool {
     {
         return false;
     }
+    readable_text(text)
+}
+
+fn readable_text(text: &str) -> bool {
     // Unicode 17.0 General_Category=Cf, including supplementary-plane formats.
     // https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt
     !text.chars().any(|c| {

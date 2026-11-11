@@ -199,6 +199,9 @@ static TEST_CHATS: &[&dyn Chat] = &[&MemoryChat];
 
 #[derive(Default)]
 struct FakeCorral {
+    answer_store: Option<std::path::PathBuf>,
+    answers: Vec<(String, String, String, corral::Answer)>,
+    answer_result: Option<corral::Result<corral::Answered>>,
     list_error: Option<corral::Failure>,
     status_failure_after: Option<usize>,
     status_change_after: Option<(usize, serde_json::Value)>,
@@ -220,6 +223,34 @@ struct FakeCorral {
     question_keys: Vec<(String, Vec<corral::QuestionKey>)>,
 }
 impl Corral for FakeCorral {
+    fn resolve_request(
+        &mut self,
+        name: &str,
+        instance: &str,
+        request: &str,
+        answer: &corral::Answer,
+    ) -> corral::Result<corral::Answered> {
+        if let Some(path) = &self.answer_store {
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            assert!(
+                saved["state"]["buttons"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|b| b["used"] == true
+                        && b["outcome"]
+                            .as_str()
+                            .is_some_and(|s| s.contains("结果不明"))),
+                "must persist before invoking corral"
+            );
+        }
+        self.answers
+            .push((name.into(), instance.into(), request.into(), answer.clone()));
+        self.answer_result.take().unwrap_or(Ok(corral::Answered {
+            already_resolved: false,
+        }))
+    }
     fn answer_question(&mut self, name: &str, keys: &[corral::QuestionKey]) -> corral::Result<()> {
         self.question_keys.push((name.into(), keys.to_vec()));
         Ok(())
@@ -3313,6 +3344,827 @@ fn kimi_approval_refuses_dangerous_incomplete_non_bash_and_changed_commands() {
     f.click(&posted, 10.);
     f.step(10.);
     assert!(f.corral.approvals.is_empty());
+}
+
+#[test]
+fn canter_closed_question_thread_sends_this_and_later_messages_as_ordinary_chat() {
+    for truncated in [false, true] {
+        for fields in [
+            serde_json::json!({"state":"idle","interaction":null}),
+            serde_json::json!({"state":"working","interaction":null}),
+            serde_json::json!({"interaction":{"kind":"question","count":1,"running":true,"request":{"id":"r2","kind":"userInput"}}}),
+            serde_json::json!({"instance":"replacement"}),
+        ] {
+            let mut f = canter_question_with_truncation(truncated);
+            let posted = f.memory.borrow().posted[0].clone();
+            status_fields(
+                f.corral.agents.get_mut("paddock/dev").unwrap(),
+                fields.clone(),
+            );
+            f.message("first", Some(&posted.id), "first\nordinary message", false);
+            f.step(10.);
+            assert!(f.corral.answers.is_empty() && f.corral.escapes.is_empty());
+            assert!(
+                f.engine
+                    .store
+                    .state()
+                    .threads
+                    .iter()
+                    .find(|t| t.address.thread == posted.id)
+                    .unwrap()
+                    .question
+                    .is_none(),
+                "{fields}, truncated={truncated}"
+            );
+            assert!(
+                f.engine
+                    .store
+                    .state()
+                    .pending
+                    .iter()
+                    .all(|p| !p.question_answer)
+            );
+            status_fields(
+                f.corral.agents.get_mut("paddock/dev").unwrap(),
+                serde_json::json!({"state":"idle","interaction":null}),
+            );
+            f.step(12.);
+            f.step(14.);
+            assert_eq!(
+                f.corral.sent,
+                [("paddock/dev".into(), "first\nordinary message".into())]
+            );
+            let s = f.corral.agents.get_mut("paddock/dev").unwrap();
+            s.turn_started = Some(13.);
+            s.last_event_at = Some(15.);
+            f.corral.replies.insert(
+                "paddock/dev".into(),
+                Ok(Reply {
+                    instance: s.instance.clone(),
+                    text: "done".into(),
+                    at: 15.,
+                }),
+            );
+            f.step(16.);
+            f.step(18.);
+            f.restart();
+            f.message("second", Some(&posted.id), "second ordinary message", false);
+            f.step(20.);
+            f.step(22.);
+            assert_eq!(
+                f.corral.sent,
+                [
+                    ("paddock/dev".into(), "first\nordinary message".into()),
+                    ("paddock/dev".into(), "second ordinary message".into())
+                ]
+            );
+            assert!(f.corral.answers.is_empty() && f.corral.escapes.is_empty());
+        }
+    }
+}
+
+#[test]
+fn canter_rejecting_an_old_thread_answer_preserves_the_new_request_controls() {
+    let mut f = canter_question();
+    let old = f.memory.borrow().posted[0].clone();
+    let old_status = f.corral.agents["paddock/dev"].clone();
+    let new_fields = serde_json::json!({"interaction":{"kind":"question","count":1,"running":true,"request":{"id":"r2","kind":"userInput"}}});
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        new_fields.clone(),
+    );
+    f.step(6.);
+    let new = f
+        .memory
+        .borrow()
+        .posted
+        .iter()
+        .find(|p| !p.choices.is_empty())
+        .unwrap()
+        .clone();
+    assert_ne!(old.id, new.id);
+    // The front request changes after routing the old thread, before submission.
+    f.corral.agents.insert("paddock/dev".into(), old_status);
+    f.corral.status_change_after = Some((1, new_fields));
+    f.message("old-answer", Some(&old.id), "红", false);
+    f.step(10.);
+    assert!(f.corral.answers.is_empty());
+    assert!(
+        f.engine
+            .store
+            .state()
+            .pending
+            .iter()
+            .any(|p| p.address.thread == old.id && p.text == "红" && !p.question_answer)
+    );
+    assert_eq!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .find(|p| p.id == new.id)
+            .unwrap()
+            .choices
+            .len(),
+        1
+    );
+    f.click(&new, 12.);
+    f.step(12.);
+    assert_eq!(f.corral.answers[0].2, "r2");
+}
+
+#[test]
+fn canter_unverifiable_and_resolved_requests_report_distinct_reasons() {
+    for state in ["unknown", "starting", "exiting"] {
+        let mut f = canter_question();
+        let posted = f.memory.borrow().posted[0].clone();
+        f.corral.agents.get_mut("paddock/dev").unwrap().state = state.into();
+        f.message("reply", Some(&posted.id), "first\nsecond", false);
+        f.step(10.);
+        assert!(
+            f.texts()
+                .contains("无法核对 canter 的框，没答；请回电脑处理"),
+            "{state}: {}",
+            f.texts()
+        );
+        assert!(!f.texts().contains("已经在别处答过") && !f.texts().contains("请改成一行"));
+        assert!(f.corral.answers.is_empty() && f.corral.sent.is_empty());
+    }
+    let mut f = canter_question();
+    f.corral.answer_result = Some(Ok(corral::Answered {
+        already_resolved: true,
+    }));
+    let posted = f.memory.borrow().posted[0].clone();
+    f.click(&posted, 10.);
+    f.step(10.);
+    assert!(
+        f.texts()
+            .contains("这个框已经处理过（别处答过或已取消），没再答")
+    );
+}
+
+#[test]
+fn canter_thread_exact_option_letters_and_labels_use_options_other_text_is_unchanged() {
+    for (text, expected) in [
+        ("B", corral::Answer::Option("蓝".into())),
+        ("蓝", corral::Answer::Option("蓝".into())),
+        ("A", corral::Answer::Option("红".into())),
+        ("B please", corral::Answer::Text("B please".into())),
+        (" 蓝 ", corral::Answer::Text(" 蓝 ".into())),
+        ("C", corral::Answer::Text("C".into())),
+    ] {
+        let mut f = canter_question();
+        let posted = f.memory.borrow().posted[0].clone();
+        f.message("answer", Some(&posted.id), text, false);
+        f.step(10.);
+        assert_eq!(f.corral.answers[0].3, expected, "{text:?}");
+        assert!(f.corral.sent.is_empty() && f.corral.escapes.is_empty());
+    }
+}
+
+#[test]
+fn canter_plan_allows_markdown_whitespace_but_checks_controls_and_size() {
+    for (text, allow) in [
+        (
+            "Read notes.\n\n    - Summarize\n        - Reply\t\t\t\t\tOK".into(),
+            true,
+        ),
+        ("x".repeat(1000), true),
+        ("x".repeat(1001), false),
+        ("Read\u{202e}notes".into(), false),
+        ("Read\u{0007}notes".into(), false),
+    ] {
+        let mut f = canter_approval(
+            "planApproval",
+            serde_json::json!({"id":"r1","kind":"planApproval","plan":{"text":text,"truncated":false}}),
+        );
+        let mut posted = f.memory.borrow().posted[0].clone();
+        posted.buttons.retain(|b| b.confirm.is_some());
+        assert_eq!(!posted.buttons.is_empty(), allow, "{text:?}");
+        if allow {
+            f.click(&posted, 10.);
+            f.step(10.);
+            assert_eq!(f.corral.answers[0].3, corral::Answer::ApprovePlan);
+        }
+    }
+}
+
+#[test]
+fn canter_file_paths_must_be_single_line_and_stay_outside_content_blocks() {
+    for tool in ["write", "edit"] {
+        for separator in ['\n', '\r', '\t', '\u{0085}', '\u{2028}', '\u{2029}'] {
+            let path = format!("notes.txt{separator}写入内容：hello");
+            let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":path,"truncated":false},"available_decisions":["accept"]});
+            request["content"] = serde_json::json!({"text":"hello","truncated":false});
+            request["edits"] = serde_json::json!({"text":"[{\"oldText\":\"old\",\"newText\":\"new\"}]","truncated":false});
+            let f = canter_approval(tool, request);
+            let posted = &f.memory.borrow().posted[0];
+            assert_eq!(posted.buttons.len(), 1, "{tool}: {path:?}");
+            assert_eq!(posted.buttons[0].label, "拒绝");
+            assert!(posted.text.contains("路径必须是单行"), "{}", posted.text);
+        }
+    }
+    for (content, expected) in [
+        ("", "路径：`notes.txt`\n写入内容（0 字）"),
+        (
+            "（空内容）",
+            "路径：`notes.txt`\n写入内容（5 字）\n```\n（空内容）\n```",
+        ),
+        (
+            "hello",
+            "路径：`notes.txt`\n写入内容（5 字）\n```\nhello\n```",
+        ),
+    ] {
+        let f = canter_approval(
+            "write",
+            serde_json::json!({"id":"r1","kind":"approval","tool":"write","file":{"text":"notes.txt","truncated":false},"content":{"text":content,"truncated":false},"available_decisions":["accept"]}),
+        );
+        let posted = &f.memory.borrow().posted[0];
+        assert!(posted.text.contains(expected), "{}", posted.text);
+        let confirmation = posted
+            .buttons
+            .iter()
+            .find_map(|b| b.confirm.as_ref())
+            .unwrap();
+        assert!(
+            confirmation.text.contains(expected),
+            "{}",
+            confirmation.text
+        );
+        if content.is_empty() {
+            assert!(!posted.text.contains("```"));
+        }
+    }
+    let f = canter_approval(
+        "write",
+        serde_json::json!({"id":"r1","kind":"approval","tool":"write","file":{"text":"notes.txt","truncated":false},"available_decisions":["accept"]}),
+    );
+    assert!(
+        f.texts()
+            .contains("路径：`notes.txt`\n写入内容（无法核对）")
+    );
+    assert!(!f.texts().contains("```"));
+}
+
+#[test]
+fn canter_file_paths_reject_long_whitespace_and_keep_four_spaces() {
+    for tool in ["write", "edit"] {
+        for (path, allow) in [
+            ("notes    file.txt".to_owned(), true),
+            ("notes     file.txt".to_owned(), false),
+            (format!("notes.txt{}/../../.zshrc", " ".repeat(300)), false),
+            (format!("notes{}file.txt", "\u{00a0}".repeat(5)), false),
+        ] {
+            let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":path,"truncated":false},"available_decisions":["accept"]});
+            request["content"] = serde_json::json!({"text":"hello","truncated":false});
+            request["edits"] = serde_json::json!({"text":"[{\"oldText\":\"old\",\"newText\":\"new\"}]","truncated":false});
+            let f = canter_approval(tool, request);
+            let posted = &f.memory.borrow().posted[0];
+            assert_eq!(
+                posted.buttons.iter().any(|b| b.confirm.is_some()),
+                allow,
+                "{tool}: {path:?}"
+            );
+            if !allow {
+                assert_eq!(posted.buttons.len(), 1);
+                assert_eq!(posted.buttons[0].label, "拒绝");
+                assert!(
+                    posted.text.contains("路径的连续空白超过 4 个"),
+                    "{}",
+                    posted.text
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn canter_file_indentation_is_bounded_but_content_line_count_is_not() {
+    for tool in ["write", "edit"] {
+        for (body, allow) in [
+            (format!("hello\n{}new", " ".repeat(32)), true),
+            (format!("hello\n{}new", " ".repeat(33)), false),
+            (format!("hello\n{}new", "\t".repeat(8)), true),
+            (format!("hello\n{}new", "\t".repeat(9)), false),
+            (format!("hello\n{}\tnew", " ".repeat(28)), true),
+            (format!("hello\n{}\tnew", " ".repeat(29)), false),
+            (format!("hello\n{}new", " ".repeat(600)), false),
+            (format!("hello\n{}\nnew", " ".repeat(33)), false),
+            (".\n\n\n".repeat(100), true),
+        ] {
+            let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":"notes.txt","truncated":false},"available_decisions":["accept"]});
+            request["content"] = serde_json::json!({"text":body,"truncated":false});
+            request["edits"] = serde_json::json!({"text":serde_json::json!([{"oldText":"old","newText":body}]).to_string(),"truncated":false});
+            let f = canter_approval(tool, request);
+            let posted = &f.memory.borrow().posted[0];
+            assert_eq!(
+                posted.buttons.iter().any(|b| b.confirm.is_some()),
+                allow,
+                "{tool}: {body:?}"
+            );
+            if !allow {
+                assert_eq!(posted.buttons.len(), 1);
+                assert_eq!(posted.buttons[0].label, "拒绝");
+                assert!(
+                    posted.text.contains("行首缩进超过 32 个空格"),
+                    "{}",
+                    posted.text
+                );
+            }
+        }
+    }
+    let f = canter_approval(
+        "edit",
+        serde_json::json!({"id":"r1","kind":"approval","tool":"edit","file":{"text":"notes.txt","truncated":false},"edits":{"text":serde_json::json!([{"oldText":format!("{}old", " ".repeat(300)),"newText":"new"}]).to_string(),"truncated":false},"available_decisions":["accept"]}),
+    );
+    assert!(
+        f.memory.borrow().posted[0]
+            .buttons
+            .iter()
+            .any(|b| b.confirm.is_some()),
+        "oldText indentation remains unrestricted"
+    );
+}
+
+#[test]
+fn canter_file_content_limits_hidden_whitespace_but_keeps_indentation() {
+    for tool in ["write", "edit"] {
+        // edit's JSON escapes newlines; keep this case below the separate size gate.
+        let blank_line_count = if tool == "edit" { 200 } else { 600 };
+        for (body, allow) in [
+            ("hello\n\n\nworld".to_owned(), true),
+            ("hello\n\n\n\nworld".to_owned(), false),
+            ("hello\n  \n\t\nworld".to_owned(), true),
+            ("hello\n  \n\t\n \nworld".to_owned(), false),
+            ("hello    world".to_owned(), true),
+            ("hello     world".to_owned(), false),
+            ("hello\t\t\t\t\tworld".to_owned(), false),
+            ("            hello\n\t\t\t\t\tworld".to_owned(), true),
+            (
+                format!("hello{}world", "\n".repeat(blank_line_count)),
+                false,
+            ),
+            (format!("hello{}world", " ".repeat(600)), false),
+            ("\u{2028}\u{2028}\u{2028}world".to_owned(), false),
+            (
+                "hello\u{2029}\u{2029}\u{2029}\u{2029}world".to_owned(),
+                false,
+            ),
+        ] {
+            let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":"notes.txt","truncated":false},"available_decisions":["accept"]});
+            request["content"] = serde_json::json!({"text":body,"truncated":false});
+            request["edits"] = serde_json::json!({"text":serde_json::json!([{"oldText":"old","newText":body}]).to_string(),"truncated":false});
+            let f = canter_approval(tool, request);
+            let posted = &f.memory.borrow().posted[0];
+            assert_eq!(
+                posted.buttons.iter().any(|b| b.confirm.is_some()),
+                allow,
+                "{tool}: {body:?}"
+            );
+            if !allow {
+                assert_eq!(posted.buttons.len(), 1);
+                assert_eq!(posted.buttons[0].label, "拒绝");
+                assert!(
+                    posted.text.contains("连续空行或非缩进空白过长"),
+                    "{}",
+                    posted.text
+                );
+            }
+        }
+    }
+    let f = canter_approval(
+        "edit",
+        serde_json::json!({"id":"r1","kind":"approval","tool":"edit","file":{"text":"notes.txt","truncated":false},"edits":{"text":serde_json::json!([{"oldText":"old\n\n\n\n     text","newText":"new"}]).to_string(),"truncated":false},"available_decisions":["accept"]}),
+    );
+    assert!(
+        f.memory.borrow().posted[0]
+            .buttons
+            .iter()
+            .any(|b| b.confirm.is_some()),
+        "oldText spacing does not constrain the replacement"
+    );
+}
+
+#[test]
+fn canter_file_changes_show_content_and_only_offer_complete_readable_bounded_changes() {
+    for (tool, field, text) in [
+        ("write", "content", "hello\n    world".to_owned()),
+        ("write", "content", String::new()),
+        ("edit", "edits", serde_json::json!([{"oldText":"old","newText":"new"},{"oldText":"delete","newText":""}]).to_string()),
+    ] {
+        let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":"notes.txt","truncated":false},"available_decisions":["accept"]});
+        request[field] = serde_json::json!({"text":text,"truncated":false});
+        let mut f = canter_approval(tool, request);
+        let mut posted = f.memory.borrow().posted[0].clone();
+        assert!(posted.text.contains("notes.txt") && posted.text.contains(&text));
+        posted.buttons.retain(|b| b.confirm.is_some());
+        let confirmation = &posted.buttons[0].confirm.as_ref().unwrap().text;
+        assert!(confirmation.contains("notes.txt") && confirmation.contains(&text));
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert_eq!(f.corral.answers[0].3, corral::Answer::AllowOnce);
+    }
+    for (tool, field, detail, reason) in [
+        (
+            "write",
+            "content",
+            serde_json::Value::Null,
+            "改动内容无法核对",
+        ),
+        (
+            "write",
+            "content",
+            serde_json::json!({"text":"partial","truncated":true}),
+            "内容不完整",
+        ),
+        (
+            "edit",
+            "edits",
+            serde_json::json!({"text":"[{","truncated":true}),
+            "内容不完整",
+        ),
+        (
+            "write",
+            "content",
+            serde_json::json!({"text":"x".repeat(992),"truncated":false}),
+            "超过 1000 字",
+        ),
+        (
+            "write",
+            "content",
+            serde_json::json!({"text":"hidden\u{202e}","truncated":false}),
+            "不可读字符",
+        ),
+        (
+            "write",
+            "content",
+            serde_json::json!({"text":"hidden\u{0007}","truncated":false}),
+            "不可读字符",
+        ),
+        (
+            "edit",
+            "edits",
+            serde_json::json!({"text":serde_json::json!([{"oldText":"old","newText":"hidden\u{0007}"}]).to_string(),"truncated":false}),
+            "不可读字符",
+        ),
+    ] {
+        let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":"notes.txt","truncated":false},"available_decisions":["accept"]});
+        request[field] = detail;
+        let f = canter_approval(tool, request);
+        let posted = &f.memory.borrow().posted[0];
+        assert_eq!(posted.buttons.len(), 1);
+        assert_eq!(posted.buttons[0].label, "拒绝");
+        assert!(posted.text.contains(reason), "{}", posted.text);
+    }
+    let f = canter_approval(
+        "write",
+        serde_json::json!({"id":"r1","kind":"approval","tool":"write","file":{"text":"notes.txt","truncated":false},"content":{"text":"x".repeat(991),"truncated":false},"available_decisions":["accept"]}),
+    );
+    assert!(
+        f.memory.borrow().posted[0]
+            .buttons
+            .iter()
+            .any(|b| b.confirm.is_some()),
+        "path plus content at exactly 1000 characters"
+    );
+}
+
+#[test]
+fn canter_text_after_channel_rebinding_cannot_answer_the_previous_repository() {
+    let mut f = canter_question();
+    let posted = f.memory.borrow().posted[0].clone();
+    f.engine.configs[0].channels[0].repo = "ranch".into();
+    f.engine.configs[0].channels.push(Channel {
+        id: "C3".into(),
+        repo: "paddock".into(),
+    });
+    f.message("old-thread", Some(&posted.id), "hello", false);
+    f.step(10.);
+    assert!(f.corral.answers.is_empty() && f.corral.sent.is_empty());
+    assert!(f.texts().contains("频道绑定已变"));
+}
+
+#[test]
+fn canter_unsafe_or_incomplete_approval_details_never_offer_allow() {
+    for request in [
+        serde_json::json!({"id":"r1","kind":"sandboxApproval","tool":"shell","available_decisions":["accept"]}),
+        serde_json::json!({"id":"r1","kind":"approval","tool":"mcp","available_decisions":["accept"]}),
+        serde_json::json!({"id":"r1","kind":"approval","tool":"shell","available_decisions":["acceptForSession"]}),
+        serde_json::json!({"id":"r1","kind":"approval","tool":"write","available_decisions":["accept"]}),
+        serde_json::json!({"id":"r1","kind":"approval","tool":"edit","file":{"text":"partial","truncated":true},"available_decisions":["accept"]}),
+        serde_json::json!({"id":"r1","kind":"approval","tool":"write","file":{"text":"hidden\u{202e}.txt","truncated":false},"available_decisions":["accept"]}),
+        serde_json::json!({"id":"r1","kind":"planApproval","plan":{"text":"partial","truncated":true}}),
+        serde_json::Value::Null,
+    ] {
+        let f = canter_approval("shell", request.clone());
+        assert!(
+            f.memory.borrow().posted[0]
+                .buttons
+                .iter()
+                .all(|b| b.confirm.is_none()),
+            "{request}"
+        );
+        assert!(f.corral.answers.is_empty());
+    }
+    for command in [
+        serde_json::Value::Null,
+        serde_json::json!({"text":"partial","truncated":true}),
+        serde_json::json!({"text":"x".repeat(1001),"truncated":false}),
+    ] {
+        let mut f = canter_approval(
+            "shell",
+            serde_json::json!({"id":"r1","kind":"approval","tool":"shell","available_decisions":["accept"]}),
+        );
+        let mut posted = f.memory.borrow().posted[0].clone();
+        posted.buttons.retain(|b| b.confirm.is_some());
+        status_fields(
+            f.corral.agents.get_mut("paddock/dev").unwrap(),
+            serde_json::json!({"command":command}),
+        );
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert!(f.corral.answers.is_empty());
+    }
+}
+
+#[test]
+fn canter_approval_reject_double_click_and_channel_changes_are_guarded() {
+    for change_channel in [false, true] {
+        let mut f = canter_approval(
+            "shell",
+            serde_json::json!({"id":"r1","kind":"approval","tool":"shell","available_decisions":["accept"]}),
+        );
+        let reject = f.memory.borrow().posted[0].clone();
+        let mut allow = reject.clone();
+        allow.buttons.retain(|b| b.confirm.is_some());
+        if change_channel {
+            f.engine.configs[0].channels[0].repo = "ranch".into();
+        }
+        f.click(&allow, 10.);
+        f.click(&reject, 10.1);
+        f.step(11.);
+        assert_eq!(f.corral.answers.len(), usize::from(!change_channel));
+        assert!(f.corral.escapes.is_empty());
+    }
+}
+
+#[test]
+fn canter_answers_report_receipts_and_never_repeat_unknown_or_rejected_results() {
+    for (result, text) in [
+        (
+            Ok(corral::Answered {
+                already_resolved: true,
+            }),
+            "这个框已经处理过（别处答过或已取消）",
+        ),
+        (Err(failure(7, "answer_failed")), "canter 拒绝"),
+        (Err(failure(3, "not_delivered")), "结果不明"),
+        (Err(failure(9, "unsupported")), "无法核对 canter 的框"),
+        (
+            Err(failure(1, "state_check_failed")),
+            "无法核对 canter 的框，没答；请回电脑处理",
+        ),
+    ] {
+        let mut f = canter_question();
+        f.corral.answer_result = Some(result);
+        let posted = f.memory.borrow().posted[0].clone();
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert!(f.texts().contains(text), "{}", f.texts());
+        assert!(f.memory.borrow().posted[0].choices.is_empty());
+        f.restart();
+        f.click(&posted, 11.);
+        f.message("retry", Some(&posted.id), "重答", false);
+        f.step(11.);
+        assert_eq!(f.corral.answers.len(), 1);
+        assert!(f.corral.sent.is_empty() && f.corral.escapes.is_empty());
+    }
+}
+
+#[test]
+fn canter_changed_dialogs_and_human_activity_never_answer() {
+    for (fields, text) in [
+        (
+            serde_json::json!({"state":"idle","interaction":null}),
+            "已经在别处答过",
+        ),
+        (
+            serde_json::json!({"interaction":{"kind":"question","count":1,"running":true,"request":{"id":"r2","kind":"userInput"}}}),
+            "已经在别处答过",
+        ),
+        (serde_json::json!({"instance":"replacement"}), "重开过"),
+        (serde_json::json!({"last_human_input":9.}), "电脑"),
+        (
+            serde_json::json!({"interaction":{"kind":"question","count":2,"running":true}}),
+            "无法核对",
+        ),
+    ] {
+        for use_button in [true, false] {
+            let mut f = canter_question();
+            let posted = f.memory.borrow().posted[0].clone();
+            status_fields(
+                f.corral.agents.get_mut("paddock/dev").unwrap(),
+                fields.clone(),
+            );
+            if use_button {
+                f.click(&posted, 10.);
+            } else {
+                f.message("answer", Some(&posted.id), "hello", false);
+            }
+            f.step(10.);
+            assert!(
+                f.corral.answers.is_empty() && f.corral.escapes.is_empty(),
+                "{fields}"
+            );
+            if !use_button && fields["state"] == "idle" {
+                assert_eq!(f.corral.sent, [("paddock/dev".into(), "hello".into())]);
+            } else {
+                assert!(f.corral.sent.is_empty());
+            }
+            assert!(f.texts().contains(text), "{fields}: {}", f.texts());
+        }
+    }
+}
+
+#[test]
+fn canter_next_front_request_gets_a_notice_even_without_an_idle_gap() {
+    let mut f = canter_question();
+    let posted = f.memory.borrow().posted[0].clone();
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({
+            "interaction":{"kind":"question","count":2,"running":true,"request":{"id":"r1","kind":"userInput"}}
+        }),
+    );
+    f.click(&posted, 10.);
+    f.step(10.);
+    assert_eq!(
+        f.corral.answers.len(),
+        1,
+        "multiple main requests can answer the front"
+    );
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({
+            "interaction":{"kind":"question","count":1,"running":true,"request":{"id":"r2","kind":"userInput"}}
+        }),
+    );
+    f.step(12.);
+    f.step(14.);
+    assert_eq!(
+        f.memory
+            .borrow()
+            .posted
+            .iter()
+            .filter(|p| !p.choices.is_empty())
+            .count(),
+        1,
+        "the next request needs fresh controls"
+    );
+}
+
+#[test]
+fn canter_safe_approvals_confirm_then_answer_by_id() {
+    for (tool, request, expected, label) in [
+        (
+            "shell",
+            serde_json::json!({"id":"r1","kind":"approval","tool":"shell","available_decisions":["accept","acceptForSession"]}),
+            corral::Answer::AllowOnce,
+            "允许这一次",
+        ),
+        (
+            "write",
+            serde_json::json!({"id":"r1","kind":"approval","tool":"write","file":{"text":"notes.txt","truncated":false},"content":{"text":"hello","truncated":false},"available_decisions":["accept"]}),
+            corral::Answer::AllowOnce,
+            "允许这一次",
+        ),
+        (
+            "edit",
+            serde_json::json!({"id":"r1","kind":"approval","tool":"edit","file":{"text":"notes.txt","truncated":false},"edits":{"text":"[{\"oldText\":\"old\",\"newText\":\"new\"}]","truncated":false},"available_decisions":["accept"]}),
+            corral::Answer::AllowOnce,
+            "允许这一次",
+        ),
+        (
+            "planApproval",
+            serde_json::json!({"id":"r1","kind":"planApproval","plan":{"text":"Read notes then summarize.","truncated":false}}),
+            corral::Answer::ApprovePlan,
+            "批准，之后的操作仍逐个问",
+        ),
+    ] {
+        let mut f = canter_approval(tool, request);
+        let mut posted = f.memory.borrow().posted[0].clone();
+        assert!(posted.buttons.iter().any(|b| b.label == "拒绝"));
+        posted.buttons.retain(|b| b.confirm.is_some());
+        assert_eq!(posted.buttons.len(), 1, "{tool}: {}", f.texts());
+        assert_eq!(posted.buttons[0].label, label);
+        assert!(
+            !posted.buttons[0]
+                .confirm
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("读屏")
+        );
+        f.click(&posted, 10.);
+        f.step(10.);
+        assert_eq!(f.corral.answers[0].3, expected);
+        assert!(f.corral.escapes.is_empty() && f.corral.approvals.is_empty());
+        assert!(f.memory.borrow().posted[0].buttons.is_empty());
+    }
+}
+
+fn canter_approval(tool: &str, request: serde_json::Value) -> Fixture {
+    let mut f = Fixture::new();
+    f.corral.answer_store = Some(f._dir.path().join("state.json"));
+    f.memory.borrow_mut().buttons = true;
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({
+            "state":"blocked","kind":"canter","last_tool":tool,
+            "interaction":{"kind":"approval","count":1,"running":true,"request":request},
+            "command":if tool == "shell" { serde_json::json!({"text":"printf OK","truncated":false}) } else { serde_json::Value::Null }
+        }),
+    );
+    f.step(2.);
+    f.step(4.);
+    f
+}
+
+#[test]
+fn canter_thread_text_answers_once_and_rejects_multiline_without_rewriting() {
+    let mut f = canter_question();
+    let posted = f.memory.borrow().posted[0].clone();
+    f.message("multiline", Some(&posted.id), "first\nsecond", false);
+    f.step(10.);
+    assert!(f.corral.answers.is_empty() && f.corral.sent.is_empty() && f.corral.escapes.is_empty());
+    assert!(f.texts().contains("请改成一行"));
+    f.message("text", Some(&posted.id), "  我的答案  ", false);
+    f.message("second", Some(&posted.id), "另一个答案", false);
+    f.step(11.);
+    assert_eq!(
+        f.corral.answers,
+        [(
+            "paddock/dev".into(),
+            "instance-1".into(),
+            "r1".into(),
+            corral::Answer::Text("  我的答案  ".into())
+        )]
+    );
+    assert!(f.corral.sent.is_empty() && f.corral.escapes.is_empty());
+    assert!(f.texts().contains("已答：  我的答案  "));
+    assert!(f.memory.borrow().posted[0].choices.is_empty());
+}
+
+#[test]
+fn canter_question_option_is_answered_by_id_once_and_updates_the_notice() {
+    let mut f = canter_question();
+    let posted = f.memory.borrow().posted[0].clone();
+    assert_eq!(posted.choices.len(), 1, "canter should have option buttons");
+    f.click(&posted, 10.);
+    f.click(&posted, 10.1);
+    f.step(11.);
+    assert_eq!(
+        f.corral.answers,
+        [(
+            "paddock/dev".into(),
+            "instance-1".into(),
+            "r1".into(),
+            corral::Answer::Option("红".into())
+        )]
+    );
+    assert!(
+        f.corral.escapes.is_empty()
+            && f.corral.sent.is_empty()
+            && f.corral.question_keys.is_empty()
+    );
+    assert!(f.texts().contains("已答：红"));
+    assert!(f.memory.borrow().posted[0].choices.is_empty());
+    f.restart();
+    f.step(12.);
+    f.click(&posted, 13.);
+    f.step(13.);
+    assert_eq!(f.corral.answers.len(), 1);
+}
+
+fn canter_question() -> Fixture {
+    canter_question_with_truncation(false)
+}
+
+fn canter_question_with_truncation(truncated: bool) -> Fixture {
+    let mut f = Fixture::new();
+    f.corral.answer_store = Some(f._dir.path().join("state.json"));
+    f.memory.borrow_mut().buttons = true;
+    status_fields(
+        f.corral.agents.get_mut("paddock/dev").unwrap(),
+        serde_json::json!({
+            "state":"blocked","kind":"canter","last_tool":"ask_user",
+            "interaction":{"kind":"question","count":1,"running":true,"request":{"id":"r1","kind":"userInput"}},
+            "questions":{"items":[{"header":"","question":"选哪种？","multi_select":false,"options":[{"label":"红","description":""},{"label":"蓝","description":""}]}],"truncated":truncated}
+        }),
+    );
+    f.step(2.);
+    f.step(4.);
+    f
 }
 
 #[test]

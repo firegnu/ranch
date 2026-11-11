@@ -58,10 +58,34 @@ R38d 在 R38c 的命令外壳上接入共用核心，R38e 接入 Slack。`pony r
   核对实例、轮次、框时间、工具、命令／题目和人工输入，不比较不断重画的屏幕；
   缺字段、子框或多框不按，提示回电脑处理。提醒仍可读屏幕末尾，
   `⠋ canter · <目录>`（含 ✓、✋ 状态符号）不当作任务摘要。
-  不提供允许、远程回答或结构化题目展示。需 R56b corral 提供 canter 字段；
-  本件只用假 corral 验证，真机联调留给用户在场时做。公开 pony 格式不变，paddock 不用动。
+  R58 起增加下面的回答和批准能力。公开 pony 格式不变，paddock 不用动。
+- R58：canter 的 ask_user 提问列题目和选项，也能在线程写一句话回答；按请求编号通过
+  `corral answer` 填入原框。整句仅为选项字母或与标签完全相同时送对应选项，其他单行原文不改。
+  原框还在时，多行回答明确未送，请改成一行；框已消失、换号或 agent 重开后清掉提问上下文，
+  这句和后续消息照普通消息送或排队。原提醒显示答案前 200 字，长答案全文留在用户原消息里。
+  shell、write、edit 的普通批准且 available_decisions 含 accept，才给带确认框的
+  「允许这一次」；命令必须完整、可读且不超过 1000 字。write 显示路径和写入内容，edit 显示
+  路径和 oldText/newText 列表；路径加内容不超过 1000 字、未截断、可读才允许。
+  缺字段、截断、超限、不可读只给拒绝并写原因；空 write 内容和空 newText（删除）仍显示。
+  write/edit 路径必须单行，不得含 CR、LF、Tab、U+0085、U+2028、U+2029；路径独立放在
+  内容代码块外，用行内代码显示。代码块只放实际内容，空内容、缺字段的说明留在块外。
+  路径连续空白最多 4 个，超过只给拒绝并说明。
+  write 内容和 edit 的 newText 连续空行最多 2 行，行首缩进之外连续空白最多 4 个，
+  超过只给拒绝并说明；行首缩进最多 32 个空格（每个 Tab 算 4 个），正常缩进保留。
+  内容总行数不限，仍受原有 1000 字门槛约束。oldText 不加这些空白限制。
+  确认框显示前 200 字，超过时明确提示未显示全。计划只给「批准，之后的操作仍逐个问」，
+  完整非空且不超过 1000 字，拦 Cf 和除换行／制表符外的 Cc，保留 Markdown 空白和缩进。
+  sandboxApproval、MCP、其他工具和持久放行均不给允许；不提供清空上下文。
+  同时多个主框只答最前面一个，子框回电脑；拒绝和打断仍按 R56c 的一次 Esc。
+  发送前核对原实例、请求编号和内容、人工输入及绑定，先落盘再发送；连点、重启不重答。
+  拒绝作答只撤原请求按钮；真正提交前仍作废同实例其他按钮。unknown、starting、exiting 说明
+  无法核对；alreadyResolved 说明框已处理（别处答过或已取消）。明确拒绝与结果不明分开说明，结果不明不重试。
+  state_check_failed 说明无法核对、没答；不会说成回答结果不明。
+  需要 R58 corral 的 `interaction.request` 和 `answer`，旧版缺字段／入口时回电脑处理。
+  部署前让 pony 调用新版 corral，目标 canter 的 pen 升级由用户安排；不换 helper。
+  Slack 插件接口、权限、凭证不变；真 Slack 验收由主控部署后与用户一起做。
 - `corral.rs` 只调用公开命令。按配置、PATH、`~/.local/bin/corral` 找程序，
-  启动检查 `--version` 的 contract 1；只用 ls、status、reply、send、read、keys。
+  启动检查 `--version` 的 contract 1；只用 ls、status、reply、send、read、keys、answer。
   打断／拒绝用 Esc，amp 连发两个 Esc，Kimi 框上两个、无框 working 时一个；
   R47c 的 Claude Code 单次批准只发一个 `text:<选项号>`，不追加 Enter。
   R48g2 的 Kimi 后台答案在框内用 `text:`、`tab`、`enter`，最后 Submit 只按 `text:1`。

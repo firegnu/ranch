@@ -18,6 +18,9 @@ impl Adapter for Canter {
     fn steer_api(&self) -> Option<super::SteerApi> {
         Some(steer_input)
     }
+    fn answer_api(&self) -> Option<super::AnswerApi> {
+        Some(answer_request)
+    }
     fn validate_args(&self, args: &[String]) -> Result<()> {
         if args
             .iter()
@@ -78,7 +81,52 @@ impl Translation {
                 "approval" | "sandboxApproval" | "planApproval" => Some("approval"),
                 _ => None,
             });
-        json!({"kind":kind,"count":self.requests.len()+self.agent_requests.len(),"running":self.running})
+        let mut interaction = json!({"kind":kind,"count":self.requests.len()+self.agent_requests.len(),"running":self.running});
+        if self.agent_requests.is_empty()
+            && let Some(request) = self.requests.first()
+            && request["id"].as_str().is_some_and(|id| !id.is_empty())
+        {
+            let kind = &request["kind"];
+            let mut detail = json!({"id":request["id"],"kind":kind["type"]});
+            match kind["type"].as_str() {
+                Some("approval" | "sandboxApproval") => {
+                    detail["tool"] = kind["tool"].clone();
+                    detail["available_decisions"] = kind["availableDecisions"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                        .into();
+                    if matches!(kind["tool"].as_str(), Some("write" | "edit")) {
+                        detail["file"] = crate::hooks::command(&kind["arguments"]["path"])
+                            .unwrap_or(Value::Null);
+                    }
+                    match kind["tool"].as_str() {
+                        Some("write") => {
+                            detail["content"] =
+                                crate::hooks::command(&kind["arguments"]["content"])
+                                    .unwrap_or(Value::Null);
+                        }
+                        Some("edit") => {
+                            detail["edits"] = kind["arguments"]["edits"]
+                                .as_array()
+                                .and_then(|edits| {
+                                    crate::hooks::command(&json!(
+                                        serde_json::to_string_pretty(edits).unwrap()
+                                    ))
+                                })
+                                .unwrap_or(Value::Null);
+                        }
+                        _ => {}
+                    }
+                }
+                Some("planApproval") => {
+                    detail["plan"] = crate::hooks::command(&kind["plan"]).unwrap_or(Value::Null);
+                }
+                _ => {}
+            }
+            interaction["request"] = detail;
+        }
+        interaction
     }
     fn dialog(&self) -> Value {
         let Some(request) = self.requests.first() else {
@@ -637,7 +685,7 @@ mod tests {
         );
         assert_eq!(
             opened[0]["interaction"],
-            json!({"kind":"approval","count":1,"running":true})
+            json!({"kind":"approval","count":1,"running":true,"request":{"id":"r","kind":"approval","tool":"shell","available_decisions":[]}})
         );
         let question = json!({"id":"q","createdAt":2000,"kind":{"type":"userInput","question":"选哪个？","options":[{"label":"甲","description":"说明"}]}});
         let second = t.event(&frame("request.opened", json!({"request":question})));
@@ -969,17 +1017,140 @@ fn steer_input(dir: &Path, expected_session: &str, text: &str) -> Result<Value> 
                 .with("confirmed", false),
         );
     }
-    let socket = discover(&session.state_dir).map_err(steer_failed)?;
-    let mut socket = connect(&socket).map_err(steer_failed)?;
+    let (status, receipt) = post_json(
+        &session,
+        "input",
+        json!({"input":[{"type":"text","text":text}],"mode":"steer","clientName":"corral"}),
+        steer_failed,
+        steer_unknown,
+    )?;
+    if (400..500).contains(&status)
+        && let (Some(code), Some(message)) = (receipt["code"].as_str(), receipt["message"].as_str())
+    {
+        return Err(steer_failed(format!("{code}: {message}")));
+    }
+    if status != 200
+        || !receipt["eventSeq"].is_u64()
+        || !(receipt["turnId"].is_null() || receipt["turnId"].is_string())
+    {
+        return Err(steer_unknown("invalid input response"));
+    }
+    Ok(
+        json!({"ok":true,"written":true,"submitted":true,"confirmed":true,"merged_with_draft":false,
+        "queued_for_next_turn":receipt["turnId"].as_str().is_none_or(str::is_empty)}),
+    )
+}
+
+fn answer_failed(error: impl std::fmt::Display) -> Error {
+    Error::new(7, "answer_failed", format!("answer not accepted: {error}"))
+        .with("written", false)
+        .with("submitted", false)
+        .with("confirmed", false)
+}
+
+fn answer_unknown(error: impl std::fmt::Display) -> Error {
+    Error::new(
+        3,
+        "not_delivered",
+        format!("answer receipt unknown: {error}; do not retry"),
+    )
+    .with("written", Value::Null)
+    .with("submitted", Value::Null)
+    .with("confirmed", false)
+}
+
+fn answer_request(
+    dir: &Path,
+    expected_session: &str,
+    request: &Value,
+    answer: &Value,
+) -> Result<Value> {
+    let body = match answer["type"].as_str() {
+        Some("option")
+            if request["kind"] == "userInput"
+                && answer["text"].as_str().is_some_and(|s| !s.is_empty()) =>
+        {
+            json!({"answer":{"type":"option","label":answer["text"]},"clientName":"corral"})
+        }
+        Some("text")
+            if request["kind"] == "userInput"
+                && answer["text"]
+                    .as_str()
+                    .is_some_and(|s| !s.trim().is_empty() && !s.contains(['\r', '\n'])) =>
+        {
+            json!({"answer":{"type":"text","text":answer["text"]},"clientName":"corral"})
+        }
+        Some("allow_once")
+            if request["kind"] == "approval"
+                && matches!(request["tool"].as_str(), Some("shell" | "write" | "edit"))
+                && request["available_decisions"]
+                    .as_array()
+                    .is_some_and(|ds| ds.iter().any(|d| d == "accept")) =>
+        {
+            json!({"decision":"accept","clientName":"corral"})
+        }
+        Some("approve_plan") if request["kind"] == "planApproval" => {
+            json!({"plan":{"decision":"implement","approvalPolicy":"alwaysAsk"},"clientName":"corral"})
+        }
+        _ => return Err(answer_failed("unsupported answer for this request")),
+    };
+    let session = published(dir).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            Error::new(9, "unsupported", "no published session for answering")
+                .with("written", false)
+                .with("submitted", false)
+                .with("confirmed", false)
+        } else {
+            answer_failed(e)
+        }
+    })?;
+    if session.session_id != expected_session {
+        return Err(Error::new(
+            7,
+            "request_changed",
+            "main session changed; answer withheld",
+        )
+        .with("written", false)
+        .with("submitted", false)
+        .with("confirmed", false));
+    }
+    let (status, receipt) = post_json(
+        &session,
+        &format!("requests/{}", encode(request["id"].as_str().unwrap_or(""))),
+        body,
+        answer_failed,
+        answer_unknown,
+    )?;
+    if (400..500).contains(&status)
+        && let (Some(code), Some(message)) = (receipt["code"].as_str(), receipt["message"].as_str())
+    {
+        return Err(answer_failed(format!("{code}: {message}")));
+    }
+    if status != 200 || !receipt["eventSeq"].is_u64() || !receipt["alreadyResolved"].is_boolean() {
+        return Err(answer_unknown("invalid answer response"));
+    }
+    Ok(
+        json!({"ok":true,"written":true,"submitted":true,"confirmed":true,"already_resolved":receipt["alreadyResolved"]}),
+    )
+}
+
+fn post_json(
+    session: &Session,
+    suffix: &str,
+    body: Value,
+    failed: fn(String) -> Error,
+    unknown: fn(String) -> Error,
+) -> Result<(u16, Value)> {
+    let socket = discover(&session.state_dir).map_err(|e| failed(e.to_string()))?;
+    let mut socket = connect(&socket).map_err(|e| failed(e.to_string()))?;
     socket
         .set_read_timeout(Some(Duration::from_millis(500)))
-        .map_err(steer_failed)?;
+        .map_err(|e| failed(e.to_string()))?;
     socket
         .set_write_timeout(Some(Duration::from_millis(500)))
-        .map_err(steer_failed)?;
-    let body = json!({"input":[{"type":"text","text":text}],"mode":"steer","clientName":"corral"})
-        .to_string();
-    let path = format!("/v1/sessions/{}/input", encode(&session.session_id));
+        .map_err(|e| failed(e.to_string()))?;
+    let body = body.to_string();
+    let path = format!("/v1/sessions/{}/{suffix}", encode(&session.session_id));
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -998,40 +1169,29 @@ fn steer_input(dir: &Path, expected_session: &str, text: &str) -> Result<Value> 
         match result {
             Ok(0) => {
                 return Err(if written == 0 {
-                    steer_failed("socket closed")
+                    failed("socket closed".into())
                 } else {
-                    steer_unknown("socket closed")
+                    unknown("socket closed".into())
                 });
             }
             Ok(n) => written += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => {
                 return Err(if written == 0 {
-                    steer_failed(e)
+                    failed(e.to_string())
                 } else {
-                    steer_unknown(e)
+                    unknown(e.to_string())
                 });
             }
         }
     }
-    let response = Http::response(socket, deadline, || false).map_err(steer_unknown)?;
+    let response =
+        Http::response(socket, deadline, || false).map_err(|e| unknown(e.to_string()))?;
     let status = response.status;
-    let receipt = response.json(deadline, || false).map_err(steer_unknown)?;
-    if (400..500).contains(&status)
-        && let (Some(code), Some(message)) = (receipt["code"].as_str(), receipt["message"].as_str())
-    {
-        return Err(steer_failed(format!("{code}: {message}")));
-    }
-    if status != 200
-        || !receipt["eventSeq"].is_u64()
-        || !(receipt["turnId"].is_null() || receipt["turnId"].is_string())
-    {
-        return Err(steer_unknown("invalid input response"));
-    }
-    Ok(
-        json!({"ok":true,"written":true,"submitted":true,"confirmed":true,"merged_with_draft":false,
-        "queued_for_next_turn":receipt["turnId"].as_str().is_none_or(str::is_empty)}),
-    )
+    let receipt = response
+        .json(deadline, || false)
+        .map_err(|e| unknown(e.to_string()))?;
+    Ok((status, receipt))
 }
 
 fn track(cursor: &mut Cursor, session: Session) {
@@ -1116,6 +1276,10 @@ fn initialize(context: &Context, tracked: &mut Tracked, snapshot: &Value) -> io:
             .as_array()
             .cloned()
             .unwrap_or_default();
+        tracked
+            .translation
+            .requests
+            .sort_by_key(|r| r["createdAt"].as_u64().unwrap_or(0));
         for request in snapshot["agentRequests"].as_array().into_iter().flatten() {
             tracked.translation.agent_requests.push((
                 request["agentId"].as_str().unwrap_or("").into(),

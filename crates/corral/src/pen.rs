@@ -3,6 +3,7 @@ use crate::{Error, Result, now, state};
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+mod answer;
 mod steer;
 pub(crate) mod upgrade;
 pub(crate) mod watcher;
@@ -373,6 +374,8 @@ struct Pen {
     watcher: Option<watcher::Running>,
     #[serde(skip)]
     api_steers: Vec<steer::ApiRequest>,
+    #[serde(skip)]
+    api_answer: Option<answer::Pending>,
     agent: u32,
     master: Handle<File>,
     listener: Handle<UnixListener>,
@@ -577,8 +580,7 @@ impl Pen {
         let mut status = json!({"ok":true,"proto":1,"instance":self.instance,"agent_pid":self.agent,"pen_pid":std::process::id(),"started":self.started,"attached":self.clients.values().filter(|c|c.mode==Mode::Attached).count(),"writer_attached":self.writer.is_some(),"last_output":self.last_output,"title":self.term.title,"last_human_input":self.human,"size":[self.size.0,self.size.1],"bracketed_paste":self.term.paste(),"recent_sends":self.recent,"paused":self.paused.is_some(),"paused_at":self.paused,"resumed_at":self.resumed_at});
         status["exe"] = json!(crate::executable().ok());
         status["custody"] = json!(self.custody);
-        status["capabilities"] =
-            json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1,"steer":1});
+        status["capabilities"] = json!({"upgrade":1,"recover":1,"snapshot":upgrade::SCHEMA,"pause":1,"steer":1,"answer":1});
         status["upgrade"] = self.upgrade.public();
         if let Some(watcher) = &self.watcher {
             status["watcher"] = watcher.status();
@@ -748,6 +750,15 @@ impl Pen {
                 self.resume();
                 json!({"ok":true,"instance":self.instance,"paused":false,"paused_at":null})
             }
+            Some("answer") => match self.answer(fd, &req) {
+                Ok(()) => return,
+                Err(e) => {
+                    e.with("written", false)
+                        .with("submitted", false)
+                        .with("confirmed", false)
+                        .value
+                }
+            },
             Some("steer") => match self.steer(fd, &req) {
                 Ok(()) => return,
                 Err(e) => e.value,
@@ -895,6 +906,7 @@ impl Pen {
         let mut watcher_timed_out = false;
         loop {
             self.finish_api_steers();
+            self.finish_api_answer();
             if let Some(watcher) = &mut self.watcher {
                 let restart = self.exit.is_none() && watcher.should_restart();
                 watcher.reap();
@@ -943,6 +955,7 @@ impl Pen {
                 && self.stop_tree.as_mut().is_none_or(|tree| tree.is_empty())
                 && self.watcher.as_ref().is_none_or(|w| w.finished())
                 && self.api_steers.is_empty()
+                && self.api_answer.is_none()
             {
                 break;
             }
@@ -1336,6 +1349,7 @@ pub fn worker() -> i32 {
                 .map(|_| json!({})),
             watcher: None,
             api_steers: Vec::new(),
+            api_answer: None,
             agent: agent.id(),
             master: Handle::new(master),
             listener: Handle::new(listener),

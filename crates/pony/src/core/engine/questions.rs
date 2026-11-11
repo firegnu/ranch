@@ -49,6 +49,9 @@ impl Engine {
             return Ok(None);
         };
         if !connection.limits().buttons
+            || (status.kind.as_deref() == Some("canter")
+                && (status.canter_request().is_none_or(|r| r.kind != "userInput")
+                    || questions.items.len() != 1 || questions.items[0].multi_select))
             || !connection.limits().threads
             || status.paused
             || status.state_started.is_none()
