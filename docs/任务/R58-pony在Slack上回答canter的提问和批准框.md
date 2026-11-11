@@ -182,4 +182,4 @@
 - 交叉审查（ranch/review-r58，Claude Code opus xhigh，`docs/任务/R58-审查.md`）：首审可以合并、建议改 7 条，主控采纳 1–6，第 7 条（显示 write/edit 改动内容）用户选 A 一起做；第一轮复核挡出必须改 1 条（路径带换行可伪装），连同建议改 2、3 改好；第二轮复核可以合并，主控再采纳路径空白和缩进上限一条，主控自己看 diff 核对。apply_patch 改文件仍只给「拒绝」，以后和内容显示一起再看。
 - 主控在最终 `963bdb9` 上跑 `cargo test --all-targets --no-fail-fast` 576 过、0 失败、19 忽略，clippy、fmt 通过。首次全量的升级就绪超时之后三次全量都没再出现。
 - 对 paddock：兼容新增（`corral answer`、`capabilities.answer`、`interaction.request`），现有调用不用动。
-- 结果：一次过
+- 结果：返工 1 次（交叉复核的必须改：路径带换行可伪装；其余几轮是采纳建议改）
