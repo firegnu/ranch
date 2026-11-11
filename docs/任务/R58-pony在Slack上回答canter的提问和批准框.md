@@ -174,3 +174,12 @@
 - **验证结果**：最终 `cargo test -p pony --test core canter_` **20 passed**，`cargo test -p pony --test core approval_` **28 passed**，均 0 failed、0 ignored（筛选组有重叠），覆盖直接相关的 canter 及 Claude Code、Kimi 批准回归。`cargo clippy --all-targets -- -D warnings`、`cargo fmt` 各一次，均退出 0；`git diff --check` 通过。Cargo 全程使用 `.target/r58`，所有命令前台跑完。日志仅留 `/tmp/r58-second-review.50Qo9x/`，不进仓库。
 - **拿主意与踩坑**：按主控给定阈值实现；没有额外加总行数限制。没有新的踩坑。
 - **没做的事及影响**：仅改 pony 内部批准核对和原因提示，公开命令／字段不变，paddock 不用动。第二轮的「可以不改」意见及此前保留项没有改；未接 apply_patch，未跑全套，未开真实 agent，未碰真实 Slack 或 pony 服务，未部署、合并、推送。没有待主控决定的事。
+
+## 主控审查
+
+2026-11-11，ranch/main。
+- 看过 diff：corral 公共代码只加 `answer_api` 挂点、`answer` 命令和 pen 的回答线程（实例沿用 pen 通用核对），canter 协议全在 `canter.rs`；`chats/` 没动；「允许」在 corral、pony 两层都只放 shell/write/edit 的普通 approval 和 accept，计划只发 implement + alwaysAsk。真 canter 四轮通过，证实 canter 接受 corral 作答，不需要 canter 改。
+- 交叉审查（ranch/review-r58，Claude Code opus xhigh，`docs/任务/R58-审查.md`）：首审可以合并、建议改 7 条，主控采纳 1–6，第 7 条（显示 write/edit 改动内容）用户选 A 一起做；第一轮复核挡出必须改 1 条（路径带换行可伪装），连同建议改 2、3 改好；第二轮复核可以合并，主控再采纳路径空白和缩进上限一条，主控自己看 diff 核对。apply_patch 改文件仍只给「拒绝」，以后和内容显示一起再看。
+- 主控在最终 `963bdb9` 上跑 `cargo test --all-targets --no-fail-fast` 576 过、0 失败、19 忽略，clippy、fmt 通过。首次全量的升级就绪超时之后三次全量都没再出现。
+- 对 paddock：兼容新增（`corral answer`、`capabilities.answer`、`interaction.request`），现有调用不用动。
+- 结果：一次过
