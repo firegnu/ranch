@@ -371,6 +371,8 @@ struct Pen {
     watcher_cursor: Option<Value>,
     #[serde(skip)]
     watcher: Option<watcher::Running>,
+    #[serde(skip)]
+    api_steers: Vec<steer::ApiRequest>,
     agent: u32,
     master: Handle<File>,
     listener: Handle<UnixListener>,
@@ -892,6 +894,7 @@ impl Pen {
         let mut remaining_pids = Vec::new();
         let mut watcher_timed_out = false;
         loop {
+            self.finish_api_steers();
             if let Some(watcher) = &mut self.watcher {
                 let restart = self.exit.is_none() && watcher.should_restart();
                 watcher.reap();
@@ -939,6 +942,7 @@ impl Pen {
                 && (!self.pty_open || now() - self.exit_at > 0.3)
                 && self.stop_tree.as_mut().is_none_or(|tree| tree.is_empty())
                 && self.watcher.as_ref().is_none_or(|w| w.finished())
+                && self.api_steers.is_empty()
             {
                 break;
             }
@@ -1331,6 +1335,7 @@ pub fn worker() -> i32 {
                 .and_then(|a| a.watcher())
                 .map(|_| json!({})),
             watcher: None,
+            api_steers: Vec::new(),
             agent: agent.id(),
             master: Handle::new(master),
             listener: Handle::new(listener),

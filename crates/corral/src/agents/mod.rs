@@ -46,6 +46,9 @@ static ADAPTERS: &[&dyn Adapter] = &[
     &canter::Canter,
 ];
 
+/// Agent directory, expected main session and input text. Called off the pen loop.
+pub(crate) type SteerApi = fn(&Path, &str, &str) -> Result<Value>;
+
 pub(crate) trait Adapter: Sync {
     /// The program's file name that selects this adapter; also recorded as the agent's `kind`.
     fn kind(&self) -> &'static str;
@@ -76,6 +79,10 @@ pub(crate) trait Adapter: Sync {
     }
     /// Submit ordinary input during a running task, with confirmable input events.
     fn steer_key(&self) -> Option<&'static [u8]> {
+        None
+    }
+    /// Deliver working input through a public API, returning an acceptance receipt.
+    fn steer_api(&self) -> Option<SteerApi> {
         None
     }
     /// Send the first prompt through the PTY once the editor is ready, instead of argv.

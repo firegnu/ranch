@@ -280,12 +280,12 @@ fn deliver(
         }
         let reply = state::request(
             name,
-            json!({"op":"steer","instance":st.public["instance"],"request_id":request_id,"text":text,"force":force}),
+            json!({"op":"steer","instance":st.public["instance"],"request_id":request_id,"text":text,"force":force,"api_receipt":true}),
         )?;
         if reply["ok"] != true {
             let code = match reply["error"].as_str() {
-                Some("draft_not_submitted") => 3,
-                Some("not_idle" | "state_changed") => 7,
+                Some("draft_not_submitted" | "not_delivered") => 3,
+                Some("not_idle" | "state_changed" | "steer_failed") => 7,
                 Some("human_active") => 8,
                 Some("unsupported" | "unsupported_steer" | "bad_op") => 9,
                 Some("paused") => 10,
@@ -300,6 +300,14 @@ fn deliver(
             value["instance"] = st.public["instance"].clone();
             value["request_id"] = json!(request_id);
             return Err(Error { code, value });
+        }
+        if reply["confirmed"] == true {
+            let mut value = reply;
+            value["name"] = json!(name);
+            value["instance"] = st.public["instance"].clone();
+            value["request_id"] = json!(request_id);
+            value["latency"] = json!(((now() - t0) * 1000.0).round() / 1000.0);
+            return Ok(value);
         }
     } else {
         send_once(name, text, force, &st, request_id)?;

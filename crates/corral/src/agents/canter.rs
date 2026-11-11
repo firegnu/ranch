@@ -15,6 +15,9 @@ impl Adapter for Canter {
     fn watcher(&self) -> Option<&'static dyn Watcher> {
         Some(&Canter)
     }
+    fn steer_api(&self) -> Option<super::SteerApi> {
+        Some(steer_input)
+    }
     fn validate_args(&self, args: &[String]) -> Result<()> {
         if args
             .iter()
@@ -458,6 +461,7 @@ mod tests {
         let (socket, _peer) = UnixStream::pair().unwrap();
         let mut response = Http {
             socket,
+            status: 200,
             buffer: b"4000001\r\n".to_vec(),
             chunked: true,
             left: None,
@@ -919,6 +923,117 @@ fn published(dir: &Path) -> io::Result<Session> {
     }
     Ok(session)
 }
+
+fn steer_failed(error: impl std::fmt::Display) -> Error {
+    Error::new(
+        7,
+        "steer_failed",
+        format!("input not accepted: {error}; wait for idle before retrying"),
+    )
+    .with("written", false)
+    .with("submitted", false)
+    .with("confirmed", false)
+}
+
+fn steer_unknown(error: impl std::fmt::Display) -> Error {
+    Error::new(
+        3,
+        "not_delivered",
+        format!("input receipt unknown: {error}; do not resend"),
+    )
+    .with("written", Value::Null)
+    .with("submitted", Value::Null)
+    .with("confirmed", false)
+}
+
+fn steer_input(dir: &Path, expected_session: &str, text: &str) -> Result<Value> {
+    let session = published(dir).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            Error::new(
+                9,
+                "unsupported_steer",
+                "no published session for working input; wait for idle and use ordinary send",
+            )
+            .with("written", false)
+            .with("submitted", false)
+            .with("confirmed", false)
+        } else {
+            steer_failed(e)
+        }
+    })?;
+    if session.session_id != expected_session {
+        return Err(
+            Error::new(7, "state_changed", "main session changed; no input written")
+                .with("written", false)
+                .with("submitted", false)
+                .with("confirmed", false),
+        );
+    }
+    let socket = discover(&session.state_dir).map_err(steer_failed)?;
+    let mut socket = connect(&socket).map_err(steer_failed)?;
+    socket
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .map_err(steer_failed)?;
+    socket
+        .set_write_timeout(Some(Duration::from_millis(500)))
+        .map_err(steer_failed)?;
+    let body = json!({"input":[{"type":"text","text":text}],"mode":"steer","clientName":"corral"})
+        .to_string();
+    let path = format!("/v1/sessions/{}/input", encode(&session.session_id));
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut written = 0;
+    while written < request.len() {
+        let result = if Instant::now() >= deadline {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "input write deadline",
+            ))
+        } else {
+            socket.write(&request.as_bytes()[written..])
+        };
+        match result {
+            Ok(0) => {
+                return Err(if written == 0 {
+                    steer_failed("socket closed")
+                } else {
+                    steer_unknown("socket closed")
+                });
+            }
+            Ok(n) => written += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                return Err(if written == 0 {
+                    steer_failed(e)
+                } else {
+                    steer_unknown(e)
+                });
+            }
+        }
+    }
+    let response = Http::response(socket, deadline, || false).map_err(steer_unknown)?;
+    let status = response.status;
+    let receipt = response.json(deadline, || false).map_err(steer_unknown)?;
+    if (400..500).contains(&status)
+        && let (Some(code), Some(message)) = (receipt["code"].as_str(), receipt["message"].as_str())
+    {
+        return Err(steer_failed(format!("{code}: {message}")));
+    }
+    if status != 200
+        || !receipt["eventSeq"].is_u64()
+        || !(receipt["turnId"].is_null() || receipt["turnId"].is_string())
+    {
+        return Err(steer_unknown("invalid input response"));
+    }
+    Ok(
+        json!({"ok":true,"written":true,"submitted":true,"confirmed":true,"merged_with_draft":false,
+        "queued_for_next_turn":receipt["turnId"].as_str().is_none_or(str::is_empty)}),
+    )
+}
+
 fn track(cursor: &mut Cursor, session: Session) {
     if !cursor.sessions.iter().any(|s| s.session == session) {
         cursor.sessions.push(Tracked {
@@ -1137,9 +1252,10 @@ fn next_sse(buffer: &mut Vec<u8>, scanned: &mut usize) -> io::Result<Option<Vec<
     }
 }
 
-/// Minimal HTTP/1.1 GET over the public Unix socket. Chunk boundaries are unrelated to SSE frames.
+/// Minimal HTTP/1.1 over the public Unix socket. Chunk boundaries are unrelated to SSE frames.
 struct Http {
     socket: UnixStream,
+    status: u16,
     buffer: Vec<u8>,
     chunked: bool,
     left: Option<usize>,
@@ -1159,9 +1275,20 @@ impl Http {
             "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
         )
         .map_err(|e| io::Error::other(format!("GET write: {e}")))?;
+        let response = Self::response(socket, deadline, || context.cancelled())?;
+        if response.status != 200 {
+            return Err(io::Error::other(format!("HTTP {}", response.status)));
+        }
+        Ok(response)
+    }
+    fn response(
+        mut socket: UnixStream,
+        deadline: Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> io::Result<Self> {
         let mut buffer = Vec::new();
         let end = loop {
-            if context.cancelled() {
+            if cancelled() {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
                     "observer stopped",
@@ -1182,12 +1309,12 @@ impl Http {
             }
         };
         let headers = String::from_utf8_lossy(&buffer[..end]);
-        if headers.split_whitespace().nth(1) != Some("200") {
-            return Err(io::Error::other(format!(
-                "HTTP {}",
-                headers.lines().next().unwrap_or("invalid status")
-            )));
-        }
+        let status = headers
+            .split_whitespace()
+            .nth(1)
+            .ok_or_else(|| io::Error::other("invalid HTTP status"))?
+            .parse()
+            .map_err(io::Error::other)?;
         let mut chunked = false;
         let mut left = None;
         for line in headers.lines().skip(1) {
@@ -1203,11 +1330,30 @@ impl Http {
         buffer.drain(..end + 4);
         Ok(Self {
             socket,
+            status,
             buffer,
             chunked,
             left,
             done: false,
         })
+    }
+    fn json(mut self, deadline: Instant, cancelled: impl Fn() -> bool) -> io::Result<Value> {
+        if self.left.is_some_and(|length| length > BODY_LIMIT) {
+            return Err(io::Error::other("JSON body exceeds 64 MiB"));
+        }
+        let mut bytes = Vec::new();
+        while !cancelled() && Instant::now() < deadline {
+            match self.next()? {
+                Some(chunk) => {
+                    if chunk.len() > BODY_LIMIT - bytes.len() {
+                        return Err(io::Error::other("JSON body exceeds 64 MiB"));
+                    }
+                    bytes.extend(chunk);
+                }
+                None => return serde_json::from_slice(&bytes).map_err(io::Error::other),
+            }
+        }
+        Err(io::Error::other("JSON request cancelled or timed out"))
     }
     fn decoded(&mut self) -> io::Result<Option<Vec<u8>>> {
         if self.chunked {
@@ -1317,23 +1463,7 @@ fn get_json_until(
     path: &str,
     deadline: Instant,
 ) -> io::Result<Value> {
-    let mut response = Http::get(context, socket, path, deadline)?;
-    if response.left.is_some_and(|length| length > BODY_LIMIT) {
-        return Err(io::Error::other("JSON body exceeds 64 MiB"));
-    }
-    let mut bytes = Vec::new();
-    while !context.cancelled() && Instant::now() < deadline {
-        match response.next()? {
-            Some(chunk) => {
-                if chunk.len() > BODY_LIMIT - bytes.len() {
-                    return Err(io::Error::other("JSON body exceeds 64 MiB"));
-                }
-                bytes.extend(chunk);
-            }
-            None => return serde_json::from_slice(&bytes).map_err(io::Error::other),
-        }
-    }
-    Err(io::Error::other("JSON request cancelled or timed out"))
+    Http::get(context, socket, path, deadline)?.json(deadline, || context.cancelled())
 }
 
 /// A full Unix listen backlog must not hold the observer past its stop deadline.
