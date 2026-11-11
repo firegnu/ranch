@@ -164,3 +164,13 @@
 - **验证了什么**：两条新增测试及扩展的回执用例均先确认目标缺陷，再修到通过。最终 `cargo test -p pony --test core canter_` **18 passed**、`approval_` **28 passed**、`needs_you_` **7 passed**，均 0 failed、0 ignored（筛选组之间有重叠）；覆盖 canter 的新行为及 Claude Code、Kimi 的直接相关批准／显示回归。`cargo clippy --all-targets -- -D warnings`、`cargo fmt` 各只跑一次，均退出 0；`git diff --check` 通过。全部 Cargo 命令用 `.target/r58`，命令均前台跑完，没有重跑全套。日志只留 `/tmp/r58-recheck-validation.Ini6S7/`，不进仓库。
 - **拿主意与踩坑**：沿用已有确认框的前 200 字与未显示全提示，路径和内容使用同一份分隔后的正文。edit 的 600 个换行经 JSON 转义已先超过 1000 字门槛，测试夹具改用仍低于该门槛的 200 个换行，专门验证新增空白规则；write 仍测 600 个换行，未改上限或放宽断言。
 - **文档、范围及影响**：DESIGN、CONTRACT、pony README 已同步。本轮只改 pony 内部核对、显示和提示，公开命令及字段不变，paddock 不用动。未改复核「可以不改」三条，未接 apply_patch，未跑全套，未开真实 agent，未碰真实 Slack 或 pony 服务，未部署、合并、推送。没有待主控决定的事。
+
+### 第二轮复核后修改
+
+2026-11-11，按主控采纳的第二轮复核「新的意见」第 1 条修改，内容总行数不另设上限。
+
+- **做了什么**：write/edit 路径在单行、完整可读核对之外，另过 `readable_command`；连续空白超过 4 个只给拒绝并说明。write 内容及 edit 的 newText 每行缩进最多 32 个空格单位，Tab 按 4、其他空白字符按 1，空白行也检查；超过只给拒绝，并给出缩进超限的明确原因。正常缩进保留，oldText、计划与 shell 的规则不变。内容总行数不限，原有 1000 字、连续空行及行内空白规则保留。DESIGN 和 pony README 已同步。
+- **针对测试**：新增路径长空白、超长缩进各一条测试，先分别复现 5 个路径空格和 33 个缩进空格仍给允许，再修到通过；均覆盖 write/edit。路径覆盖 4／5 个空格、300 个空格加路径后缀和 Unicode 空白；缩进覆盖 32／33 个空格、8／9 个 Tab、空格混 Tab、600 个空格及空白行，正常边界仍允许。另确认 300 行短内容仍允许，oldText 的长缩进不受新上限影响。
+- **验证结果**：最终 `cargo test -p pony --test core canter_` **20 passed**，`cargo test -p pony --test core approval_` **28 passed**，均 0 failed、0 ignored（筛选组有重叠），覆盖直接相关的 canter 及 Claude Code、Kimi 批准回归。`cargo clippy --all-targets -- -D warnings`、`cargo fmt` 各一次，均退出 0；`git diff --check` 通过。Cargo 全程使用 `.target/r58`，所有命令前台跑完。日志仅留 `/tmp/r58-second-review.50Qo9x/`，不进仓库。
+- **拿主意与踩坑**：按主控给定阈值实现；没有额外加总行数限制。没有新的踩坑。
+- **没做的事及影响**：仅改 pony 内部批准核对和原因提示，公开命令／字段不变，paddock 不用动。第二轮的「可以不改」意见及此前保留项没有改；未接 apply_patch，未跑全套，未开真实 agent，未碰真实 Slack 或 pony 服务，未部署、合并、推送。没有待主控决定的事。

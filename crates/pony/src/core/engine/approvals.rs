@@ -348,6 +348,8 @@ pub(super) fn canter_file_change(status: &Status) -> Option<(String, Option<&'st
                     Some("路径加改动内容超过 1000 字，没给允许按钮；请回电脑处理")
                 } else if !readable_text(&text) {
                     Some("路径或改动内容含不可读字符，没给允许按钮；请回电脑处理")
+                } else if !readable_command(&file.text) {
+                    Some("路径的连续空白超过 4 个，没给允许按钮；请回电脑处理")
                 } else if request.tool.as_deref() == Some("edit") {
                     let edits = serde_json::from_str::<serde_json::Value>(&change.text).ok();
                     match edits.as_ref().and_then(|v| v.as_array()) {
@@ -365,15 +367,15 @@ pub(super) fn canter_file_change(status: &Status) -> Option<(String, Option<&'st
                             }) {
                                 Some("改动内容含不可读字符，没给允许按钮；请回电脑处理")
                             } else {
-                                (!edits.iter().all(|e| readable_file_whitespace(e["newText"].as_str().unwrap())))
-                                .then_some("改动内容的连续空行或非缩进空白过长，没给允许按钮；请回电脑处理")
+                                edits.iter().find_map(|e| {
+                                    file_whitespace_reason(e["newText"].as_str().unwrap())
+                                })
                             }
                         }
                         _ => Some("改动内容无法核对，没给允许按钮；请回电脑处理"),
                     }
                 } else {
-                    (!readable_file_whitespace(&change.text))
-                        .then_some("改动内容的连续空行或非缩进空白过长，没给允许按钮；请回电脑处理")
+                    file_whitespace_reason(&change.text)
                 }
             }
             _ => Some("路径或改动内容无法核对，没给允许按钮；请回电脑处理"),
@@ -382,26 +384,30 @@ pub(super) fn canter_file_change(status: &Status) -> Option<(String, Option<&'st
     Some((text, reason))
 }
 
-fn readable_file_whitespace(text: &str) -> bool {
+fn file_whitespace_reason(text: &str) -> Option<&'static str> {
     let mut blank_lines = 0;
     for line in text.split_terminator(['\n', '\u{2028}', '\u{2029}']) {
+        let indent: usize = line
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .map(|c| if c == '\t' { 4 } else { 1 })
+            .sum();
+        if indent > 32 {
+            return Some(
+                "改动内容的行首缩进超过 32 个空格（Tab 按 4 个算），没给允许按钮；请回电脑处理",
+            );
+        }
         let body = line.trim_start_matches(char::is_whitespace);
-        if body.is_empty() {
-            blank_lines += 1;
-            if blank_lines > 2 {
-                return false;
-            }
-        } else {
-            blank_lines = 0;
-            if body
+        blank_lines = if body.is_empty() { blank_lines + 1 } else { 0 };
+        if blank_lines > 2
+            || body
                 .split(|c: char| !c.is_whitespace())
                 .any(|run| run.chars().count() > 4)
-            {
-                return false;
-            }
+        {
+            return Some("改动内容的连续空行或非缩进空白过长，没给允许按钮；请回电脑处理");
         }
     }
-    true
+    None
 }
 
 fn canter_prompt(status: &Status) -> Option<Prompt> {

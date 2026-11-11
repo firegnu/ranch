@@ -3607,6 +3607,86 @@ fn canter_file_paths_must_be_single_line_and_stay_outside_content_blocks() {
 }
 
 #[test]
+fn canter_file_paths_reject_long_whitespace_and_keep_four_spaces() {
+    for tool in ["write", "edit"] {
+        for (path, allow) in [
+            ("notes    file.txt".to_owned(), true),
+            ("notes     file.txt".to_owned(), false),
+            (format!("notes.txt{}/../../.zshrc", " ".repeat(300)), false),
+            (format!("notes{}file.txt", "\u{00a0}".repeat(5)), false),
+        ] {
+            let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":path,"truncated":false},"available_decisions":["accept"]});
+            request["content"] = serde_json::json!({"text":"hello","truncated":false});
+            request["edits"] = serde_json::json!({"text":"[{\"oldText\":\"old\",\"newText\":\"new\"}]","truncated":false});
+            let f = canter_approval(tool, request);
+            let posted = &f.memory.borrow().posted[0];
+            assert_eq!(
+                posted.buttons.iter().any(|b| b.confirm.is_some()),
+                allow,
+                "{tool}: {path:?}"
+            );
+            if !allow {
+                assert_eq!(posted.buttons.len(), 1);
+                assert_eq!(posted.buttons[0].label, "拒绝");
+                assert!(
+                    posted.text.contains("路径的连续空白超过 4 个"),
+                    "{}",
+                    posted.text
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn canter_file_indentation_is_bounded_but_content_line_count_is_not() {
+    for tool in ["write", "edit"] {
+        for (body, allow) in [
+            (format!("hello\n{}new", " ".repeat(32)), true),
+            (format!("hello\n{}new", " ".repeat(33)), false),
+            (format!("hello\n{}new", "\t".repeat(8)), true),
+            (format!("hello\n{}new", "\t".repeat(9)), false),
+            (format!("hello\n{}\tnew", " ".repeat(28)), true),
+            (format!("hello\n{}\tnew", " ".repeat(29)), false),
+            (format!("hello\n{}new", " ".repeat(600)), false),
+            (format!("hello\n{}\nnew", " ".repeat(33)), false),
+            (".\n\n\n".repeat(100), true),
+        ] {
+            let mut request = serde_json::json!({"id":"r1","kind":"approval","tool":tool,"file":{"text":"notes.txt","truncated":false},"available_decisions":["accept"]});
+            request["content"] = serde_json::json!({"text":body,"truncated":false});
+            request["edits"] = serde_json::json!({"text":serde_json::json!([{"oldText":"old","newText":body}]).to_string(),"truncated":false});
+            let f = canter_approval(tool, request);
+            let posted = &f.memory.borrow().posted[0];
+            assert_eq!(
+                posted.buttons.iter().any(|b| b.confirm.is_some()),
+                allow,
+                "{tool}: {body:?}"
+            );
+            if !allow {
+                assert_eq!(posted.buttons.len(), 1);
+                assert_eq!(posted.buttons[0].label, "拒绝");
+                assert!(
+                    posted.text.contains("行首缩进超过 32 个空格"),
+                    "{}",
+                    posted.text
+                );
+            }
+        }
+    }
+    let f = canter_approval(
+        "edit",
+        serde_json::json!({"id":"r1","kind":"approval","tool":"edit","file":{"text":"notes.txt","truncated":false},"edits":{"text":serde_json::json!([{"oldText":format!("{}old", " ".repeat(300)),"newText":"new"}]).to_string(),"truncated":false},"available_decisions":["accept"]}),
+    );
+    assert!(
+        f.memory.borrow().posted[0]
+            .buttons
+            .iter()
+            .any(|b| b.confirm.is_some()),
+        "oldText indentation remains unrestricted"
+    );
+}
+
+#[test]
 fn canter_file_content_limits_hidden_whitespace_but_keeps_indentation() {
     for tool in ["write", "edit"] {
         // edit's JSON escapes newlines; keep this case below the separate size gate.
