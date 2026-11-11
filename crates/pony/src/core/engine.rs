@@ -595,7 +595,7 @@ impl Engine {
                 clock_time(m.at)
             );
         }
-        let status = match corral.status(&name) {
+        let mut status = match corral.status(&name) {
             Ok(s) => s,
             Err(e) if e.exit == Some(2) => {
                 let reason = if known.as_ref().is_some_and(|t| t.instance.is_empty()) {
@@ -609,11 +609,23 @@ impl Engine {
             }
             Err(e) => return Err(corral_error(e)),
         };
-        if let Some(q) = known.as_ref().and_then(|t| t.question.as_ref())
-            && q.api_status.is_some()
-            && (!q.handled || status.state != "idle")
+        let mut question = known.as_ref().and_then(|t| t.question.clone());
+        if let Some(q) = &question
+            && let Some(old) = &q.api_status
         {
-            return self.canter_text_answer(&address, q, &m, corral, offline, at);
+            if canter::request_gone(old, &status) {
+                question = None;
+            } else if canter::unverifiable(&status) {
+                self.save()?;
+                return self.say(&address, canter::UNVERIFIABLE, false);
+            } else if let Some(current) =
+                self.canter_text_answer(&address, q, &m, corral, offline, at)?
+            {
+                status = current;
+                question = None;
+            } else {
+                return Ok(());
+            }
         }
         if let Some(q) = known.as_ref().and_then(|t| t.question.as_ref())
             && q.questions.as_ref().is_some_and(|qs| qs.background)
@@ -643,7 +655,6 @@ impl Engine {
         let reopened = known
             .as_ref()
             .is_some_and(|t| !t.instance.is_empty() && t.instance != status.instance);
-        let mut question = known.as_ref().and_then(|t| t.question.clone());
         // A handled prompt only covers answers still queued (or its pending Esc).
         // A completed, withdrawn or failed answer must not turn later chat into answers.
         if question.as_ref().is_some_and(|q| q.handled)
@@ -2370,26 +2381,35 @@ fn needs_you_screen(status: &Status, screen: Option<&str>) -> String {
     if let Some(request) = status.canter_request()
         && request.kind != "userInput"
     {
+        let file_change = approvals::canter_file_change(status);
         let detail = request
             .plan
             .as_ref()
             .or(request.file.as_ref())
             .or(status.command.as_ref());
-        let content = detail.map_or("内容无法核对".into(), |d| {
-            let fence = "`"
-                .repeat((d.text.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1).max(3));
+        let detail = file_change
+            .as_ref()
+            .map(|(text, _)| (text.as_str(), false))
+            .or_else(|| detail.map(|d| (d.text.as_str(), d.truncated)));
+        let content = detail.map_or("内容无法核对".into(), |(text, truncated)| {
+            let fence =
+                "`".repeat((text.split(|c| c != '`').map(str::len).max().unwrap_or(0) + 1).max(3));
             format!(
                 "{fence}\n{}\n{fence}{}",
-                d.text,
-                if d.truncated {
+                text,
+                if truncated {
                     "\n内容不完整，请回电脑看"
                 } else {
                     ""
                 }
             )
         });
+        let reason = file_change
+            .as_ref()
+            .and_then(|(_, reason)| *reason)
+            .map_or(String::new(), |reason| format!("\n{reason}"));
         return format!(
-            "⚠ {} 要批准（{}）\n{content}\n{footer}",
+            "⚠ {} 要批准（{}）\n{content}{reason}\n{footer}",
             status.name,
             request.tool.as_deref().unwrap_or(&request.kind)
         );

@@ -628,6 +628,44 @@ impl Lab {
 }
 
 #[test]
+fn answer_status_panic_withholds_the_request_and_keeps_the_pen_alive() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "answer-panic.sock");
+    lab.working(&server);
+    server.emit("s1", "request.opened", json!({"request":{"id":"r1","createdAt":1,"kind":{
+        "type":"userInput","question":"Color?","options":[{"label":"Blue","description":"cool"}]}}}));
+    let status = lab.wait_state("blocked");
+    let before = lab.request(json!({"op":"status"}));
+    let events = lab.path("pens").join(NAME).join("events");
+    let path = events.with_file_name("cursor");
+    let mut cursor: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    cursor["raw"] = json!({"main":{"inputs":null}});
+    let temp = events.with_file_name("panic-cursor.tmp");
+    fs::write(&temp, serde_json::to_vec(&cursor).unwrap()).unwrap();
+    fs::rename(temp, path).unwrap();
+    let mut file = fs::OpenOptions::new().append(true).open(&events).unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({"v":2,"inst":cursor["inst"],"session_id":"main","adapter":"omp","has_ui":true,
+        "ev":"input","t":1.0,"event":{"text":"synthetic panic","streamingBehavior":"steer"}})
+    )
+    .unwrap();
+    let receipt = lab.request(json!({"op":"answer","instance":status["instance"],"request_id":"r1","answer":{"type":"option","text":"Blue"}}));
+    assert_eq!(receipt["error"], "state_check_failed", "{receipt}");
+    assert_eq!(receipt["written"], false);
+    assert_eq!(receipt["submitted"], false);
+    assert_eq!(receipt["confirmed"], false);
+    let after = lab.request(json!({"op":"status"}));
+    assert_eq!(after["instance"], before["instance"]);
+    assert_eq!(after["agent_pid"], before["agent_pid"]);
+    assert!(server.state.lock().unwrap().inputs.is_empty());
+    fs::remove_file(events.with_file_name("cursor")).unwrap();
+    server.close_all();
+    lab.json(&["stop", NAME]);
+}
+
+#[test]
 fn answer_option_uses_the_request_api_without_terminal_input() {
     let lab = Lab::new();
     let server = FakeServer::new(&lab, "answer.sock");
@@ -874,6 +912,73 @@ fn answer_rechecks_front_instance_session_and_refuses_unsafe_decisions() {
 }
 
 #[test]
+fn answer_status_includes_write_content_and_edit_changes_with_bounded_details() {
+    let lab = Lab::new();
+    let server = FakeServer::new(&lab, "file-details.sock");
+    lab.working(&server);
+    for (index, tool, arguments, field, expected) in [
+        (
+            0,
+            "write",
+            json!({"path":"notes.txt","content":"hello\n世界"}),
+            "content",
+            "hello\n世界".to_owned(),
+        ),
+        (
+            1,
+            "edit",
+            json!({"path":"notes.txt","edits":[{"oldText":"old\n","newText":"new\n"},{"oldText":"delete","newText":""}]}),
+            "edits",
+            serde_json::to_string_pretty(
+                &json!([{"oldText":"old\n","newText":"new\n"},{"oldText":"delete","newText":""}]),
+            )
+            .unwrap(),
+        ),
+        (
+            2,
+            "write",
+            json!({"path":"notes.txt","content":"界".repeat(10000)}),
+            "content",
+            "界".repeat(10000),
+        ),
+        (
+            3,
+            "edit",
+            json!({"path":"notes.txt","edits":[{"oldText":"old","newText":"界".repeat(10000)}]}),
+            "edits",
+            String::new(),
+        ),
+    ] {
+        let id = format!("r{index}");
+        server.emit(
+            "s1",
+            "request.opened",
+            json!({"request":{"id":id,"createdAt":index,"kind":{
+            "type":"approval","tool":tool,"arguments":arguments,"availableDecisions":["accept"]}}}),
+        );
+        eventually(|| lab.status()["interaction"]["request"]["id"] == id);
+        let request = lab.status()["interaction"]["request"].clone();
+        assert_eq!(request["file"]["text"], "notes.txt");
+        let detail = &request[field];
+        assert_eq!(detail["truncated"], index >= 2, "{request}");
+        assert!(detail.to_string().len() <= 16 * 1024);
+        if index < 2 {
+            assert_eq!(detail["text"], expected);
+        } else {
+            assert!(!detail["text"].as_str().unwrap().is_empty());
+        }
+        server.emit(
+            "s1",
+            "request.resolved",
+            json!({"requestId":id,"clientName":"test"}),
+        );
+        lab.wait_state("working");
+    }
+    server.close_all();
+    lab.json(&["stop", NAME]);
+}
+
+#[test]
 fn answer_status_identifies_the_front_request_and_approval_details() {
     let lab = Lab::new();
     let server = FakeServer::new(&lab, "answer.sock");
@@ -891,7 +996,7 @@ fn answer_status_identifies_the_front_request_and_approval_details() {
     assert_eq!(
         status["interaction"]["request"],
         json!({"id":"r1","kind":"approval","tool":"write",
-        "file":{"text":"notes.txt","truncated":false},"available_decisions":["accept","acceptForSession","decline"]})
+        "file":{"text":"notes.txt","truncated":false},"content":{"text":"hello","truncated":false},"available_decisions":["accept","acceptForSession","decline"]})
     );
 }
 

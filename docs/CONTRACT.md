@@ -372,12 +372,13 @@ R56b 实现、部署后生效；之前的 corral 不认识 canter，当未知程
 `status` 的 `interaction.request` 仅提供主会话最早未解决的请求；多个主框仍只给第一个，存在任何子 agent 请求时省略。没框、旧 pen 或状态无法核对时不提供，不可推断为已回答。其他家的字段不变。
 
 ```json
-{"interaction":{"kind":"approval","count":1,"running":true,"request":{"id":"r-123","kind":"approval","tool":"write","file":{"text":"notes.txt","truncated":false},"available_decisions":["accept","acceptForSession","decline"]}}}
+{"interaction":{"kind":"approval","count":1,"running":true,"request":{"id":"r-123","kind":"approval","tool":"write","file":{"text":"notes.txt","truncated":false},"content":{"text":"hello","truncated":false},"available_decisions":["accept","acceptForSession","decline"]}}}
 ```
 
 - `id` 是 canter 原请求编号；`kind` 保留 `userInput`、`approval`、`sandboxApproval`、`planApproval` 等原类型。
-- `approval`／`sandboxApproval` 带 `tool`、`available_decisions`（保留服务端原决定，不代表 pony 支持全部决定）；write／edit 带 `file:{text,truncated}`，是 arguments.path 原文。shell 命令仍在顶层 `command`，提问题目仍在 `questions`。
-- `planApproval` 带 `plan:{text,truncated}`，保存计划正文。file、plan 各按原始 command 同样的紧凑 JSON 16 KiB 限制截断。pony 不会批准被截断、空白、超过 1000 字或不满足 R47c 可读性限制的命令／文件／计划。
+- `approval`／`sandboxApproval` 带 `tool`、`available_decisions`（保留服务端原决定，不代表 pony 支持全部决定）；write／edit 带 `file:{text,truncated}`，是 arguments.path 原文。write 另带可选 `content:{text,truncated}`，是 arguments.content 原文；edit 另带可选 `edits:{text,truncated}`，是 arguments.edits 数组的带缩进 JSON 文本（各项 oldText/newText），不是实际执行后的 diff。字段缺失或类型不符为 null，旧 reader 可忽略。shell 命令仍在顶层 `command`，提问题目仍在 `questions`。
+- `planApproval` 带 `plan:{text,truncated}`，保存计划正文。file、content、edits、plan 各按原始 command 同样的紧凑 JSON 16 KiB 限制截断，保留 Unicode 字符边界；edits 截断后的 text 可能不是完整 JSON，必须先看 truncated。
+- pony 的 shell 命令沿用 R47c 可读性限制；完整非空计划不超过 1000 字，检查 Cf 和除换行／制表符外的 Cc，不限连续空白。write／edit 必须有完整路径和内容，路径加内容不超过 1000 字且可读，edit 还核对 JSON 解码后的 oldText/newText。字段缺失、截断、超限或不可读时只给拒绝并说明原因；文件内容允许正常缩进。旧 corral 没有改动内容时不给文件允许按钮，paddock 现有调用不用动。
 
 新命令：
 

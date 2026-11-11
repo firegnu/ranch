@@ -2,7 +2,10 @@
 use super::{Mode, Pen};
 use crate::{Error, Result, agents, cli, now};
 use serde_json::{Value, json};
-use std::thread::{self, JoinHandle};
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    thread::{self, JoinHandle},
+};
 
 pub(super) struct Pending {
     client: (i32, u64),
@@ -32,7 +35,16 @@ impl Pen {
                 "someone typed in an attached window recently",
             ));
         }
-        let st = cli::status_from_pen(self.metadata["name"].as_str().unwrap_or(""), self.status())?;
+        let st = catch_unwind(AssertUnwindSafe(|| {
+            cli::status_from_pen(self.metadata["name"].as_str().unwrap_or(""), self.status())
+        }))
+        .map_err(|_| {
+            Error::new(
+                1,
+                "state_check_failed",
+                "status calculation panicked; answer withheld",
+            )
+        })??;
         if matches!(st.public["state"].as_str(), Some("starting" | "unknown")) {
             return Err(Error::new(
                 9,

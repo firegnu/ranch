@@ -136,3 +136,20 @@
 - **没做的事及影响**：本轮没有改实现，只补实测记录；未碰真实 Slack、用户 pony 或其他 agent，未部署、合并、推送。对 paddock 仍为兼容新增，现有调用不用动；真实 Slack 验收仍由主控部署后与用户一起做。
 
 本任务要求的实现与验证已完成，没有待主控决定的实现问题；交主控审查。
+
+### 采纳审查建议
+
+2026-11-11，按主控采纳的审查意见 1–6 和用户随后选择 A 的第 7 条修改；审查原文只读主仓库的 `R58-审查.md`，未改主仓库。
+
+1. **旧提问线程恢复普通聊天**：确认不是原来的 blocked 框、请求编号已换或实例重开时，清掉该线程提问上下文；这句和之后的话按普通消息发送或排队，不加答案前缀、不按 Esc。原框还在时保留多行和不完整题目的拦截。新增测试覆盖 idle、working、换号、重开，完整／截断题目，多行首句及 pony 重启后的第二句。先确认旧实现没有清理上下文而失败，再修到通过。
+2. **pen 状态解析 panic**：回答入口照 `steer_status` 用 `catch_unwind`，失败回 `state_check_failed`，written/submitted/confirmed 均为 false，不调用 canter。新增测试通过隔离 pen 的公开协议注入损坏 cursor，确认 pen 和合成 agent 身份不变、服务端没有收到回答；清理损坏夹具后正常 stop。
+3. **拒绝只撤原请求按钮**：核对拒绝只结束与原 request 相同的按钮，真正提交前仍作废同实例其他按钮。新增测试模拟旧线程路由后、提交前前框已换成 r2，先复现 r2 控件被误撤，再确认修复后 r2 仍能回答。收尾时补测这个竞态下原回复也必须按普通消息排队，确认旧路径漏排后修复；使用最新状态清掉上下文并排队，不把选项字母展开成另一份普通话。
+4. **结果文案**：unknown、starting、exiting 写「无法核对 canter 的框，没答；请回电脑处理」；alreadyResolved 写「这个框已经处理过（别处答过或已取消），没再答」。新增测试覆盖三种状态的线程回复和按钮刷新，以及已处理回执。
+5. **线程选择选项**：整句为显示的选项字母或完整标签时送 Option／`--option`；其他文字原样送 Text／`--text`，不裁空白、不改写。新增测试覆盖字母、标签、带附加文字、首尾空白及不存在的字母。
+6. **计划可读性**：计划不再套 shell 的连续空白上限；保留完整非空、1000 字、Cf 和除换行／制表符外的 Cc 检查。新增测试覆盖 Markdown 空行缩进、1000／1001 字、格式及控制字符；命令规则保持原样。
+7. **write/edit 展示内容**：corral 兼容新增 `content:{text,truncated}` 和 `edits:{text,truncated}`，前者是原文，后者是包含 oldText/newText 的 edits 数组 JSON 文本；各按紧凑 JSON 16 KiB 截断并保留字符边界。pony 提醒显示路径及内容，确认框沿用 R47c 的前 200 字及未显示全提示。路径加内容不超过 1000 字、完整可读才给允许；缺字段、截断、超限、不可读只给拒绝并说明。edit 额外检查解码后的字符，空 write 内容与空 newText（删除）可正常显示。corral、pony 各补一条测试，覆盖 write/edit、Unicode 截断、内容显示、允许／拒绝、1000 字边界及控制字符。apply_patch 未接。
+
+- **设计与影响**：DESIGN、CONTRACT、pony README 已同步主控决定；公开格式仅兼容新增，paddock 现有调用不用动。旧 corral 缺改动内容时 pony 不提供文件允许按钮；聊天插件、Claude Code 和 Kimi 的流程没有加 canter 特例。
+- **验证了什么**：七条建议新增 8 条针对测试（第 7 条 corral、pony 各一条），均先看到目标行为缺失再改到通过；第 1、3 条均保留明确失败复现。直接相关回归：pony core **179 passed**（含原 Claude Code、Kimi 流程）；最后补上换框竞态后，重跑 pony canter 子集 **16 passed**；pony lib **46 passed**；corral canter 集成 **22 passed、1 ignored**，steer 集成 **16 passed、1 ignored**，canter 单元 **11 passed**，这些回归均 0 failed。`cargo clippy --all-targets -- -D warnings` 只跑一次，通过；`cargo fmt` 只跑一次，完成格式化；`git diff --check` 通过。Cargo 全程用 `.target/r58`，所有命令前台跑完；未重跑全套。回归日志在 `/tmp/r58-review-validation.MEXCcr/`，不进仓库。
+- **踩过的坑**：损坏 cursor 的测试最初从 CLI 发起，会先触发 CLI 自己的状态预检，没到 pen 的 answer；改为直接走公开 pen 协议才复现并验证本条要保护的入口。线程测试补上合成首轮结束后，才验证第二条消息发送。这些夹具问题不当成功能 RED 证据。
+- **没做的事**：本轮未跑全套、未开真实 agent、未碰真实 Slack 或 pony 服务，未部署、合并、推送。没有待主控决定的实现问题。

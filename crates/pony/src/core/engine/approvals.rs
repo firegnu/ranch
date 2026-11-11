@@ -286,13 +286,73 @@ fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
+pub(super) fn canter_file_change(status: &Status) -> Option<(String, Option<&'static str>)> {
+    let request = status.canter_request()?;
+    let (change, label) = match request.tool.as_deref()? {
+        "write" => (request.content.as_ref(), "写入内容"),
+        "edit" => (request.edits.as_ref(), "替换内容（oldText → newText）"),
+        _ => return None,
+    };
+    let file = request.file.as_ref();
+    let text = format!(
+        "路径：{}\n{label}：\n{}",
+        file.map_or("无法核对", |f| f.text.as_str()),
+        change.map_or("无法核对", |c| if c.text.is_empty() {
+            "（空内容）"
+        } else {
+            &c.text
+        }),
+    );
+    let reason = match (file, change) {
+        (Some(file), Some(change)) if !file.text.trim().is_empty() => {
+            if file.truncated || change.truncated {
+                Some("内容不完整，没给允许按钮；请回电脑处理")
+            } else if file.text.chars().count() + change.text.chars().count() > 1000 {
+                Some("路径加改动内容超过 1000 字，没给允许按钮；请回电脑处理")
+            } else if !readable_text(&text) {
+                Some("路径或改动内容含不可读字符，没给允许按钮；请回电脑处理")
+            } else if request.tool.as_deref() == Some("edit") {
+                let edits = serde_json::from_str::<serde_json::Value>(&change.text).ok();
+                match edits.as_ref().and_then(|v| v.as_array()) {
+                    Some(edits)
+                        if !edits.is_empty()
+                            && edits.iter().all(|e| {
+                                e["oldText"].as_str().is_some_and(|s| !s.is_empty())
+                                    && e["newText"].is_string()
+                            }) =>
+                    {
+                        (!edits.iter().all(|e| {
+                            ["oldText", "newText"]
+                                .iter()
+                                .all(|key| readable_text(e[key].as_str().unwrap()))
+                        }))
+                        .then_some("改动内容含不可读字符，没给允许按钮；请回电脑处理")
+                    }
+                    _ => Some("改动内容无法核对，没给允许按钮；请回电脑处理"),
+                }
+            } else {
+                None
+            }
+        }
+        _ => Some("路径或改动内容无法核对，没给允许按钮；请回电脑处理"),
+    };
+    Some((text, reason))
+}
+
 fn canter_prompt(status: &Status) -> Option<Prompt> {
     let request = status.canter_request()?;
     let (detail, label) = match request.kind.as_str() {
         "approval" if request.available_decisions.iter().any(|d| d == "accept") => {
             let detail = match request.tool.as_deref()? {
                 "shell" => status.command.as_ref()?,
-                "write" | "edit" => request.file.as_ref()?,
+                "write" | "edit" => {
+                    let (text, reason) = canter_file_change(status)?;
+                    return reason.is_none().then_some(Prompt {
+                        option: 0,
+                        command: text,
+                        label: "允许这一次",
+                    });
+                }
                 _ => return None,
             };
             (detail, "允许这一次")
@@ -303,7 +363,11 @@ fn canter_prompt(status: &Status) -> Option<Prompt> {
     if detail.truncated
         || detail.text.trim().is_empty()
         || detail.text.chars().count() > 1000
-        || !readable_command(&detail.text)
+        || if request.kind == "planApproval" {
+            !readable_text(&detail.text)
+        } else {
+            !readable_command(&detail.text)
+        }
     {
         return None;
     }
@@ -373,6 +437,10 @@ fn readable_command(text: &str) -> bool {
     {
         return false;
     }
+    readable_text(text)
+}
+
+fn readable_text(text: &str) -> bool {
     // Unicode 17.0 General_Category=Cf, including supplementary-plane formats.
     // https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt
     !text.chars().any(|c| {

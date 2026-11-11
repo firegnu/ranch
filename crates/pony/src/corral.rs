@@ -66,6 +66,8 @@ pub struct Request {
     pub kind: String,
     pub tool: Option<String>,
     pub file: Option<PermissionCommand>,
+    pub content: Option<PermissionCommand>,
+    pub edits: Option<PermissionCommand>,
     pub plan: Option<PermissionCommand>,
     #[serde(default)]
     pub available_decisions: Vec<String>,

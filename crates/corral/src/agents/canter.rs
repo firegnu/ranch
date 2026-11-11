@@ -100,6 +100,24 @@ impl Translation {
                         detail["file"] = crate::hooks::command(&kind["arguments"]["path"])
                             .unwrap_or(Value::Null);
                     }
+                    match kind["tool"].as_str() {
+                        Some("write") => {
+                            detail["content"] =
+                                crate::hooks::command(&kind["arguments"]["content"])
+                                    .unwrap_or(Value::Null);
+                        }
+                        Some("edit") => {
+                            detail["edits"] = kind["arguments"]["edits"]
+                                .as_array()
+                                .and_then(|edits| {
+                                    crate::hooks::command(&json!(
+                                        serde_json::to_string_pretty(edits).unwrap()
+                                    ))
+                                })
+                                .unwrap_or(Value::Null);
+                        }
+                        _ => {}
+                    }
                 }
                 Some("planApproval") => {
                     detail["plan"] = crate::hooks::command(&kind["plan"]).unwrap_or(Value::Null);
