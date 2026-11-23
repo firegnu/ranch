@@ -1,6 +1,6 @@
 ---
 name: corral
-description: "Start a separate, new Claude Code or Codex agent session with the corral command, hand it the question, wait for its answer and bring back its reply. Use whenever the user asks to open, start or spin up another agent to look at something, e.g. 开一个 Claude Code 看一下, 开一个 Codex 看一下, 交给另一个 agent, 让另一个 agent 帮忙看看, ask another agent, delegate to another agent, get a second opinion from Claude Code or Codex. The user wants a separate interactive agent session they can attach to, not a built-in subagent or Agent/Task tool, and not your own answer, even if you are Claude Code or Codex yourself."
+description: "Start a separate, new Claude Code or Codex agent session with the corral command, hand it the question, wait for its answer and bring back its reply. Use whenever the user asks to open, start or spin up another agent to look at something, e.g. 开一个 Claude Code 看一下, 开一个 Codex 看一下, 交给另一个 agent, 让另一个 agent 帮忙看看, ask another agent, delegate to another agent, get a second opinion from Claude Code or Codex. The user wants a separate interactive agent session they can attach to, not a built-in subagent or Agent/Task tool, and not your own answer."
 ---
 <!-- corral-skill: written by `corral install-skills`; `corral install-skills --remove` deletes it -->
 
